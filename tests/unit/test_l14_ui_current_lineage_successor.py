@@ -16,7 +16,7 @@ from tests.unit import test_l14_only_a2_fallback_composition as history
 
 ROOT = Path(__file__).resolve().parents[2]
 PATH = ROOT / "tests/fixtures/atr_simulation/l14_current_ui_successor_20261025.json"
-SHA = "d08b29e7c3bbaa2174cd2758f13a83321061fb5b6433715dba9b709ea1bde1be"
+SHA = "4033374f0110b09e93fa9c3cc153354d1f8332db93bf9ea56033930c4c0690d9"
 ADDED = "src/project_mai_tai/atr_simulation/cp_sim_display.py"
 MODIFIED = {"src/project_mai_tai/atr_simulation/aggregate_entry_display.py",
     "src/project_mai_tai/services/atr_simulation_legacy_routes.py",
