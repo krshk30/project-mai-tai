@@ -124,8 +124,7 @@ def test_s6_catalog_matches_all_on_live_set_and_149_checks_with_restoration_on()
     assert l11["expected"] is True
     assert [l11["owning_service"], *l11.get("also_check_services", [])] == ["schwab-1m-v2"]
     assert Settings.model_fields[l11_name].default is False
-    group1_off = {"strategy_schwab_1m_v2_wbexit1_d1_enabled": "oms",
-                  "scanner_nuweref1_enabled": "strategy"}
+    group1_off = {"scanner_nuweref1_enabled": "strategy"}
     for name, owner in group1_off.items():
         entry, = [item for item in entries if item["name"] == name]
         assert entry["expected"] is False
@@ -139,8 +138,8 @@ def test_s6_catalog_matches_all_on_live_set_and_149_checks_with_restoration_on()
                if entry["name"] != "momentum_live_enabled") == 161 + 2 + 3 + 3
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in legacy_entries) == 164 + 2 + 3 + 3
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries
-               if entry["name"] != "momentum_live_enabled") == 174
-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 177
+               if entry["name"] != "momentum_live_enabled") == 173
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 176
     assert flags["webull_list_primary_reads_enabled"] is True
     assert flags["strategy_schwab_1m_v2_line_chart_restoration_enabled"] is True
 

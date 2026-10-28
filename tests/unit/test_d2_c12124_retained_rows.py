@@ -26,6 +26,10 @@ STAK = "55b43f16-66a6-4ed3-bb79-31b9ee018534"
 
 @pytest.fixture(scope="module")
 def packet():
+    try:
+        RAW.lstat()
+    except FileNotFoundError:
+        pytest.skip(f"D2 requires local rig artifact {RAW}")
     raw = RAW.read_bytes()
     assert hashlib.sha256(raw).hexdigest() == RAW_SHA
     data = json.loads(raw)
