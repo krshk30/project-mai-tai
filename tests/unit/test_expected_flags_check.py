@@ -74,8 +74,8 @@ def test_catalog_covers_every_settings_bool_exactly_once() -> None:
         for service in [entry["owning_service"], *entry.get("also_check_services", [])]
     ) == {
         "control": 14, "market-capture": 1, "market-data": 3,
-        "momentum-paper": 4, "oms": 56, "orb-schwab": 7,
-        "reconciler": 1, "schwab-1m-v2": 52, "strategy": 29,
+        "momentum-paper": 4, "oms": 57, "orb-schwab": 7,
+        "reconciler": 1, "schwab-1m-v2": 52, "strategy": 30,
     }
     country = by_name["strategy_schwab_1m_v2_country_route_enabled"]
     assert country["expected"] is True
