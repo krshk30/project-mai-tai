@@ -17,6 +17,14 @@
       "value": "true",
       "code_default": false,
       "services": ["schwab-1m-v2"]
+    },
+    {
+      "component": "L12",
+      "setting": "strategy_schwab_1m_v2_brokerdecides1_enabled",
+      "env": "MAI_TAI_STRATEGY_SCHWAB_1M_V2_BROKERDECIDES1_ENABLED",
+      "value": "true",
+      "code_default": false,
+      "services": ["schwab-1m-v2", "oms"]
     }
   ],
   "l14_activation": {
