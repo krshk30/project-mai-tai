@@ -3364,10 +3364,11 @@ class SchwabV2BotService:
                     and self._keepwatch.allows_entry(symbol))
         fallback = self._line_pg_poll_fallback_current(symbol)
         if fallback is not None:
-            # OLD scanner membership for this failed poll only. Retained-only
-            # membership cannot be invented by a database exception.
+            # Current scanner membership for this failed poll only (not _watchlist,
+            # which also carries held/in-flight names). Retained-only membership
+            # cannot be invented by a database exception.
             return (symbol not in self.settings.protected_symbol_set
-                    and (symbol in self._watchlist or (
+                    and (symbol in getattr(self, "_entry_watch_symbols", set()) or (
                         fallback["retained_entry_before"] and self._keepwatch.allows_entry(symbol))))
         return (self._keepwatch.anchor_ms == session_start_ts_ms(self.strategy._now_ms())
                 and self._keepwatch_bar_quarantine.get(symbol) != self._keepwatch.anchor_ms
