@@ -457,9 +457,6 @@ class WebullBrokerAdapter:
                 continue
             metadata = {"cancel_outcome": "confirmed" if event in {"cancelled", "rejected", "filled"} else "not_confirmed",
                         "wbattach1_list_census": json.dumps({**proof, "base": child_base}, sort_keys=True)}
-            if getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_wbexit1_d1_enabled", False) is True:
-                metadata["wbexit1_geometry"] = json.dumps({k: item[k] for k in
-                    ("limit_price", "limitPrice", "stop_price", "stopPrice", "status", "order_status", "orderStatus") if k in item})
             if filled and event in {"cancelled", "rejected"}:
                 metadata["webull_terminal_with_partial_fill"] = event
             reports[coid] = ExecutionReport(event, coid, broker_order_id=native_id,
@@ -866,57 +863,6 @@ class WebullBrokerAdapter:
 
         task.add_done_callback(finished)
         return await asyncio.shield(task)
-
-    async def read_exit_positions(self, broker_account_name: str, *, after: float):
-        if getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_wbexit1_d1_enabled", False) is not True:
-            raise WebullPositionsUnavailable("D1 forced positions capability is disabled")
-        account = self.accounts_by_name.get(broker_account_name)
-        def read():
-            started = time.monotonic()
-            if account is None or type(after) not in (int, float) or not 0 <= after < started:
-                raise WebullPositionsUnavailable("Exit positions account/boundary UNKNOWN")
-            with self._positions_lock:
-                if started < self._positions_backoff_until.get(broker_account_name, 0):
-                    raise WebullPositionsUnavailable("Exit positions backed off -> UNKNOWN")
-            return tuple(self._positions_blocking(account, broker_account_name)), started
-        try:
-            return await self._foreground_query(read)
-        except Exception as exc:
-            if self._is_rate_limited(exc):
-                self._note_positions_backoff(broker_account_name, time.monotonic())
-            raise WebullPositionsUnavailable("Exit positions wire unreadable -> UNKNOWN") from exc
-
-    async def read_exit_order_status(self, request: OrderRequest, *, after: float):
-        """D1 exact fresh detail only: no today-list/cache or master-ID fallback."""
-        if getattr(self.settings, "strategy_schwab_1m_v2_wbexit1_d1_enabled", False) is not True:
-            raise WebullPositionsUnavailable("D1 order-status capability is disabled")
-        account = self.accounts_by_name.get(request.broker_account_name)
-        def read():
-            started = time.monotonic()
-            if (account is None or type(after) not in (int, float) or not 0 <= after < started
-                    or request.strategy_code != "schwab_1m_v2" or request.side != "sell"
-                    or request.intent_type != "close" or not request.client_order_id):
-                raise WebullPositionsUnavailable("D1 sell order binding UNKNOWN")
-            try:
-                from webull.trade.request.get_order_detail_request import OrderDetailRequest
-            except ImportError:
-                from webull.trade.request.v2.get_order_detail_request import OrderDetailRequest
-            detail = OrderDetailRequest()
-            detail.set_account_id(account.account_id)
-            detail.set_client_order_id(request.client_order_id)
-            response = self._budgeted_detail(account, detail, request.client_order_id, strict=True)
-            body = self._body(response)
-            execution = self._validated_list_execution(body, account, request.client_order_id,
-                symbol=request.symbol, side="sell") if self._response_status(response) == 200 else None
-            if execution is None:
-                raise WebullPositionsUnavailable("D1 exact fresh sell status UNKNOWN")
-            status, native_id, filled, price, _filled_at = execution
-            report = ExecutionReport(status, request.client_order_id, broker_order_id=native_id,
-                symbol=request.symbol, side="sell", intent_type="close", quantity=request.quantity,
-                filled_quantity=Decimal(filled), fill_price=Decimal(price) if price is not None else None,
-                reported_at=datetime.now(UTC), origin="broker")
-            return report, started
-        return await self._foreground_query(read)
 
     async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
         """Live positions for one broker account, THROTTLED + 429-BACKED-OFF per account.

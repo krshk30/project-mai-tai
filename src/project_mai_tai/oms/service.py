@@ -6228,9 +6228,6 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         protection = ""
 
         def _done(outcome: str) -> str:
-            if protection == "strict_owner":
-                self.logger.info("[WBEXIT1-STRICT-OWNER-RESULT] sym=%s acct=%s row=%s outcome=%s native_coverage=UNKNOWN",
-                    symbol, acct, expected_row_id, outcome)
             self.logger.info(
                 "[OMS-WEBULL-CANCEL-THEN-SELL] exit=%s sym=%s acct=%s row=%s outcome=%s "
                 "protection=%s seconds=%.3f",
@@ -6304,7 +6301,6 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             expected_row_id=expected_row_id,
             expires_at=expires_at,
             decision=decision,
-            strict_reason=reason,
         )
         if target_prepare_started is not None:
             close_context = {**(close_context or {}),
@@ -6335,7 +6331,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 uncovered=protection == "uncovered",
             )
             return _done(protection)
-        if protection not in {"released", "no_pair", "strict_owner"}:
+        if protection not in {"released", "no_pair"}:
             self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
             return _done("refused_before_release")
 
@@ -6355,8 +6351,6 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 bid=reference_bid,
                 close_on_fill=close_on_fill,
                 confirmation_context=dict(close_context or {}),
-                **({"expected_managed_row_id": snapshot.managed_row_id, "shared_rth": True}
-                   if protection == "strict_owner" else {}),
             )
         except asyncio.CancelledError:
             self._finish_or_recover_confirmation_leg(
@@ -6396,7 +6390,6 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         expected_row_id: str,
         expires_at: datetime,
         decision: _ConfirmationFanoutDecision,
-        strict_reason: str = "",
     ) -> str:
         """Release a Webull pair authoritatively before a confirmation sell.
 
@@ -6405,25 +6398,22 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         are two terminal/absent legs or one positively identified broker fill.
         """
         inline_started_at = time.monotonic()
-        from project_mai_tai.oms.webull_attach_riskoff import SOFTWARE_EXIT_REASONS, d1_enabled, marked_atr_episode
 
-        def _read_base(session: Session) -> tuple[bool, str, str, str, bool]:
+        def _read_base(session: Session) -> tuple[bool, str, str, str]:
             row = self.store.get_open_managed_position(
                 session, broker_account_name=acct, symbol=symbol
             )
             if row is None or str(row.id) != expected_row_id:
-                return False, "", "", "", False
+                return False, "", "", ""
             entry = self._find_oco_entry_order(session, acct, symbol)
             if entry is None:
-                return False, "", "", "", False
+                return False, "", "", ""
             return True, self._oco_exit_base_for_entry(
                 entry, broker_account_name=acct, symbol=symbol
-            ), str(entry.broker_order_id or ""), str(entry.id), (
-                d1_enabled(self) and row.strategy_code == "schwab_1m_v2" and strict_reason in SOFTWARE_EXIT_REASONS
-                and marked_atr_episode(entry.payload or {}))
+            ), str(entry.broker_order_id or ""), str(entry.id)
 
         try:
-            same_row, base, entry_oid, entry_identity, strict = await self._run_db(_read_base, commit=False)
+            same_row, base, entry_oid, entry_identity = await self._run_db(_read_base, commit=False)
         except Exception:  # noqa: BLE001 - an unreadable pair must remain untouched
             self.logger.exception(
                 "[OMS-V2-CONFIRMATION-EXIT-WEBULL-REFUSED] sym=%s acct=%s "
@@ -6457,9 +6447,6 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 acct,
             )
             return "no_pair"
-        if strict and _is_regular_market_session():
-            # Not a release or a sell permission: the existing strict owner owns FIRST cancel.
-            return "strict_owner"
         key = (acct, symbol)
         episode = (expected_row_id, base)
         released_episodes = self.__dict__.setdefault(
@@ -10194,7 +10181,6 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         confirmation_context: dict[str, str] | None = None,
         allow_unconfirmed_overnight: bool = False,
         native_release_row_id: str = "",
-        shared_rth: bool = False,
     ) -> str:
         """A fail-open ladder decision is not permission to sell reserved Schwab shares."""
         protected_reasons = {
@@ -10210,7 +10196,6 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 expected_managed_row_id=expected_managed_row_id,
                 confirmation_context=confirmation_context,
                 allow_unconfirmed_overnight=allow_unconfirmed_overnight,
-                **({"shared_rth": True} if shared_rth else {}),
             )
         if allow_unconfirmed_overnight and (
             reason != "V2_OVERNIGHT_FLATTEN" or not self._v2_overnight_flatten_due()
@@ -10289,7 +10274,6 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 expected_managed_row_id=snapshot.managed_row_id,
                 confirmation_context=confirmation_context,
                 allow_unconfirmed_overnight=allow_unconfirmed_overnight,
-                **({"shared_rth": True} if shared_rth else {}),
             )
         finally:
             if schwab:
@@ -10314,7 +10298,6 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         expected_managed_row_id: str = "",
         confirmation_context: dict[str, str] | None = None,
         allow_unconfirmed_overnight: bool = False,
-        shared_rth: bool = False,
     ) -> str:
         """The RARE v2 exit-emit, kept ON-LOOP (single session, one commit) exactly as
         before PR-A: it reaches the shared ``_record_order_reports``, which mutates
@@ -11238,9 +11221,6 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 row.broker_account_name, row.symbol,
                 metadata["cw_decided_at"], request.metadata["cw_submitted_at"],
             )
-        if strict_handoff and getattr(self.settings, "strategy_schwab_1m_v2_wbexit1_d1_enabled", False) is True:
-            from project_mai_tai.oms.webull_attach_riskoff import d1_sell_wire
-            d1_sell_wire(self, request)
         reports = (await self._submit_cw_target_order(request, target_guards) if is_target
                    else await self.broker_adapter.submit_order(request))
         intent = session.get(TradeIntent, intent_id)

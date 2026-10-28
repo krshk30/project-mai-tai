@@ -559,8 +559,6 @@ class Settings(BaseSettings):
     # every new read, record and gate, restoring the pre-RECLAIM1 behaviour after a v2 restart.
     strategy_schwab_1m_v2_flip_owned_first_entry_enabled: bool = False
     strategy_schwab_1m_v2_brokerdecides1_enabled: bool = False
-    # C1 2026-10-27 18:53 Group1 A1: shelf-only; activation requires separate review.
-    strategy_schwab_1m_v2_wbexit1_d1_enabled: bool = False
     # Claude 14:42:27: measured 4,438 passes, 15s cadence / 1.632s p99
     # duration, explicitly approved 20s maximum wire observation age.
     strategy_schwab_1m_v2_brokerdecides1_max_age_ms: int = 20_000

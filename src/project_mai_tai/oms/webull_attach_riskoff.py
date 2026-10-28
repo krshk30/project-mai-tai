@@ -34,10 +34,6 @@ SOFTWARE_EXIT_REASONS = frozenset({
 })
 
 
-def d1_enabled(service):
-    return getattr(service.settings, "strategy_schwab_1m_v2_wbexit1_d1_enabled", False) is True
-
-
 def marked_atr_episode(payload):
     # Presence, not truthiness: corrupt/empty strict state cannot opt into legacy.
     return KEY in payload or BARE_FILL_PROOF in payload
@@ -78,23 +74,6 @@ class _AtrCall:
     owner_key: tuple | None = None
     broker_flat: bool = False
     list_proof_at: datetime | None = None
-    positions_read: tuple | None = None
-    recovery: tuple | None = None
-    shared_rth: bool = False
-    d1: bool = False
-    records: list = field(default_factory=list)
-    pages: list = field(default_factory=list)
-    released_quantity: Decimal | None = None
-    recovery_started: bool = False
-    recovery_request: object = None
-    recovery_proof: tuple = ()
-    recovery_ack: tuple = ()
-    released_proof: tuple = ()
-    sell_request: object = None
-    sell_started: float | None = None
-    recording: bool = False
-    cancel_entered: bool = False
-    join_cancelled: bool = False
 
 
 _ATR_CALL = ContextVar("wbattach1_atr_call", default=None)
@@ -112,37 +91,19 @@ def atr_handoff_call(method):
         call = _AtrCall(service, asyncio.current_task(), account, symbol,
                         kwargs.get("expected_managed_row_id", ""), str(uuid4()))
         call.reason = reason
-        call.d1 = d1_enabled(service)
-        if kwargs.get("shared_rth") is True and not call.d1:
-            raise ValueError("wbexit1_d1_configuration_changed_before_owner")
-        call.shared_rth = call.d1 and kwargs.get("shared_rth") is True
         token = _ATR_CALL.set(call)
         try:
-            if not call.d1:
-                return await method(service, *args, **kwargs)
-            async with asyncio.timeout(None) as call.deadline:
-                return await method(service, *args, **kwargs)
-        except TimeoutError:
-            if call.recovery is not None:
-                service.logger.critical("[WBEXIT1-ACTION-DEADLINE] account=%s symbol=%s SELL_ACK=UNKNOWN_OR_UNSENT protection=UNPROVEN", account, symbol)
-            raise
+            return await method(service, *args, **kwargs)
         finally:
             try:
-                if call.entry_coid and not call.consumed:
-                    if call.d1 and call.recovery is not None:
-                        await _d1_recover(service, call)
-                    elif call.prepared is None:
-                        await _release_unprepared_software_handoff(service, call)
+                if call.entry_coid and call.prepared is None and not call.consumed:
+                    await _release_unprepared_software_handoff(service, call)
             finally:
-                try:
-                    if call.d1:
-                        await _d1_join_records(service, call)
-                finally:
-                    call.consumed = True
-                    owners = service.__dict__.get("_wbattach_exit_owners", {})
-                    if call.owner_key is not None and owners.get(call.owner_key) is call:
-                        owners.pop(call.owner_key)
-                    _ATR_CALL.reset(token)
+                call.consumed = True
+                owners = service.__dict__.get("_wbattach_exit_owners", {})
+                if call.owner_key is not None and owners.get(call.owner_key) is call:
+                    owners.pop(call.owner_key)
+                _ATR_CALL.reset(token)
     return bound
 
 
@@ -174,18 +135,9 @@ def _current_atr_call(service, managed_id, *, require_rth=True):
             or call.task is not asyncio.current_task() or call.managed_id != str(managed_id)
             or not call.managed_id or require_rth and call.reason == REASON and not _rth(service)):
         raise ValueError("wbattach1_live_owner_call_unknown")
-    if call.shared_rth and not _rth(service):
-        raise ValueError("wbexit1_shared_RTH_changed")
-    if call.d1 and not d1_enabled(service):
-        raise ValueError("wbexit1_d1_configuration_changed")
     if (call.owner_key is not None
             and service.__dict__.get("_wbattach_exit_owners", {}).get(call.owner_key) is not call):
         raise ValueError("wbattach1_exit_owner_claim_lost")
-    if call.recovery is not None:
-        control = getattr(service, "_bot_control_runtime", None)
-        if (not _rth(service) or monotonic() > call.recovery[0] or getattr(service.settings, "bot_control_enabled", False) and control is None
-                or control is not None and (control.stop_requested("schwab_1m_v2") or call.recovery[5] is None or control.states.get("schwab_1m_v2") != call.recovery[5])):
-            raise ValueError("wbexit1_deadline_session_or_STOP_changed")
     if getattr(service.settings, "bot_control_enabled", False):
         owner = module._CONTROL_MANAGED_EMIT.get()
         key = (call.account, call.symbol.upper(), call.managed_id)
@@ -260,11 +212,6 @@ def require_current_episode(entry, intent, now):
 
 
 async def critical(service, account, symbol, reason, *, entry_id=""):
-    call = _ATR_CALL.get()
-    if (call is not None and call.d1 and call.service is service and call.recovery is not None
-            and not call.recording and (account, symbol) == (call.account, call.symbol)):
-        _d1_page(service, call, reason)
-        return  # Durable incident work follows the bounded recovery wire/join.
     service.logger.critical("[WBATTACH1-BLOCKED] account=%s symbol=%s entry=%s reason=%s sell=0",
                             account, symbol, entry_id, reason)
     def write(session):
@@ -295,8 +242,6 @@ async def critical(service, account, symbol, reason, *, entry_id=""):
             # Adopt only exact account/symbol-bound legacy COID aliases. The
             # original incident id/opened_at and unrelated payload survive.
             old.payload = {**(old.payload or {}), **identity}
-            if call is not None and call.d1 and call.recording:
-                old.payload = {**old.payload, "d1_exception": reason, "d1_scan_exception": True}
         waiting = "exit waiting for broker proof:" in reason.lower()
         if old is not None and waiting:
             old.title = f"Exit waiting for broker proof: {symbol}"[:255]
@@ -385,9 +330,7 @@ def _atr(service, session, account_name, symbol, coid, *, allow_closed=False, pr
     return entry, row, account, strategy, min(bought, vp.quantity, Decimal(row.current_quantity))
 
 
-def _control_free(service, account, symbol, recovery=None):
-    if recovery is not None:
-        return recovery is _current_atr_call(service, recovery.managed_id) and recovery.prepared is None
+def _control_free(service, account, symbol):
     if (account, symbol) in service.__dict__.get("_wbattach_exit_owners", {}):
         return False
     if (account, symbol) in service.__dict__.get("_control_managed_exit_symbol_owners", {}):
@@ -515,14 +458,12 @@ async def reconcile_orb_rejection(service, entry_id, base):
     await service._run_db(write)
 
 
-async def broker_ceiling(service, account, symbol, quantity, *, after=None, allow_flat=False, witness=None):
-    rows = witness[0] if witness is not None else None
-    if witness is None:
-        async with asyncio.timeout(2):
-            rows = await service.broker_adapter.list_account_positions(account)
+async def broker_ceiling(service, account, symbol, quantity, *, after=None, allow_flat=False):
+    async with asyncio.timeout(2):
+        rows = await service.broker_adapter.list_account_positions(account)
     sampled = monotonic()
     age_fn = getattr(service.broker_adapter, "positions_wire_read_age_seconds", None)
-    age = sampled - witness[1] if witness is not None else age_fn(account) if callable(age_fn) else None
+    age = age_fn(account) if callable(age_fn) else None
     if (isinstance(age, bool) or not isinstance(age, (float, int)) or not isfinite(age)
             or not 0 <= age <= 30 or after is not None and sampled - age <= after):
         raise ValueError("wbattach1_positions_wire_receipt_unknown_or_stale")
@@ -533,20 +474,15 @@ async def broker_ceiling(service, account, symbol, quantity, *, after=None, allo
     if (len(matches) != 1 or matches[0].broker_account_name != account
             or not matches[0].quantity.is_finite() or matches[0].quantity <= 0):
         raise ValueError("wbattach1_broker_quantity_unknown")
-    if witness is not None and matches[0].quantity < quantity:
-        raise ValueError("wbexit1_partial_broker_quantity_ownership_unknown")
     result = min(quantity, matches[0].quantity)
     if result <= 0 or result != result.to_integral_value():
         raise ValueError("wbattach1_owned_quantity_not_whole")
     return result
 
 
-async def _atr_state(service, account, symbol, coid, mutate=None, *, allow_closed=False, shield_commit=False):
-    call = _ATR_CALL.get()
+async def _atr_state(service, account, symbol, coid, mutate=None, *, allow_closed=False):
     def unit(session):
         entry, row, acct, strategy, quantity = _atr(service, session, account, symbol, coid, allow_closed=allow_closed)
-        if call is not None and call.recovery is not None and quantity != call.owned_quantity:
-            raise ValueError("wbexit1_recovery_owned_quantity_changed")
         payload = entry.payload or {}
         expected_proof = {
             "entry_id": str(entry.id), "entry_coid": entry.client_order_id,
@@ -570,24 +506,7 @@ async def _atr_state(service, account, symbol, coid, mutate=None, *, allow_close
             mutate(session, entry, row, acct, strategy, quantity, state)
             entry.payload = {**entry.payload, KEY: state}
         return state, str(row.id), str(entry.id), quantity, row.entry_price
-    work = service._run_db(unit, commit=mutate is not None)
-    if call is not None and call.d1 and call.recovery is not None:
-        # Keep physical work owned, but do not let its join consume the wire reserve.
-        work = asyncio.create_task(work)
-        call.records.append(work)
-        result = await asyncio.shield(work)
-    elif shield_commit:
-        work = asyncio.create_task(work)
-        try:
-            result = await asyncio.shield(work)
-        except asyncio.CancelledError:
-            await work  # Join only the pure commit before owner cleanup.
-            raise
-    else:
-        result = await work
-    if call is not None and call.recovery is not None:
-        _current_atr_call(service, call.managed_id)
-    return result
+    return await service._run_db(unit, commit=mutate is not None)
 
 
 async def _atr_rejection_terminal_read(service, account, symbol, coid, base, quantity):
@@ -619,34 +538,30 @@ async def _atr_rejection_terminal_read(service, account, symbol, coid, base, qua
 
 
 async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_price,
-                     strategy_code, entry_client_order_id, recovery=None):
+                     strategy_code, entry_client_order_id):
     if strategy_code != "schwab_1m_v2" or not _rth(service):
         return False
     account, coid = broker_account_name, entry_client_order_id
     try:
         target = entry_price * (1 + float(service.settings.oms_v2_cw_target_pct) / 100)
         protect = entry_price * (1 - float(service.settings.oms_v2_cw_hard_stop_pct) / 100)
-        if recovery is not None:
-            target, protect = recovery.recovery[1:3]
-            if (account, symbol, coid) != (recovery.account, recovery.symbol, recovery.entry_coid) or recovery.positions_read is None:
-                raise ValueError("wbexit1_recovery_identity_or_positions_UNKNOWN")
         if not all(isfinite(p) and p > 0 for p in (entry_price, target, protect)) or not protect < entry_price < target:
             raise ValueError("wbattach1_protection_geometry_unknown")
-        attempts = 1 if recovery is not None else max(1, int(getattr(service.settings, "oms_webull_protect_attempts", 5)))
+        attempts = max(1, int(getattr(service.settings, "oms_webull_protect_attempts", 5)))
         interval = max(0.0, float(getattr(service.settings, "oms_webull_protect_interval_seconds", 2.0)))
         backoff = max(1.0, float(getattr(service.settings, "oms_webull_protect_backoff_multiplier", 2.0)))
         max_interval = max(0.0, float(getattr(service.settings, "oms_webull_protect_max_interval_seconds", 15.0)))
         for number in range(1, attempts + 1):
-            if not _rth(service) or not _control_free(service, account, symbol, recovery):
+            if not _rth(service) or not _control_free(service, account, symbol):
                 return False
             state, _, _, owned, proven_price = await _atr_state(service, account, symbol, coid, allow_closed=True)
             if stored_price(entry_price) != stored_price(proven_price):
                 raise ValueError("wbattach1_entry_price_binding_changed")
             if state.get("exit_phase"):
                 return False  # An existing owner, not another attach, owns the episode now.
-            if recovery is None and state.get("exit_reason") in SOFTWARE_EXIT_REASONS:
+            if state.get("exit_reason") in SOFTWARE_EXIT_REASONS:
                 return False  # A proof-waiting real exit must not re-arm a second native writer.
-            if recovery is None and state.get("unsent_handoffs"):
+            if state.get("unsent_handoffs"):
                 return await request_atr_exit(service, account, symbol, coid,
                     "original_exit_proven_unsent_requires_fresh_owner")
             # ACK uncertainty is not an exit signal. Keep the original address
@@ -655,7 +570,7 @@ async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_pr
                 await critical(service, account, symbol, "attach_ack_unknown_requires_child_proof",
                                entry_id=coid)
                 return False
-            if recovery is None and len(state["attempts"]) >= attempts:
+            if len(state["attempts"]) >= attempts:
                 if any(a["phase"] == "accepted" for a in state["attempts"]):
                     return True
                 return await request_atr_exit(service, account, symbol, coid,
@@ -664,16 +579,11 @@ async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_pr
                 broker_account_name=account, symbol=symbol, target=target, protect=protect)
             pending = [a for a in state["attempts"] if a["phase"] != "released"]
             if unplaceable or pending or state.get("legacy_base"):
-                if recovery is not None:
-                    raise ValueError("wbexit1_recovery_reservations_or_geometry_UNKNOWN")
                 if pending and pending[-1]["phase"] == "accepted" and not unplaceable:
                     return True
                 return await request_atr_exit(service, account, symbol, coid,
                     unplaceable or "original_attach_requires_reconciliation")
-            owned = await broker_ceiling(service, account, symbol, min(Decimal(quantity), owned),
-                after=recovery.terminal_at if recovery else None, witness=recovery.positions_read if recovery else None)
-            if recovery is not None and owned != recovery.owned_quantity:
-                raise ValueError("wbexit1_recovery_quantity_changed")
+            owned = await broker_ceiling(service, account, symbol, min(Decimal(quantity), owned))
             base = f"{strategy_code}-{symbol}-protect-{uuid4().hex[:12]}"
             def prepare(session, entry, row, acct, strategy, current, journal):
                 if current < owned or journal.get("exit_phase") or journal["attempts"] != state["attempts"]:
@@ -693,12 +603,12 @@ async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_pr
             await _atr_state(service, account, symbol, coid, prepare)
             service._webull_protect_base[(account, symbol)] = base
             await service._bind_webull_protect_memory(account, symbol, base, coid)
-            if not _rth(service) or not _control_free(service, account, symbol, recovery):
+            if not _rth(service) or not _control_free(service, account, symbol):
                 raise ValueError("wbattach1_owner_changed_before_attach")
             checked, _, _, current, _ = await _atr_state(service, account, symbol, coid)
             if (current < owned or checked["attempts"][-1]["base"] != base
                     or checked.get("exit_phase") or not _rth(service)
-                    or not _control_free(service, account, symbol, recovery)):
+                    or not _control_free(service, account, symbol)):
                 raise ValueError("wbattach1_owner_or_quantity_changed_before_attach")
             request = OrderRequest(base, account, strategy_code, symbol, "sell", "close", owned,
                 "webull attach protection after bare resting fill", {"webull_exit_only_pair": "true",
@@ -712,11 +622,6 @@ async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_pr
                 and reports[0].event_type == "accepted" and reports[0].broker_order_id
                 and reports[0].client_order_id == base and reports[0].symbol == symbol
                 and reports[0].side == "sell" and reports[0].filled_quantity == 0)
-            if recovery is not None and accepted:
-                proof = await service.broker_adapter.confirm_exit_pair_from_today_list(broker_account_name=account,
-                    symbol=symbol, base_client_order_id=base, quantity=owned, after=datetime.now(UTC))
-                accepted = proof.outcome == "reserved" and _d1_pair(proof.reports, base, owned, symbol) == (target, protect)
-                _current_atr_call(service, recovery.managed_id)
             # A rejected response records cause, not proof of absent children.
             rejected = bool(len(reports) == 1 and reports[0].origin == "broker"
                 and reports[0].event_type == "rejected"
@@ -744,7 +649,7 @@ async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_pr
                 service.logger.info("[WEBULL-PROTECT-ATTACHED] %s %s qty=%s entry=%s target=%s stop=%s "
                     "session=RTH attempt=%s", symbol, account, owned, entry_price, target, protect, number)
                 return True
-            if recovery is not None or not rejected:
+            if not rejected:
                 await critical(service, account, symbol, "attach_ack_unknown_requires_child_proof",
                                entry_id=coid)
                 return False
@@ -1205,208 +1110,6 @@ def _cancel_read_summary(reports):
     return f"count={len(reports)}:" + (",".join(values) or "UNKNOWN")
 
 
-def _d1_page(service, call, reason):
-    call.pages.append(reason)
-    service.logger.critical("[WBEXIT1-EXCEPTION] account=%s symbol=%s PAGE=%s scan_exception=true native=UNKNOWN",
-                            call.account, call.symbol, reason)
-
-
-def d1_sell_wire(service, request):
-    call = _ATR_CALL.get()
-    if call is None or not call.d1 or call.recovery is None:
-        return
-    _current_atr_call(service, call.managed_id)
-    if call.sell_request is not None or call.prepared is None:
-        raise ValueError("wbexit1_second_or_unprepared_sell_refused")
-    if _request_binding(request) != call.prepared:
-        # cw_submitted_at is the existing post-validation diagnostic stamp.
-        metadata = {k: v for k, v in request.metadata.items() if k != "cw_submitted_at"}
-        if _request_binding(replace(request, metadata=metadata)) != call.prepared:
-            raise ValueError("wbexit1_sell_wire_binding_changed")
-    call.sell_request, call.sell_started = replace(request, metadata=deepcopy(request.metadata)), monotonic()
-
-
-async def _d1_remainder(service, call):
-    if call.sell_request is None:
-        if call.prepared is not None:
-            raise ValueError("prepared_sell_abort_receipt_UNKNOWN")
-        return call.released_quantity  # This exact owner never entered a SELL await.
-    report, started = await service.broker_adapter.read_exit_order_status(
-        call.sell_request, after=call.sell_started)
-    _current_atr_call(service, call.managed_id)
-    request = call.sell_request
-    if (type(started) not in (int, float) or not call.sell_started < started <= monotonic()
-            or monotonic() - started > 2 or not isinstance(report, ExecutionReport)
-            or report.origin != "broker" or not report.broker_order_id
-            or report.client_order_id != request.client_order_id or report.symbol != call.symbol
-            or report.side != "sell" or report.intent_type != "close" or report.quantity != request.quantity
-            or report.event_type not in TERMINAL or not report.filled_quantity.is_finite()
-            or not 0 <= report.filled_quantity <= request.quantity <= call.released_quantity
-            or report.filled_quantity != report.filled_quantity.to_integral_value()
-            or not 0 <= (datetime.now(UTC) - _aware_utc(report.reported_at)).total_seconds() <= 2):
-        raise ValueError("OUR_sell_status_unreadable_or_still_working")
-    return call.released_quantity - report.filled_quantity
-
-
-async def _d1_recover(service, call):
-    if call.recovery_started:
-        return
-    if call.released_quantity is None:
-        if call.cancel_entered:
-            _d1_page(service, call, "Webull exit unprotected,size unknown: original terminal proof UNKNOWN")
-        return
-    call.recovery_started = True  # One address/attempt even if its ACK is lost.
-    try:
-        async with asyncio.timeout(max(0, call.recovery[0] - monotonic())):
-            _current_atr_call(service, call.managed_id)
-            try:
-                quantity = await _d1_remainder(service, call)
-            except Exception as exc:
-                _d1_page(service, call, f"Webull exit unprotected,size unknown:{type(exc).__name__}:{exc}")
-                return
-            _current_atr_call(service, call.managed_id)
-            if quantity <= 0:
-                service.logger.info("[WBEXIT1-RECOVERY] account=%s symbol=%s remaining=%s no_order=true",
-                                    call.account, call.symbol, quantity)
-                return
-            if (call.owned_quantity != call.released_quantity or quantity > call.released_quantity
-                    or quantity != quantity.to_integral_value()):
-                raise ValueError("released_quantity_binding_changed")
-            target, protect = call.recovery[1:3]
-            base = f"schwab_1m_v2-{call.symbol}-protect-{uuid4().hex[:12]}"
-            request = OrderRequest(base, call.account, "schwab_1m_v2", call.symbol, "sell", "close", quantity,
-                "webull attach protection after bare resting fill", {"webull_exit_only_pair": "true",
-                "bracket_target_price": f"{target:.4f}", "bracket_stop_price": f"{protect:.4f}",
-                "source": "oms_v2_webull_protect", "market_session": "RTH"}, "limit", "day")
-            call.recovery_request = request
-            service._webull_protect_base[(call.account, call.symbol)] = base
-            _current_atr_call(service, call.managed_id)
-            # No DB await precedes this one wire. The original owner and terminal
-            # child/native-ID proof remain in memory until all records are joined.
-            reports = await service.broker_adapter.submit_order(request)
-            call.recovery_ack = tuple(reports)
-            _current_atr_call(service, call.managed_id)
-            accepted = bool(len(reports) == 1 and reports[0].origin == "broker"
-                and reports[0].event_type == "accepted" and reports[0].broker_order_id
-                and reports[0].client_order_id == base and reports[0].symbol == call.symbol
-                and reports[0].side == "sell" and reports[0].filled_quantity == 0)
-            if not accepted:
-                _d1_page(service, call, "Webull exit unprotected; protection refusal/ACK UNKNOWN; no second order")
-                return
-            proof = await service.broker_adapter.confirm_exit_pair_from_today_list(
-                broker_account_name=call.account, symbol=call.symbol, base_client_order_id=base,
-                quantity=quantity, after=datetime.now(UTC))
-            _current_atr_call(service, call.managed_id)
-            if proof.outcome != "reserved" or _d1_pair(proof.reports, base, quantity, call.symbol) != (target, protect):
-                raise ValueError("replacement_native_protection_UNPROVEN")
-            call.recovery_proof = tuple(proof.reports)
-            service.logger.info("[WBEXIT1-REPROTECTED] account=%s symbol=%s qty=%s target=%s stop=%s native=PROVEN",
-                                call.account, call.symbol, quantity, target, protect)
-    except asyncio.CancelledError:
-        _d1_page(service, call, "Webull exit unprotected; recovery cancelled, native UNKNOWN")
-        raise
-    except Exception as exc:
-        _d1_page(service, call, f"Webull exit unprotected; recovery UNKNOWN:{type(exc).__name__}:{exc}")
-
-
-async def _d1_physical_join(service, call, task, *, budget=True):
-    if not task.done() and budget and call.recovery is not None:
-        try:
-            _, pending = await asyncio.wait((task,), timeout=max(0, call.recovery[0] - monotonic()))
-            if pending:
-                _d1_page(service, call, "UNPROVEN record; physical commit still open at recovery deadline")
-        except asyncio.CancelledError:
-            call.join_cancelled = True
-            _d1_page(service, call, "UNPROVEN record; cancellation before physical join")
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError:
-            call.join_cancelled = True
-            if task.done():
-                break
-        except Exception:
-            break
-    return not task.cancelled() and task.exception() is None
-
-
-async def _d1_join_records(service, call):
-    call.recording = True
-    for task in call.records:
-        if not await _d1_physical_join(service, call, task):
-            _d1_page(service, call, "UNPROVEN record; physical commit failed")
-    if call.recovery_request is not None:
-        request = call.recovery_request
-        def record(session):
-            entry = session.scalar(select(BrokerOrder).where(
-                BrokerOrder.client_order_id == call.entry_coid).with_for_update())
-            row = session.get(OmsManagedPosition, UUID(call.managed_id))
-            if (entry is None or row is None or row.entry_order_id != entry.id
-                    or row.entry_client_order_id != call.entry_coid or row.symbol != call.symbol
-                    or row.broker_account_name != call.account or row.strategy_code != "schwab_1m_v2"):
-                raise ValueError("wbexit1_recovery_record_identity_changed")
-            state = deepcopy(entry.payload[KEY])
-            original = next((a for a in state["attempts"] if frozenset(
-                (p["coid"], p["broker_order_id"]) for p in a.get("terminal_proof", [])) == call.recovery[4]), None)
-            if original is None:
-                raise ValueError("wbexit1_recovery_record_original_proof_changed")
-            event = TradeIntentEvent(source_service="oms-risk", payload=TradeIntentPayload(
-                strategy_code="schwab_1m_v2", broker_account_name=call.account, symbol=call.symbol,
-                side="sell", intent_type="close", quantity=request.quantity, reason="WBATTACH1_PROTECTION",
-                metadata={"entry_order_id": str(entry.id), "managed_row_id": call.managed_id,
-                    "webull_protect_base_client_order_id": request.client_order_id,
-                    "webull_protect_target_client_order_id": WebullBrokerAdapter._combo_leg_coid(request.client_order_id, "T"),
-                    "webull_protect_stop_client_order_id": WebullBrokerAdapter._combo_leg_coid(request.client_order_id, "S")}))
-            strategy, account = session.get(Strategy, entry.strategy_id), session.get(BrokerAccount, entry.broker_account_id)
-            intent = service.store.create_trade_intent(session, strategy=strategy, broker_account=account, event=event)
-            phase = "accepted" if call.recovery_proof else "unknown"
-            state["attempts"].append({"base": request.client_order_id, "quantity": str(request.quantity),
-                "intent_id": str(intent.id), "phase": phase, "cancel_requested": False,
-                "d1_original_terminal_native_ids": sorted(call.recovery[4]),
-                "d1_ack": [report_payload(r) for r in call.recovery_ack],
-                "d1_working_proof": [report_payload(r) for r in call.recovery_proof]})
-            if call.recovery_proof and state.get("exit_call_id") == call.call_id:
-                state.pop("exit_phase", None)
-                state.pop("exit_call_id", None)
-            intent.status = "accepted" if call.recovery_proof else "pending"
-            if call.recovery_proof:
-                combo_id = call.recovery_ack[0].broker_order_id
-                state["attempts"][-1]["combo_id"] = combo_id
-                intent.payload = {**intent.payload, "metadata": {
-                    **intent.payload.get("metadata", {}), "webull_protect_combo_id": combo_id}}
-            entry.payload = {**entry.payload, KEY: state,
-                "webull_protect_base_client_order_id": request.client_order_id,
-                service._WEBULL_PROTECT_STATE_KEY: phase}
-        work = asyncio.create_task(service._run_db(record, commit=True))
-        call.records.append(work)
-        if not await _d1_physical_join(service, call, work):
-            _d1_page(service, call, "UNPROVEN record; protection record failed")
-    for reason in tuple(call.pages):
-        work = asyncio.create_task(critical(service, call.account, call.symbol, reason, entry_id=call.entry_coid))
-        call.records.append(work)
-        if not await _d1_physical_join(service, call, work, budget=False):
-            service.logger.critical("[WBEXIT1-PAGE-RECORD-UNKNOWN] scan_exception=true")
-    if call.join_cancelled:
-        raise asyncio.CancelledError
-
-
-def _d1_pair(reports, base, quantity, symbol):
-    known = {r.client_order_id: r for r in validated_child_reads(reports, base, quantity, symbol, datetime.now(UTC))}
-    if len(known) != 2 or len({r.broker_order_id for r in known.values()}) != 2:
-        raise ValueError("wbexit1_original_children_UNKNOWN")
-    prices = []
-    for suffix, fields in (("T", ("limit_price", "limitPrice")), ("S", ("stop_price", "stopPrice"))):
-        report = known[WebullBrokerAdapter._combo_leg_coid(base, suffix)]
-        geometry = json.loads(report.metadata.get("wbexit1_geometry", "null"))
-        values = [Decimal(str(geometry[k])) for k in fields if isinstance(geometry, dict) and k in geometry]
-        statuses = [str(geometry[k]).upper() for k in ("status", "order_status", "orderStatus") if isinstance(geometry, dict) and k in geometry]
-        if (report.origin != "broker" or not report.broker_order_id or report.event_type != "accepted"
-                or report.quantity != quantity or report.filled_quantity != 0 or not statuses or set(statuses) != {"WORKING"}
-                or not values or any(not v.is_finite() or v <= 0 or v != values[0] or WebullBrokerAdapter._round_to_tick(v) != v for v in values)):
-            raise ValueError("wbexit1_original_geometry_or_working_UNKNOWN")
-        prices.append(values[0])
-    return tuple(prices)
-
 async def strict_atr_handoff(service, row):
     """Called only INSIDE the real managed owner; it never wires the close itself."""
     account, symbol, coid = row.broker_account_name, row.symbol, row.entry_client_order_id
@@ -1442,20 +1145,6 @@ async def strict_atr_handoff(service, row):
         if len(unreleased) > 1:
             raise ValueError("exit waiting for broker proof: " + symbol)
         proof_base = (unreleased or state["attempts"])[-1]["base"]
-        if call.d1 and _rth(service):
-            proof = await service.broker_adapter.confirm_exit_pair_from_today_list(broker_account_name=account,
-                symbol=symbol, base_client_order_id=proof_base, quantity=Decimal(state["attempts"][-1]["quantity"]),
-                after=datetime.now(UTC), original_attempts=state["attempts"])
-            originals = tuple(r for r in proof.reports if r.client_order_id in tuple(WebullBrokerAdapter._combo_leg_coid(proof_base, s) for s in ("T", "S")))
-            target, protect = _d1_pair(originals if proof.outcome == "reserved" else (), proof_base, Decimal(row.current_quantity), symbol)
-            _, _, _, owned, price = await _atr_state(service, account, symbol, coid)
-            if owned != Decimal(row.current_quantity) or not protect < price < target:
-                raise ValueError("wbexit1_original_owned_quantity_or_geometry_UNKNOWN")
-            call.recovery = (monotonic() + 9, target, protect, price, frozenset((r.client_order_id, r.broker_order_id) for r in originals),
-                getattr(getattr(service, "_bot_control_runtime", None), "states", {}).get("schwab_1m_v2"))
-            call.deadline.reschedule(asyncio.get_running_loop().time() + 6)
-            call.entry_coid, call.owned_quantity = coid, owned
-            _current_atr_call(service, row.id)
     for attempt_number, attempt in enumerate(state["attempts"], 1):
         base, quantity = attempt["base"], Decimal(attempt["quantity"])
         list_proof = call.reason in SOFTWARE_EXIT_REASONS
@@ -1479,8 +1168,6 @@ async def strict_atr_handoff(service, row):
             await _atr_state(service, account, symbol, coid, cancel, allow_closed=True)
             service.logger.info(cancel_format + "action=request terminal=UNKNOWN", *cancel_context)
             try:
-                if call.d1 and call.recovery is not None:
-                    call.cancel_entered = True
                 cancel_reports = await service.broker_adapter.cancel_exit_pair(broker_account_name=account,
                     symbol=symbol, base_client_order_id=base)
             except asyncio.CancelledError:
@@ -1497,8 +1184,6 @@ async def strict_atr_handoff(service, row):
         else:
             service.logger.info(cancel_format + "action=not_resent prior_cancel_requested=true terminal=UNKNOWN",
                                 *cancel_context)
-        if call.recovery is not None:
-            await _atr_state(service, account, symbol, coid, allow_closed=True)
         try:
             if list_proof:
                 result = await service.broker_adapter.confirm_exit_pair_from_today_list(
@@ -1550,17 +1235,7 @@ async def strict_atr_handoff(service, row):
                     raise ValueError("exit waiting for broker proof: " + symbol)
                 call.list_proof_at = min(call.list_proof_at or acquired, acquired)
         service.logger.info(cancel_format + "action=confirmed terminal=PROVEN", *cancel_context)
-        if call.recovery is not None and base == proof_base and frozenset((r.client_order_id, r.broker_order_id) for r in reports) != call.recovery[4]:
-            raise ValueError("wbexit1_original_native_ids_changed")
-        if call.d1 and call.recovery is not None and base == proof_base:
-            if all(r.filled_quantity == 0 for r in reports):
-                call.released_quantity, call.released_proof = quantity, tuple(reports)
-                call.terminal_at = monotonic()
-            else:
-                _d1_page(service, call, "Webull exit unprotected,size unknown: original child fill requires reconciliation")
         if await _atr_resolved_by_child(service, state, account, symbol, coid, base, reports):
-            if call.d1:
-                call.consumed = True
             return Decimal(0)
         def released(session, entry, managed, acct, strategy, owned, journal):
             journal["attempts"] = [{**a, "phase": "released", "terminal_proof": [report_payload(r) for r in reports]}
@@ -1579,12 +1254,8 @@ async def strict_atr_handoff(service, row):
         journal["exit_phase"] = "claimed"
         journal["exit_call_id"] = call.call_id
     _, _, _, owned, _ = await _atr_state(service, account, symbol, coid)
-    if call.d1 and call.reason in SOFTWARE_EXIT_REASONS and _rth(service):
-        async with asyncio.timeout(2):
-            call.positions_read = await service.broker_adapter.read_exit_positions(account, after=terminal_at)
-        await _atr_state(service, account, symbol, coid)
     quantity = await broker_ceiling(service, account, symbol, owned, after=terminal_at,
-                                   allow_flat=call.reason in SOFTWARE_EXIT_REASONS, witness=call.positions_read)
+                                   allow_flat=call.reason in SOFTWARE_EXIT_REASONS)
     if quantity == 0:
         call.entry_coid, call.broker_flat = coid, True
         await resolve_atr_broker_flat(service, str(row.id))
@@ -1592,15 +1263,12 @@ async def strict_atr_handoff(service, row):
     # Register before the durable claim await: cancellation after its commit
     # must still find this exact, never-dispatched owner in the finally cleanup.
     call.entry_coid, call.quantity, call.owned_quantity, call.terminal_at = coid, quantity, owned, terminal_at
-    if call.d1:
-        await _atr_state(service, account, symbol, coid, claim, shield_commit=True)
-    else:
-        claim_task = asyncio.create_task(_atr_state(service, account, symbol, coid, claim))
-        try:
-            await asyncio.shield(claim_task)
-        except asyncio.CancelledError:
-            await claim_task
-            raise
+    claim_task = asyncio.create_task(_atr_state(service, account, symbol, coid, claim))
+    try:
+        await asyncio.shield(claim_task)
+    except asyncio.CancelledError:
+        await claim_task  # Do not race cleanup against a still-committing DB worker.
+        raise
     service._exit_reservation_released.add((account, symbol))
     await service._persist_webull_protect_state(account, symbol, "released")
     service.logger.info("[WBATTACH1-HANDOFF] account=%s symbol=%s entry=%s quantity=%s owner=ATR",
@@ -1721,7 +1389,7 @@ async def validate_atr_before_wire(service, request, managed_row_id):
     # This is deliberately the last await: do not refresh quotes, reprice or
     # prepare anything between this proof and the caller's broker submit.
     ceiling = await broker_ceiling(service, call.account, call.symbol, call.quantity, after=call.terminal_at,
-                                  allow_flat=call.reason in SOFTWARE_EXIT_REASONS, witness=call.positions_read)
+                                  allow_flat=call.reason in SOFTWARE_EXIT_REASONS)
     if ceiling == 0:
         call.broker_flat = True
         raise ValueError("wbattach1_broker_flat_before_wire")
@@ -1795,9 +1463,6 @@ async def release_atr_proven_unsent(service, request, managed_row_id, *, abort_e
         state.pop("exit_call_id", None)
         entry.payload = {**entry.payload, KEY: state}
     await service._run_db(release, commit=True)
-    if call.recovery is not None:
-        call.prepared = None
-        await _d1_recover(service, call)
     call.consumed = True
 
 
