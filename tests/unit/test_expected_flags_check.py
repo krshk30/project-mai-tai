@@ -51,13 +51,19 @@ def _proc_reader(
 
 def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     entries = flags.load_catalog(CATALOG)
-    assert len(entries) == 145  # Includes separately gated L12 and KEEPWATCH1.
+    assert len(entries) == 147  # Includes L12, KEEPWATCH1 and two Group-1 OFF switches.
     assert {entry["name"] for entry in entries} == {
         name
         for name, field in Settings.model_fields.items()
         if field.annotation is bool or bool in get_args(field.annotation)
     }
     by_name = {entry["name"]: entry for entry in entries}
+    for name, owner in (("strategy_schwab_1m_v2_wbexit1_d1_enabled", "oms"),
+                        ("scanner_nuweref1_enabled", "strategy")):
+        assert by_name[name]["expected"] is False
+        assert by_name[name]["owning_service"] == owner
+        assert by_name[name].get("also_check_services", []) == []
+        assert Settings.model_fields[name].default is False
     momentum = by_name["momentum_live_enabled"]
     assert momentum["expected"] is False
     assert momentum["owning_service"] == "oms"
