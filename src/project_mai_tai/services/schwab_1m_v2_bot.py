@@ -3364,10 +3364,11 @@ class SchwabV2BotService:
                     and self._keepwatch.allows_entry(symbol))
         fallback = self._line_pg_poll_fallback_current(symbol)
         if fallback is not None:
-            # OLD scanner membership for this failed poll only. Retained-only
-            # membership cannot be invented by a database exception.
+            # Current scanner membership for this failed poll only (not _watchlist,
+            # which also carries held/in-flight names). Retained-only membership
+            # cannot be invented by a database exception.
             return (symbol not in self.settings.protected_symbol_set
-                    and (symbol in self._watchlist or (
+                    and (symbol in getattr(self, "_entry_watch_symbols", set()) or (
                         fallback["retained_entry_before"] and self._keepwatch.allows_entry(symbol))))
         return (self._keepwatch.anchor_ms == session_start_ts_ms(self.strategy._now_ms())
                 and self._keepwatch_bar_quarantine.get(symbol) != self._keepwatch.anchor_ms
@@ -5254,7 +5255,8 @@ class SchwabV2BotService:
                 {sym: (str(state.atr_state) if self._line_snapshot_current(sym) and state.bars
                        and state.bars[-1].timestamp_ms == now_ms // 60_000 * 60_000 - 60_000
                        else "unknown") for sym, state in self.strategy._symbol_states.items()},
-                retain_entries=True, excluded=frozenset(protected_exclude | ineligible_exclude),
+                # Card 10-22: off the scanner list = watched, but no new buys.
+                retain_entries=False, excluded=frozenset(protected_exclude | ineligible_exclude),
             )
             if old_anchor != self._keepwatch.anchor_ms:
                 self._keepwatch_proven = {

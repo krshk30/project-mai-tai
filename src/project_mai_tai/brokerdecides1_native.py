@@ -194,7 +194,18 @@ def webull_book(*, account, native_account, position_pages, order_pages,
         if symbol in seen:
             raise ValueError("Webull_duplicate_holding")
         seen.add(symbol)
-        if _number(row.get("quantity")):
+        quantity = None
+        for key in ("quantity", "qty", "position", "shares"):
+            value = row.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                Decimal(str(value))
+            except (InvalidOperation, ValueError):
+                continue
+            quantity = value
+            break
+        if _number(quantity):
             held.add(symbol)
     working, seen = set(), set()
     rows = _pages(order_pages, native_account=native_account, field="orders", page_size=100,

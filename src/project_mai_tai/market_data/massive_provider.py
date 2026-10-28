@@ -95,6 +95,46 @@ class MassiveSnapshotProvider:
         self._client = None
         self._client_lock = threading.Lock()
         self._historical_failures: dict[tuple[str, int], float] = {}
+        self._scanner_reference_lock = threading.Lock()
+        self._scanner_reference_day = None
+        self._scanner_reference_rows = None
+        self._scanner_reference_failed = False
+
+    def _scanner_grouped_reference_rows(self, client, asof, lookback_days):
+        """C12043: singleflight prior adjusted days shared by all missing names."""
+        with self._scanner_reference_lock:
+            if self._scanner_reference_day != asof:
+                self._scanner_reference_day = asof
+                self._scanner_reference_rows = None
+                self._scanner_reference_failed = False
+            if self._scanner_reference_failed:
+                raise RuntimeError("scanner_reference_grouped_day_failed_no_retry")
+            if self._scanner_reference_rows is None:
+                days = {}
+                checked = asof - timedelta(days=1)
+                try:
+                    # Preserve the nightly convention: prior nonempty adjusted
+                    # days, bounded by the same lookback+15 calendar search.
+                    for _ in range(lookback_days + 15):
+                        if len(days) >= lookback_days:
+                            break
+                        if checked.weekday() < 5:
+                            rows = client.get_grouped_daily_aggs(
+                                date=checked.isoformat(), adjusted=True, include_otc=False
+                            )
+                            if rows:
+                                days[checked] = {
+                                    row.ticker: float(row.volume) for row in rows
+                                    if getattr(row, "ticker", None)
+                                    and getattr(row, "volume", None) is not None and row.volume > 0
+                                }
+                            time.sleep(0.1)
+                        checked -= timedelta(days=1)
+                except Exception:
+                    self._scanner_reference_failed = True
+                    raise
+                self._scanner_reference_rows = days
+            return self._scanner_reference_rows
 
     def fetch_all_snapshots(self) -> list[SnapshotRecord]:
         client = self._get_rest_client()
@@ -187,6 +227,25 @@ class MassiveSnapshotProvider:
                 time.sleep(delay_between_batches)
 
         return result
+
+    def fetch_scanner_reference(self, symbol: str, asof: date, *, lookback_days: int = 20):
+        """One NUWEREF1 attempt; original adjusted grouped-day mean convention."""
+        from statistics import mean
+        from project_mai_tai.strategy_core.models import ReferenceData
+
+        client = self._get_rest_client()
+        details = client.get_ticker_details(symbol, date=asof.isoformat())
+        shares = getattr(details, "share_class_shares_outstanding", None)
+        if shares is None:
+            shares = getattr(details, "weighted_shares_outstanding", None)
+        if (not isinstance(shares, (int, float)) or isinstance(shares, bool)
+                or not math.isfinite(shares) or shares <= 0 or int(shares) != shares):
+            return None
+        volumes = []
+        for rows in self._scanner_grouped_reference_rows(client, asof, lookback_days).values():
+            if symbol in rows:
+                volumes.append(rows[symbol])
+        return ReferenceData(int(shares), mean(volumes)) if volumes else None
 
     def fetch_historical_bars(
         self,

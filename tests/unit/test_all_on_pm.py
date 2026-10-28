@@ -383,11 +383,11 @@ def test_all_on_catalog_audit_committed_live_set_requires_both_consumers():
     legacy_flags = [entry for entry in flags if entry["name"] not in {l11_name, l12_name}]
     # Retain the original catalog projection as well as the new exact totals.
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in legacy_flags
-               if entry["name"] != "momentum_live_enabled") == 153 + 2 + 3 + 3
-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in legacy_flags) == 156 + 2 + 3 + 3
+               if entry["name"] != "momentum_live_enabled") == 153 + 2 + 3 + 3 + 1
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in legacy_flags) == 156 + 2 + 3 + 3 + 1
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags
-               if entry["name"] != "momentum_live_enabled") == 164
-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags) == 167
+               if entry["name"] != "momentum_live_enabled") == 165
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags) == 168
     country = by_name["strategy_schwab_1m_v2_country_route_enabled"]
     assert country["expected"] is True
     assert [country["owning_service"], *country["also_check_services"]] == ["schwab-1m-v2", "oms", "control"]
@@ -464,6 +464,6 @@ def test_all_on_process_catalog_checker_refuses_three_dark_values_without_live_i
     assert control["expected"] is True
     assert [control["owning_service"], *control["also_check_services"]] == ["oms", "control"]
     # Retained174 consumer checks plus KEEPWATCH1; same six-refusal oracle.
-    assert lines[-1] == "Final call: REAL FAILURE; checked=175/175 mismatches=6 unknown=0"
+    assert lines[-1] == "Final call: REAL FAILURE; checked=176/176 mismatches=6 unknown=0"
     assert len(readers) == len(set(readers)) == 9  # ALERTS1 adds the reconciler
     assert len([line for line in lines if line.startswith("REAL FAILURE")]) == 6

@@ -51,13 +51,18 @@ def _proc_reader(
 
 def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     entries = flags.load_catalog(CATALOG)
-    assert len(entries) == 145  # Includes separately gated L12 and KEEPWATCH1.
+    assert len(entries) == 146  # Includes L12, KEEPWATCH1 and NUWEREF1 OFF.
     assert {entry["name"] for entry in entries} == {
         name
         for name, field in Settings.model_fields.items()
         if field.annotation is bool or bool in get_args(field.annotation)
     }
     by_name = {entry["name"]: entry for entry in entries}
+    for name, owner in (("scanner_nuweref1_enabled", "strategy"),):
+        assert by_name[name]["expected"] is False
+        assert by_name[name]["owning_service"] == owner
+        assert by_name[name].get("also_check_services", []) == []
+        assert Settings.model_fields[name].default is False
     momentum = by_name["momentum_live_enabled"]
     assert momentum["expected"] is False
     assert momentum["owning_service"] == "oms"
@@ -69,7 +74,7 @@ def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     ) == {
         "control": 14, "market-capture": 1, "market-data": 3,
         "momentum-paper": 4, "oms": 56, "orb-schwab": 7,
-        "reconciler": 1, "schwab-1m-v2": 52, "strategy": 29,
+        "reconciler": 1, "schwab-1m-v2": 52, "strategy": 30,
     }
     country = by_name["strategy_schwab_1m_v2_country_route_enabled"]
     assert country["expected"] is True

@@ -101,6 +101,8 @@ class Settings(BaseSettings):
     # COLDSTART1: announce the current owner set once, including an empty set.
     market_data_subscription_startup_enabled: bool = True
     market_data_snapshot_interval_seconds: int = 5
+    # C12011 NUWEREF1: opt-in missing scanner reference recovery only.
+    scanner_nuweref1_enabled: bool = False
     market_data_reference_cache_path: str = "data/cache/reference_data.json"
     # PERIODIC REFERENCE REFRESH (2026-07-27, the DFNS/LGHL incident). `_ensure_reference_data()` was
     # only ever called ONCE, in `run()`. `load_from_cache()` honours `reference_cache_max_age_hours`

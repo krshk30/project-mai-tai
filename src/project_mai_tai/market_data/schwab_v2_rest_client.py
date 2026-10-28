@@ -566,7 +566,10 @@ class SchwabV2RestClient:
                 int(candle["volume"]), int(candle["datetime"]), producer="schwab",
             )
             if bar.timestamp_ms > current_bar_ms:
-                if allow_sparse:
+                # From 07:00 ET Schwab also returns the still-forming next minute
+                # (ELPW 10-28). It is not a closed candle: drop exactly that one,
+                # anything later is still an unproven response.
+                if allow_sparse and bar.timestamp_ms != current_bar_ms + 60_000:
                     raise ValueError("Schwab sparse response exceeds query window")
                 continue
             if not anchor_ms <= bar.timestamp_ms <= current_bar_ms or bar.timestamp_ms in ids:
