@@ -5,6 +5,20 @@ Authority: CLAUDE-1 LATEST C11629/C11634/C11635/C11802/C11813/C11821/C11832/C120
 
 > The 10-20 install state is in git history of this file (main 40f845eb).
 
+## Night 22:2x ET (claude-1) — Group-1 QUALIFIED, install waits for the operator's GO
+
+**Group-1 FINAL = 9a5d448a** (local, unpushed; rebased on PR #1168 head 6b8c6a99; src d96b61d1, migrations 9f1d87ed unchanged = no DB migration). Contents: A1 WBEXIT1 D1 (OFF), A3 preflight, B1 NUWEREF1 (OFF), D2 health scoreboard re-scope, D3 L12 caller-timeout log, D5 ATR page (live), WORX/YMAT must-not-recur test, two OFF entries in the expected-flags catalog. claude-1 independent run: 80cef8f0 1,221 PASS / 1 FAIL (owner count, fixed in 9a5d); 9a5d catalog + compatibility + pmprint1 116/116.
+| Item | Result |
+|---|---|
+| A2 SAIQ 10-20 | CLOSED: un-quantized price compare, fixed by WBATTACH3 (#1167), confirmed by both |
+| B2 / B3 | CLOSED by design (one-trade + no-chase rules; 06-10 fade rule) |
+| B4 / A2 10-22 | CLOSED as watch (cause unprovable from retained data) |
+| WORX/YMAT owner block | CLOSED: fixed by the 10-27 package (L11 _retire_probe_owner_after_sell) |
+| Group E E1–E4 | E1 unreachable (single-broker routing), E2 fixed 10-15, E3 fixed in code (not yet exercised live), E4 fixed 10-13 |
+| D1 momlive-sec | Cause confirmed by both: env MOMLIVE_SEC_APPROVED_HEAD=9df73a18 never moved after 10-17 → reviewed_head_drift. Fix = pin to the installed HEAD in the install step, before Sat 10-31 01:00 ET |
+| C1 stale rows | 5 named items = no-ops (already closed/absent); POM bb1feb75 HOLD (a WBATTACH1 protection pair, 0 broker_orders by design) → morning read-only Webull check; 1,084/46 aggregate classified only |
+| PR #1168 | CI pair = exact known 66, 0 new → merge is the operator's call |
+
 ## Evening 19:13–20:15 ET (claude-1, session restarted 19:13) — Group-1 status
 
 Operator plan 18:5x: Group-1 = protection (A1 WBEXIT1 D1, A2 SAIQ never-protected, A3 preflight) + missed trades (B1 NUWEREF1, B2 WFF, B3 fade<30%, B4 IPST) + D5 ATR page. **Every fix installs with its switch OFF, except the ATR page (live).** No install without the operator's GO.
