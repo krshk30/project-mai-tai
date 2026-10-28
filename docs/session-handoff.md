@@ -1,7 +1,7 @@
 # Session Handoff - October 27, 2026
 
-Updated 2026-10-27 18:19 ET for CI review; production observations below remain bounded to their original times, last read 16:48:08 ET. This section supersedes the historical October 16 snapshot below.
-Authority: CLAUDE-1 LATEST C11629/C11634/C11635/C11802/C11813/C11821/C11832; no independent production work.
+CI follow-up after the 20:23 ET manifest-only push: PR #1168 is on `6b8c6a990ba869cfe8c7d91a2c8da5d13ffe2b65`, with one new automatic push/PR CI pair pending. Production observations below retain their original bounds, Main's last full read 16:48:08 ET. This section supersedes the historical October 16 snapshot below.
+Authority: CLAUDE-1 LATEST C11629/C11634/C11635/C11802/C11813/C11821/C11832/C12014/C12016; current named Group-1 releases C11853/C11959/C12011. This document grants no production authority.
 
 > The 10-20 install state is in git history of this file (main 40f845eb).
 
@@ -66,23 +66,28 @@ Env SHA256: `827f9239175e2491e3292ba95ddff5d716c335c45514dd7bcf8acefa6a0263f2`.
 - Final runtime: `/var/tmp/oct27-l12-20dc-install-20261027-1636`; raw `8f2bb76bb9b8d646d65ff237fbeed51b7cf951e3acad801b15aa6442311d3b0b`, summary `74bfe9999ffa79c9dc6fe8f93c953e18d45fb0d68a3e3ec6195d620d9372874a`.
 - Original native shape failures and all later interval refusals remain immutable. Original 606/180/83/48 and L12 122/34/manual20/FK/boot/schema/indexed-rate obligations, native/economics UNKNOWN, and v2 watched-name/boot-hold/GC-release proof remain explicitly unclosed where unproved. No stale GoalUI completion.
 - Reconciler retained findings (five / two critical at latest bounded review) are not erased by the clean OMS window. No extra provider read or production cleanup is authorized here.
-- PR1168 required CI FAILED: runs `40579469080` and `40579478304`, completed 17:54:04/11 ET; each 170 failed / 67 errors / 20,119 passed. PR remains unmerged on exact `20dc337e`. C11802/C11813 require classification and C1 disposition first: no fixes, fixture edits, reruns or merge bypass. Main baseline `39551578595` is older than installed `9c10a7de`; no identical-baseline PASS inference.
+- Historical first PR1168 required CI on `20dc337e` FAILED: runs `40579469080` and `40579478304`, completed 17:54:04/11 ET; each 170 failed / 67 errors / 20,119 passed. Those raw outcomes remain immutable. C11802/C11813 required classification before the later scoped cleanup releases. Main baseline `39551578595` is older than installed `9c10a7de`; no identical-baseline PASS inference.
 - Complete 237-ID evidence table: `/Users/velkris/.codex/task-queues/analysis/claude1-reviews/OCT27-C11802-PR1168-CI-CLASSIFICATION.md`, SHA256 `3e43bbeb1cc2fdd3932d7c0fca7f79c3a42160fb9055f7ac5f7319963c119d8c`. A0 / B97 / C74 / D66; C denotes source-linked differences, not 74 unsafe live defects. Four C11813-authorized priority-file comparisons on literal 9c ended 18:17:07 ET: expected-flags 70 PASS plus one different count failure; three collection errors for absent newer modules/helpers. No repair/retry; 3,148 source/test snapshot pins unchanged. Current PR runtime has not been re-tested by those base-only comparisons.
-- C11821 accepted A0/B97/C74/D66 and authorized test-only B/C cleanup; C11832 separately authorized exactly one operational `ops/health/expected_flags.json` L12 entry. No application source or migration changes; no D66 fixes. One combined PR commit and required CI cycle only; new counts pending, not a green promise. D-only red still needs the operator's merge decision, no administrative bypass.
+- C11821 accepted A0/B97/C74/D66 and authorized test-only B/C cleanup; C11832 separately authorized one operational `ops/health/expected_flags.json` L12 entry. That cleanup is `2c3ad3ee`. C12014/C12016 subsequently authorized only the missing L12 install-manifest entry in one further commit, `6b8c6a990`. No application source or migration changes and no fixes to the remaining known failures. New required CI is pending; known-failure-only red still needs the operator's merge decision, no administrative bypass.
 - C11832 explicitly replaced full-root-tree equality with equality of merged `HEAD:src` and actual migration tree `HEAD:sql/migrations` against installed20dc. Required installed subtree identities are src `2f651941577e1f10cf46514383f6cd44d40bfac1` and migrations `9f1d87ed0e652f7bc17e90a289298a84fd84bb64`. The reviewed non-src delta is listed separately; no production checkout/restart merely to align a squash SHA.
-- **Box non-src sync NOT tonight:** box `ops/health/expected_flags.json` lacks the L12 flag entry until next checkout; the expected-flags audit on the box may report it until then. Tests and the one catalog-entry delta ride the next normal checkout, without a restart for those files. No new checkout/deployment authority follows from this note.
-- This existing primary-checkout handoff is outside the frozen PR tree, so documenting deployment does not change the reviewed/installed tree. Unrelated working-tree changes are untouched.
-- **HOLD** D1, stale-row cleanup (including 45-name uncertainty and POM/SAIQ/AIOK/NXL/MI), NUWEREF1, ATR page work, momlive-sec and all other lanes until explicit C1/operator decisions. Keep owners and resume points. No idle-time work, alert mute, full suite or further restart from this note.
+- **Box non-src sync NOT tonight:** box `ops/health/expected_flags.json` lacks the L12 flag entry until next checkout; the expected-flags audit on the box may report it until then. Reviewed tests, the catalog entry and the install-manifest correction ride the next normal checkout, without a restart for those files. No new checkout/deployment authority follows from this note.
+- The October27 handoff is now in docs-only PR #1169, branch `claude/handoff-2026-10-27`; own rows are updated there, preserving C1's evening section. The primary copy is retained for the local handoff entrypoint. No handoff copy is added to PR #1168; unrelated working-tree changes remain untouched.
+- C11853 and later named rulings release Group-1 SOURCE work: original Bohr A1 fix-forward target21:15 and original Gibbs NUWEREF1 build target21:45; Main alone reviews and executes related checks. Every new behavior fix has its own default-OFF switch. A3 and D5 are reviewed/local/uninstalled; A2's historical strict-owner cause is UNKNOWN accepted as watch, and B2/B3/B4 are closed with their stated dispositions. Separate momlive-sec cause/fix remains due October31 01ET. Stale-row cleanup retains its own later data-only runbook; unrelated holds remain. Nothing installs without C1 review and the operator's batch GO; no full suite, alert mute or further restart follows from this note.
 
 ## C11821/C11832/C11835 Reviewed Non-Source Delta
 
 ONE cleanup commit `2c3ad3ee52d1462a1da1fe62e248fa9a020a5142`, committed18:37:43 ET and fast-forward pushed to PR1168 at18:38 ET, parent20dc. Exactly13 files /99 additions /33 deletions. Source subtree2f651941577e1f10cf46514383f6cd44d40bfac1 and migration subtree9f1d87ed0e652f7bc17e90a289298a84fd84bb64 unchanged; full tree2210b55acc2cec81c641bb88e974ffe725bccf95 intentionally differs only by reviewed non-src content. No app/sql/tools/workflow changes, no test cases removed, no D67 repairs.
 
-One push launched the normal push/PR Validate pair40596290830 and40596296982 at18:38 ET; no manual CI rerun/workflow dispatch. Initial checks IN_PROGRESS; new pass/fail/skip counts UNKNOWN until completion, not promised green. Original170F67E CI remains historical failure. No box checkout/restart/config sync tonight.
+That push launched the normal push/PR Validate pair40596290830 and40596296982 at18:38 ET. They completed with67 failed/20,192 passed and68 failed/20,191 passed respectively; each also had201 skipped,1 deselected and1 xfailed. Main independently compared the exact failed-ID sets:66 known failures in both; the missing install-manifest L12 test in both; the recorded root_symbol flake only in the PR run. The former known S6 catalog test passed and is removed from current known-failure membership. Raw logs and the original170F67E outcomes remain unchanged.
+
+C12014/C12016 then authorized one manifest-only follow-up: `6b8c6a990ba869cfe8c7d91a2c8da5d13ffe2b65`, committed20:22:35 ET, pushed20:23:00..02 ET. Only `ops/install/OCT24-L11-L12-L14-ENV-MANIFEST.json` changed,8 additions: L12 BROKERDECIDES1 value `true`, code defaultFalse, services `schwab-1m-v2` and `oms`, matching the reviewed catalog. The manifest test plus expected-flags tests passed72/72 in1.09s;1,659 source/test/ops pins stayed unchanged during that run. XML SHA256 `f16ca87efc7229369fd551af4fbcfc59b96259f2e190622ebe639ccde36d7cee`.
+
+New automatic attempt1 pair: push `40608407781` and PR `40608415006`, both bound to `6b8c6a990` and IN_PROGRESS at the post-push read; new counts UNKNOWN. No manual rerun/workflow dispatch. Source remains `2f651941577e1f10cf46514383f6cd44d40bfac1`, migrations `9f1d87ed0e652f7bc17e90a289298a84fd84bb64`; full tree `89e98910c6b9e0ccf31e9a091fa878a5c440f7a5`. Total separately reviewed delta from installed20dc is14 non-src files/107 additions/33 deletions. PR remains unmerged; even exactly the66 known residual IDs plus the recorded flake requires the operator's decision, no admin bypass. No box checkout/restart/config sync tonight.
 
 Exact reviewed file membership:
 
 - `ops/health/expected_flags.json`
+- `ops/install/OCT24-L11-L12-L14-ENV-MANIFEST.json` (C12014/C12016 follow-up only)
 - `tests/unit/test_falseflip2_release.py`
 - `tests/unit/test_keepwatch_session_producer_chart_oracle.py`
 - `tests/unit/test_l12_friday18_actual_packet_contract.py`
@@ -98,7 +103,9 @@ Exact reviewed file membership:
 
 ## C11821/C11835 Operator List: D67 Known Failures
 
-C11835 adds the residual `tests/unit/test_no_inert_modules.py::test_no_new_module_is_imported_by_nothing` to the original D66 list below: only the newly reviewed install_chunks inventory entry is recognized; the remaining36 module paths already exist on installed9c and are NOT allowlisted. D67 is the expected remaining known-failure membership, not a claim that a new CI run has already finished. Original237-ID classification/CI raw outcomes stay immutable.
+C11835 added `tests/unit/test_no_inert_modules.py::test_no_new_module_is_imported_by_nothing` to the original D66 list: only the reviewed install_chunks inventory entry is recognized; the remaining36 module paths already exist on installed9c and are NOT allowlisted. C12014/C12016 remove the now-passing `test_pmprint1_tonight_flags.py::test_s6_catalog_matches_all_on_live_set_and_149_checks_with_restoration_on` from current known membership. The historical D67 classification now has66 remaining expected IDs: that no_inert_modules ID plus the65 IDs listed below. Original237-ID classification and all raw CI outcomes remain immutable; this documentation does not skip or xfail any test.
+
+Separate recorded flake: `tests/unit/test_momlive1_virtual_clear.py::test_bbci_missing_target_then_broker_zero_keeps_ownership_until_actual_exit[root_symbol]` failed in PR run `40596296982` and passed in push run `40596290830` (C12014; Main independently verified the failed-set difference). No source/test fix or retry is authorized for this flake. Future CI matching only the66 known residual IDs plus this recorded flake still waits for the operator's merge decision.
 
 Exact residual module paths (source membership on9c verified; no assertion that they were runtime-tested there):
 
@@ -139,7 +146,7 @@ Exact residual module paths (source membership on9c verified; no assertion that 
 - `src/project_mai_tai/services/market_data_snapshot_worker.py`
 - `src/project_mai_tai/services/momentum_live_replay.py`
 
-Original D66 test IDs and evidence bounds:
+Remaining IDs from the original D66 and their evidence bounds:
 
 C1 18:21 accepted these as "known failures on the installed base 9c (pre-existing, untested gap since 10-21)". They are NOT fixed tonight. This is the operator classification, not a claim all66 were executed on9c: only four authorized priority-file attempts were run;45 implicated source paths/functions were statically identical9c and three files could not collect against missing newer modules/helpers. Original CI assertions/errors remain failures; the complete per-ID evidence and needed resolution are in the237-ID table.
 
@@ -201,7 +208,6 @@ Test-only B/C cleanup and one new required-CI cycle are authorized; any remainin
 - `tests/unit/test_orbpast_source_regressions.py::test_new_orb_selection_cannot_drop_fence_to_use_legacy_contract[STOP_LIMIT-unknown-policy]`: AssertionError: assert 'fenced LIMIT bracket' in 'PRICE1-REFUSED'
 - `tests/unit/test_pmprint1_pmflip1.py::test_t1_t2_t3_t9_recorded_stray_cannot_take_state[False-WHLR-2026-09-23T13:14:35.011Z]`: AssertionError: assert 'V2-PM-CROSS-BLOCK' in 'INFO     price1:buy_price_floor.py:87 [PRICE1-REFUSED] bot=schwab_1m_v2 symbol=WHLR price=0\n'
 - `tests/unit/test_pmprint1_pmflip1.py::test_t10_flag_off_reproduces_saiq_false_buy_and_zero_ask_webull`: AssertionError: assert [TradeIntentD...pct': '0.5'})] == []
-- `tests/unit/test_pmprint1_tonight_flags.py::test_s6_catalog_matches_all_on_live_set_and_149_checks_with_restoration_on`: ValueError: not enough values to unpack (expected 1, got 0)
 - `tests/unit/test_pmrest1.py::test_p10_cross_drafts_match_unchanged_rest_with_600_300_sizing[True]`: AssertionError: assert [TradeIntentD...pct': '0.0'})] == []
 - `tests/unit/test_price1_pm_stream_validated_ask.py::test_raw_subfloor_line_cannot_be_rescued_by_valid_ask_or_cap`: AssertionError: assert TradeIntentDraft(symbol='CLRO', side='buy', intent_type='open', quantity=Decimal('594'), reason='schwab_1m_v2 ATR Flip... '1.0100', 'entry_computed_shares': '594', 'eh_cross_source': 'stream_trade', 'eh_cross_print_ts_ms': '1790594699992'}) is None
 - `tests/unit/test_roundup1.py::test_subdollar_default_dollars_still_meet_webull_hundred_share_minimum`: ValueError: not enough values to unpack (expected 1, got 0)
