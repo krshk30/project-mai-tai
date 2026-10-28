@@ -79,7 +79,12 @@ def assert_current_protected_l14_successor():
 
 def assert_current_runtime_membership_successor():
     lineage()
-    assert history.current_runtime_paths() == history.tree_paths(history.COMBINED) | {ADDED}
+    # C12133: exact separately reviewed B1 component; historical UI pins stay intact.
+    reference = "src/project_mai_tai/services/scanner_reference_recovery.py"
+    path = ROOT / reference
+    assert not path.is_symlink() and path.resolve() == path
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == "d23cc6304794453c26dc1ceaf4e94728ed7b66bfb060a3defcac013cc9f28570"
+    assert history.current_runtime_paths() == history.tree_paths(history.COMBINED) | {ADDED, reference}
 
 
 def test_exact_current_UI_postimages_preserve_all55_historical_preimages():

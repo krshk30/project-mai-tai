@@ -58,6 +58,7 @@ from project_mai_tai.runtime_registry import (
 )
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.services.scanner_confirmed_capture import capture_events
+from project_mai_tai.services.scanner_reference_recovery import ScannerReferenceRecovery, complete_reference
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.market_data.models import LiveBarRecord, QuoteTickRecord, TradeTickRecord
 from project_mai_tai.market_data.massive_indicator_provider import MassiveIndicatorProvider
@@ -4078,6 +4079,11 @@ class StrategyEngineState:
             )
         )
         self.reference_data: dict[str, ReferenceData] = {}
+        if getattr(self.settings, "scanner_nuweref1_enabled", False):
+            self._nuweref1 = ScannerReferenceRecovery(
+                min_price=default_alert_config.min_price, max_price=default_alert_config.max_price,
+                min_volume=default_alert_config.min_momentum_volume, logger=logger,
+            )
         self.current_confirmed: list[dict[str, object]] = []
         self.all_confirmed: list[dict[str, object]] = []
         self.retained_watchlist: list[str] = []
@@ -4579,6 +4585,18 @@ class StrategyEngineState:
 
         self.reference_data.update(filtered_reference_data)
         current_now = self.alert_engine.now_provider()
+        if getattr(self.settings, "scanner_nuweref1_enabled", False):
+            missing = [snapshot for snapshot in filtered_snapshots
+                       if not complete_reference(self.reference_data.get(snapshot.ticker))]
+            if missing:
+                recovered = self._nuweref1.observe(missing, self.reference_data, current_now)
+                self.reference_data.update(recovered)
+                filtered_reference_data.update(recovered)
+            for symbol, recovered in self._nuweref1.ready_references(
+                [snapshot.ticker for snapshot in filtered_snapshots], current_now.date()
+            ).items():
+                if self.reference_data.get(symbol) is recovered:
+                    filtered_reference_data.setdefault(symbol, recovered)
         self.five_pillars = self._decorate_scanner_rows(
             apply_five_pillars(
                 filtered_snapshots,
@@ -6178,6 +6196,15 @@ class StrategyEngineService:
             if self.settings.massive_api_key
             else None
         )
+        if getattr(self.settings, "scanner_nuweref1_enabled", False):
+            self.state._nuweref1.redis = self.redis
+            self.state._nuweref1.prefix = self.settings.redis_stream_prefix
+            if self._massive_snapshot_provider is not None:
+                from functools import partial
+                self.state._nuweref1.fetcher = partial(
+                    self._massive_snapshot_provider.fetch_scanner_reference,
+                    lookback_days=self.settings.market_data_reference_lookback_days,
+                )
         self._schwab_tick_archive = self._build_schwab_tick_archive()
         self._schwab_symbol_last_stream_trade_at: dict[str, datetime] = {}
         self._schwab_symbol_last_stream_quote_at: dict[str, datetime] = {}
@@ -6391,6 +6418,8 @@ class StrategyEngineService:
                 )
             except asyncio.CancelledError:
                 # Shutdown path — MUST propagate so run() can stop cleanly.
+                if getattr(self.settings, "scanner_nuweref1_enabled", False):
+                    await self.state._nuweref1.close()
                 raise
             except Exception:
                 # Layer 2 backstop (SPOF Workstream A): ANY unanticipated
@@ -6960,8 +6989,11 @@ class StrategyEngineService:
     async def _shutdown_cleanup(self) -> None:
         """Bounded teardown — every step capped by ``asyncio.wait_for``.
 
-        Worst-case total ~17s, well under systemd's ``TimeoutStopSec=30``.
+        Legacy steps total ~17s. NUWEREF1 ON adds at most3s before abandoning
+        only its readonly daemon SDK work; broker/DB teardown is unchanged.
         """
+        if getattr(self.settings, "scanner_nuweref1_enabled", False):
+            await self.state._nuweref1.close()
         try:
             await asyncio.wait_for(self._publish_heartbeat("stopping"), timeout=2.0)
         except TimeoutError:
