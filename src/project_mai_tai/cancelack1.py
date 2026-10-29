@@ -334,7 +334,8 @@ def _reviewed_momentum_abort(session, order, parent, observed):
     return len(siblings) == 1 and siblings[0].id == order.id and not attempts
 
 
-def _closed_order(session, order, observed, *, replacement_linked=False):
+def _closed_order(session, order, observed, *, replacement_linked=False,
+                  same_day_event_binding_enabled=False):
     """Positive durable closure, not a general terminal-status expansion."""
     try:
         if not 0 <= _at(order.updated_at) <= observed - 15_000:
@@ -377,9 +378,19 @@ def _closed_order(session, order, observed, *, replacement_linked=False):
                      and payload["momstuck2_refusal"].get("reason") == "refused_before_wire"))
         if not order.broker_order_id or not events:
             return False
-        latest = max(events, key=lambda row: (_at(row.event_at), str(row.id)))
+        webull_terminal = None
+        if same_day_event_binding_enabled is True:
+            from project_mai_tai.webull_same_day_terminal import zero_fill_terminal_event
+            account = session.get(BrokerAccount, order.broker_account_id)
+            strategy = session.get(Strategy, order.strategy_id)
+            if account is not None and strategy is not None:
+                webull_terminal = zero_fill_terminal_event(
+                    order, events, account, strategy_code=strategy.code,
+                    observed_at_ms=observed, enabled=True)
+        latest = webull_terminal if webull_terminal is not None else max(
+            events, key=lambda row: (_at(row.event_at), str(row.id)))
         def native_terminal(event):
-            return (event.event_source == "broker" and cancel_outcome_known(event)
+            return event is webull_terminal or (event.event_source == "broker" and cancel_outcome_known(event)
                 and all(value in {None, "confirmed"} for value in
                     (event.payload.get("cancel_outcome"), _metadata(event).get("cancel_outcome"))))
 
@@ -464,7 +475,7 @@ def _rpg_partial_cancel(session, order, event, executed, account, strategy):
         return False
 
 
-def _replacement_closed(session, job, symbol, observed):
+def _replacement_closed(session, job, symbol, observed, *, same_day_event_binding_enabled=False):
     """A journal phase alone cannot discharge an old order or its successor."""
     try:
         if job.get("phase") not in {"expired", "refused", "filled"}:
@@ -482,7 +493,8 @@ def _replacement_closed(session, job, symbol, observed):
                 return False
             order = session.scalar(select(BrokerOrder).where(
                 BrokerOrder.client_order_id == request["client_order_id"]))
-            if order is None or not _closed_order(session, order, observed, replacement_linked=True):
+            if order is None or not _closed_order(session, order, observed, replacement_linked=True,
+                    same_day_event_binding_enabled=same_day_event_binding_enabled):
                 return False
             account = session.get(BrokerAccount, order.broker_account_id)
             strategy = session.get(Strategy, order.strategy_id)
@@ -495,7 +507,7 @@ def _replacement_closed(session, job, symbol, observed):
         return False
 
 
-def _closed_with_replacements(session, order, observed, *, jobs=None):
+def _closed_with_replacements(session, order, observed, *, jobs=None, same_day_event_binding_enabled=False):
     """Share linkage proof with foreign-history and global working-BUY readers."""
     if jobs is None:
         jobs = _bounded(session, select(DashboardSnapshot).where(
@@ -505,10 +517,12 @@ def _closed_with_replacements(session, order, observed, *, jobs=None):
     matched = [row for row in jobs if any(isinstance(request, dict)
         and request.get("client_order_id") == order.client_order_id
         for request in (row.payload.get("old"), row.payload.get("replacement")))]
-    if any(not _replacement_closed(session, row.payload, order.symbol, observed) for row in matched):
+    if any(not _replacement_closed(session, row.payload, order.symbol, observed,
+            same_day_event_binding_enabled=same_day_event_binding_enabled) for row in matched):
         return False
     linked = any(row.payload.get("replacement") for row in matched)
-    return _closed_order(session, order, observed, replacement_linked=bool(linked))
+    return _closed_order(session, order, observed, replacement_linked=bool(linked),
+                         same_day_event_binding_enabled=same_day_event_binding_enabled)
 
 
 def working_buy_present(session, symbol, *, now=None):

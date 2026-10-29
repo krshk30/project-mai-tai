@@ -172,7 +172,8 @@ def zero_execution_closure(session, order, observed_ms):
         .limit(MAX_SYMBOLS + 1)).all()
     if len(jobs) > MAX_SYMBOLS:
         raise ValueError("event_binding_replacement_overflow")
-    if not _closed_with_replacements(session, order, observed_ms, jobs=jobs):
+    if not _closed_with_replacements(session, order, observed_ms, jobs=jobs,
+                                     same_day_event_binding_enabled=True):
         return False
     clients = {order.client_order_id}
     for job in jobs:
@@ -212,7 +213,14 @@ def zero_execution_closure(session, order, observed_ms):
         if account is None or not history:
             return False
         latest = max(history, key=lambda event: (_at(event.event_at), str(event.id)))
-        if account.provider != "schwab" or not schwab_terminal_zero(member, latest):
-            # Precise Webull positive proof is the separately reviewed Lane B.
+        if account.provider == "schwab":
+            positive = schwab_terminal_zero(member, latest)
+        elif account.provider == "webull":
+            from project_mai_tai.webull_same_day_terminal import zero_fill_terminal_event
+            positive = zero_fill_terminal_event(member, history, account,
+                strategy_code="schwab_1m_v2", observed_at_ms=observed_ms, enabled=True) is not None
+        else:
+            positive = False
+        if not positive:
             return False
     return True
