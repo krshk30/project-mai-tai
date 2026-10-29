@@ -71,7 +71,7 @@ def test_f1_audit_addition_keeps_exact_preexisting_flag_denominators():
     # Exact installed04cd artifact, including all preexisting values/metadata/
     # whitespace. Only the new audit row may be removed to recover these bytes.
     baseline_raw = b"".join(line for line in lines if line not in added)
-    assert hashlib.sha256(baseline_raw).hexdigest() == "8638c67943e8373d9234ae215b5350e5563e27a19b7e683e5b84824987ec0450"
+    assert hashlib.sha256(baseline_raw).hexdigest() == "78c3ab65472d7c5760ca4d1f4c2852f7a5583af19dbf9a46dede129783300dc5"
     current, baseline = json.loads(raw), json.loads(baseline_raw)
     own, = [row for row in current["flags"] if row["name"] == name]
     assert own["expected"] is True and own["owning_service"] == "schwab-1m-v2"
@@ -80,5 +80,5 @@ def test_f1_audit_addition_keeps_exact_preexisting_flag_denominators():
     assert len({row["name"] for row in current["flags"]}) == len(current["flags"])
     numeric = json.loads((root / "ops/health/expected_numeric.json").read_text())["settings"]
     projected = lambda rows: sum(1 + len(row.get("also_check_services", [])) for row in rows + numeric)
-    assert projected(baseline["flags"]) == 183  # +WBEXIT2 (oms + v2) in pkg-1029
-    assert projected(current["flags"]) == 184
+    assert projected(baseline["flags"]) == 185  # +WBEXIT2 +LANE-A (oms + v2 each) in pkg-1029
+    assert projected(current["flags"]) == 186
