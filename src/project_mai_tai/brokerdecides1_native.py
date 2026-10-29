@@ -11,6 +11,7 @@ Unproven scope raises even when empty. Actual reader qualification remains a gat
 from decimal import Decimal, InvalidOperation
 
 from project_mai_tai.brokerdecides1 import MAX_SYMBOLS, NativeAccountBook, symbols
+from project_mai_tai.webull_open_orders import open_order_page
 
 MAX_ROWS = 2048
 MAX_PAGES = 20
@@ -153,9 +154,18 @@ def _pages(pages, *, native_account, field, page_size, request_account=None):
     if not isinstance(pages, (list, tuple)) or not 1 <= len(pages) <= MAX_PAGES:
         raise ValueError("Webull_pages_UNKNOWN")
     if field == "orders" and request_account is not None:
-        if len(pages) != 1:
-            raise ValueError("Webull_open_empty_page_count_UNKNOWN")
-        return terminal_empty_open_orders(pages[0], native_account=native_account, request_account=request_account)
+        result, cursors = [], set()
+        for index, body in enumerate(pages):
+            rows, more, cursor = open_order_page(body, native_account=native_account,
+                                                 request_account=request_account)
+            if more != (index < len(pages) - 1) or cursor is not None and cursor in cursors:
+                raise ValueError("Webull_continuation_UNKNOWN")
+            if cursor is not None:
+                cursors.add(cursor)
+            result.extend(rows)
+            if len(result) >= MAX_ROWS:
+                raise ValueError("Webull_native_rows_at_cap")
+        return result
     if request_account is not None and (
             not isinstance(native_account, str) or not native_account
             or request_account != native_account):
@@ -210,6 +220,28 @@ def webull_book(*, account, native_account, position_pages, order_pages,
     working, seen = set(), set()
     rows = _pages(order_pages, native_account=native_account, field="orders", page_size=100,
                   request_account=order_request_account)
+    if order_request_account is not None:
+        unknown, identities = set(), {}
+        for row in rows:
+            if row.unknown_reason:
+                unknown.update(row.symbols)
+            elif row.working:
+                working.update(row.symbols)
+            if row.order_id:
+                if row.order_id in identities:
+                    unknown.update(identities[row.order_id])
+                    unknown.update(row.symbols)
+                identities.setdefault(row.order_id, set()).update(row.symbols)
+        # Keep schema3 readable by the already-running consumers. Unknown is
+        # a conservative symbol hold in their existing native-working set.
+        working.update(unknown)
+        if len(working | held) > MAX_SYMBOLS:
+            raise ValueError("Webull_symbol_overflow")
+        return NativeAccountBook(account, "webull", wire_started_ms, wire_completed_ms,
+            frozenset(working), frozenset(held), not query_only,
+            "Webull_symbol_scoped_UNKNOWN" if unknown else
+            "Webull_retained_manual_GTC_scope_UNKNOWN" if query_only else
+            "complete_native_all_working_and_positions")
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError("Webull_order_UNKNOWN")

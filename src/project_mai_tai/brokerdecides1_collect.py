@@ -17,8 +17,9 @@ from functools import wraps
 from urllib.parse import quote, urlencode
 
 from project_mai_tai.brokerdecides1_native import (
-    MAX_PAGES, MAX_ROWS, schwab_book, terminal_empty_open_orders, webull_book,
+    MAX_PAGES, MAX_ROWS, schwab_book, webull_book,
 )
+from project_mai_tai.webull_open_orders import open_order_page
 
 SDK_OPEN_REQUEST_SHA = "51200dd8b295b49d022be94994b43c8a184ce4cefc76ee6b6280f694c015f398"
 MAX_REQUESTS = 32
@@ -55,6 +56,9 @@ SAFE_FAILURE_CODES = frozenset({
     "Webull_continuation_UNKNOWN", "Webull_native_rows_at_cap", "Webull_holding_UNKNOWN",
     "Webull_duplicate_holding", "Webull_order_UNKNOWN", "Webull_native_order_identity_UNKNOWN",
     "Webull_order_status_or_items_UNKNOWN", "Webull_order_item_UNKNOWN", "Webull_symbol_overflow",
+    "Webull_open_envelope_account_UNKNOWN", "Webull_open_continuation_UNKNOWN",
+    "Webull_open_page_size_UNKNOWN", "Webull_open_cursor_UNKNOWN",
+    "Webull_open_unlocated_symbol_UNKNOWN",
 })
 
 
@@ -193,10 +197,12 @@ def webull_pages(fetch, *, account_id, field, page_size, cursor_keys,
         if type(status) is not int or status != 200:
             raise ValueError("Webull_native_http_UNKNOWN")
         if field == "orders" and order_request_account is not None:
-            terminal_empty_open_orders(body, native_account=account_id, request_account=order_request_account)
-            return [body]  # Nonempty/continuation remain UNKNOWN pending actual model proof.
-        rows, more = _continuation(body, field, account_id, page_size,
-                                  request_account=positions_request_account)
+            rows, more, next_cursor = open_order_page(body, native_account=account_id,
+                                                     request_account=order_request_account)
+        else:
+            rows, more = _continuation(body, field, account_id, page_size,
+                                      request_account=positions_request_account)
+            next_cursor = None
         total += len(rows)
         if total >= MAX_ROWS:
             raise ValueError("Webull_native_row_cap_UNKNOWN")
@@ -204,7 +210,8 @@ def webull_pages(fetch, *, account_id, field, page_size, cursor_keys,
         if not more:
             return pages
         last = rows[-1] if rows else None
-        values = [last[k] for k in cursor_keys if isinstance(last, dict) and k in last]
+        values = ([next_cursor] if next_cursor else
+                  [last[k] for k in cursor_keys if isinstance(last, dict) and k in last])
         if (not values or any(not isinstance(v, str) or not v or v != values[0] for v in values)
                 or values[0] in cursors or values[0] == cursor):
             raise ValueError("Webull_native_cursor_UNKNOWN")
