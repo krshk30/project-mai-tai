@@ -55,7 +55,26 @@ def bind_profile(monkeypatch, module, *, capture_comparison=False):
         constructed.append(value)
         return value
 
-    monkeypatch.setattr(module, "Settings", configured)
+    if capture_comparison:
+        class ProfiledSettings(Settings):
+            """Preserve real Settings validation AND the serializer's type check."""
+
+            def __init__(self, *args, **kwargs):
+                supplied = dict(PROFILE)
+                assert CAPTURE in kwargs
+                supplied[CAPTURE] = kwargs[CAPTURE]
+                kwargs.update(supplied)
+                kwargs.setdefault("_env_file", None)
+                super().__init__(*args, **kwargs)
+                assert isinstance(self, Settings)
+                for name, expected in supplied.items():
+                    assert getattr(self, name) is expected
+                constructed.append(self)
+
+        monkeypatch.setattr(module, "Settings", ProfiledSettings)
+    else:
+        # POM/NOCHASE keep their already-passing constructor path unchanged.
+        monkeypatch.setattr(module, "Settings", configured)
     return constructed
 
 
