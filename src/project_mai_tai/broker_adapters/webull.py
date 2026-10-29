@@ -111,6 +111,14 @@ class WebullAccountConfig:
     account_id: str
 
 
+@dataclass(frozen=True)
+class _Wbexit2PositionQuantity:
+    """Complete census quantity evidence; no invented average cost/mark price."""
+    broker_account_name: str
+    symbol: str
+    quantity: Decimal
+
+
 def configured_webull_accounts(settings: Settings) -> dict[str, WebullAccountConfig]:
     """Map every broker-account name routed to the ``webull`` provider -> the account id.
 
@@ -457,6 +465,20 @@ class WebullBrokerAdapter:
                 continue
             metadata = {"cancel_outcome": "confirmed" if event in {"cancelled", "rejected", "filled"} else "not_confirmed",
                         "wbattach1_list_census": json.dumps({**proof, "base": child_base}, sort_keys=True)}
+            if getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_wbexit2_enabled", False) is True:
+                # Export existing LIST fields only. No new endpoint/read and no
+                # favorable overwrite of contradictory envelope/item aliases.
+                fields = ("limit_price", "limitPrice", "stop_price", "stopPrice",
+                          "status", "order_status", "orderStatus")
+                geometry, coherent = {}, True
+                for part in (raw, item):
+                    for key in fields:
+                        if key in part:
+                            if key in geometry and geometry[key] != part[key]:
+                                coherent = False
+                            geometry[key] = part[key]
+                if coherent:
+                    metadata["wbexit2_geometry"] = json.dumps(geometry, sort_keys=True)
             if filled and event in {"cancelled", "rejected"}:
                 metadata["webull_terminal_with_partial_fill"] = event
             reports[coid] = ExecutionReport(event, coid, broker_order_id=native_id,
@@ -838,6 +860,106 @@ class WebullBrokerAdapter:
         from project_mai_tai.brokerdecides1_collect import read_webull
 
         return await read_webull(self, broker_account_name)
+
+    async def read_wbexit2_positions(self, broker_account_name: str, *, after: float):
+        """ONE fresh request-start-bound census after the original terminal proof.
+
+        This is a named WBEXIT2 capability, not the cached ordinary positions API.
+        Existing foreground physical ownership and 429 backoff are preserved.
+        No cache, partial body, missing continuation or guessed flat is returned.
+        Caller must physically join this operation on cancellation.
+        """
+        from math import isfinite
+        if getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_wbexit2_enabled", False) is not True:
+            raise WebullPositionsUnavailable("wbexit2_fresh_positions_disabled")
+        account = self.accounts_by_name.get(broker_account_name)
+        if account is None or type(after) not in (int, float) or not isfinite(after) or after > time.monotonic():
+            raise WebullPositionsUnavailable("wbexit2_positions_account_or_after_UNKNOWN")
+        try:
+            return await self._foreground_query(self._wbexit2_positions_blocking, account, broker_account_name, after)
+        except Exception as exc:
+            if self._is_rate_limited(exc):
+                self._note_positions_backoff(broker_account_name, time.monotonic())
+            raise WebullPositionsUnavailable("wbexit2_positions_wire_UNKNOWN:" + type(exc).__name__) from exc
+
+    def _wbexit2_positions_blocking(self, account, account_name, after):
+        from webull.trade.request.get_account_positions_request import AccountPositionsRequest
+        with self._positions_lock:
+            backed_off = time.monotonic() < self._positions_backoff_until.get(account_name, 0.)
+        if backed_off:
+            raise WebullPositionsUnavailable("wbexit2_positions_existing_429_backoff")
+        client = self._get_client()
+        rows, symbols, cursors = [], set(), set()
+        cursor, started = None, None
+        for _ in range(20):  # Same existing endpoint/page-size/page cap.
+            req = AccountPositionsRequest()
+            req.set_account_id(account.account_id)
+            if hasattr(req, "set_page_size"):
+                req.set_page_size(50)
+            if cursor is not None:
+                if not hasattr(req, "set_last_instrument_id"):
+                    raise ValueError("wbexit2_positions_cursor_API_UNKNOWN")
+                req.set_last_instrument_id(cursor)
+            if started is None:
+                started = time.monotonic()  # Actual first SDK entry, never coroutine creation/cache time.
+                if not after < started:
+                    raise ValueError("wbexit2_positions_not_strictly_after_terminal")
+            response = client.get_response(req)
+            if self._response_status(response) != 200:
+                if self._response_status(response) == 429:
+                    self._note_positions_backoff(account_name, time.monotonic())
+                raise ValueError("wbexit2_positions_http_UNKNOWN")
+            body = self._body(response)
+            if not isinstance(body, dict):
+                raise ValueError("wbexit2_positions_body_UNKNOWN")
+            echoes = [body[k] for k in ("account_id", "accountId") if k in body]
+            if any(type(value) is not str or value != account.account_id for value in echoes):
+                raise ValueError("wbexit2_positions_account_conflict")
+            containers = [body[k] for k in ("holdings", "positions") if k in body]
+            if (not containers or any(not isinstance(value, list) for value in containers)
+                    or any(value != containers[0] for value in containers)):
+                raise ValueError("wbexit2_positions_holdings_UNKNOWN_or_conflict")
+            holdings = containers[0]
+            continuation = [body[k] for k in ("has_next", "hasNext") if k in body]
+            if (not continuation or any(type(value) is not bool for value in continuation)
+                    or len(set(continuation)) != 1):
+                raise ValueError("wbexit2_positions_continuation_UNKNOWN_or_conflict")
+            for raw in holdings:
+                if not isinstance(raw, dict):
+                    raise ValueError("wbexit2_positions_row_UNKNOWN")
+                instrument = raw.get("instrument", {})
+                if not isinstance(instrument, dict):
+                    raise ValueError("wbexit2_positions_instrument_UNKNOWN")
+                names = [part[k] for part in (raw, instrument) for k in ("symbol", "ticker") if k in part]
+                if not names or any(type(value) is not str or not value.strip() for value in names):
+                    raise ValueError("wbexit2_positions_symbol_UNKNOWN")
+                names = [value.strip().upper() for value in names]
+                if len(set(names)) != 1 or names[0] in symbols:
+                    raise ValueError("wbexit2_positions_symbol_conflict_or_duplicate")
+                quantities = [raw[k] for k in ("quantity", "qty", "position", "shares") if k in raw]
+                if not quantities or any(type(value) not in (str, int, float, Decimal) for value in quantities):
+                    raise ValueError("wbexit2_positions_quantity_UNKNOWN")
+                quantities = [Decimal(str(value)) for value in quantities]
+                if any(not value.is_finite() or value != quantities[0] for value in quantities):
+                    raise ValueError("wbexit2_positions_quantity_conflict")
+                row_echoes = [raw[k] for k in ("account_id", "accountId") if k in raw]
+                if any(type(value) is not str or value != account.account_id for value in row_echoes):
+                    raise ValueError("wbexit2_positions_row_account_conflict")
+                symbols.add(names[0])
+                rows.append(_Wbexit2PositionQuantity(account_name, names[0], quantities[0]))
+            if continuation[0] is False:
+                if not 0 <= time.monotonic() - started <= 30:
+                    raise ValueError("wbexit2_positions_request_age_UNKNOWN")
+                return rows, started, account.account_id
+            if not holdings:
+                raise ValueError("wbexit2_positions_more_without_cursor")
+            next_values = [holdings[-1][k] for k in ("instrument_id", "instrumentId") if k in holdings[-1]]
+            if (not next_values or any(type(value) is not str or not value for value in next_values)
+                    or len(set(next_values)) != 1 or next_values[0] in cursors):
+                raise ValueError("wbexit2_positions_cursor_UNKNOWN_or_cycle")
+            cursor = next_values[0]
+            cursors.add(cursor)
+        raise ValueError("wbexit2_positions_page_cap_UNKNOWN")
 
     async def _foreground_query(self, function, *args):
         # Keep priority through cancellation until the actual blocking delegate

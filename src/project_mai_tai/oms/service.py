@@ -1132,7 +1132,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     session.commit()
                 return result
 
-        return await asyncio.to_thread(_unit)
+        work = asyncio.to_thread(_unit)
+        if getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True:
+            from project_mai_tai.oms import webull_attach_riskoff as wb, wbexit2
+            call = wb._ATR_CALL.get()
+            if call is not None and call.wb2 and call.service is self and call.task is asyncio.current_task():
+                return await wbexit2.joined(self, call, work)
+        return await work
 
     async def run(self) -> None:
         receipt_boot_id, receipt_started_monotonic = uuid4().hex, time.monotonic()
@@ -1153,6 +1159,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         )
         await asyncio.to_thread(self._rpg_retire_disabled_at_boot)
         self._rehydrate_managed_v2_symbols()  # slice-3: re-arm quote eval for open v2 rows
+        if getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True:
+            from project_mai_tai.oms.wbexit2 import hydrate_at_boot
+            try:
+                await hydrate_at_boot(self)  # COMPLETE bounded DB inventory before quote actors; no nonce reclaim.
+            except Exception:
+                self.logger.critical("[WBEXIT2-BOOT-UNKNOWN] scan_exception=true", exc_info=True)
         self._restore_nfq_holds()
         self._restore_nfq2_holds()
         self._restore_mirrorhold()
@@ -6230,6 +6242,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         protection = ""
 
         def _done(outcome: str) -> str:
+            if protection == "wbexit2_owner":
+                self.logger.info("[WBEXIT2-OWNER-RESULT] account=%s symbol=%s row=%s outcome=%s native_unprotected_seconds=UNKNOWN",
+                                 acct, symbol, expected_row_id, outcome)
             self.logger.info(
                 "[OMS-WEBULL-CANCEL-THEN-SELL] exit=%s sym=%s acct=%s row=%s outcome=%s "
                 "protection=%s seconds=%.3f",
@@ -6303,12 +6318,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             expected_row_id=expected_row_id,
             expires_at=expires_at,
             decision=decision,
+            **({"wbexit2_reason": reason} if getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True else {}),
         )
         if target_prepare_started is not None:
             close_context = {**(close_context or {}),
                 "cw_target_prepare_ms": str(round((time.monotonic()-target_prepare_started)*1000, 3)),
                 "cw_target_prepare_outcome": protection}
-            if protection not in {"released", "no_pair"}:
+            if protection not in {"released", "no_pair", "wbexit2_owner"}:
                 self._log_cw_target_attempt(account=acct, symbol=symbol, metadata=close_context,
                     guards=self._cw_target_prepare_observation(close_context),
                     blocked_guard="_prepare_confirmation_webull_leg")
@@ -6333,7 +6349,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 uncovered=protection == "uncovered",
             )
             return _done(protection)
-        if protection not in {"released", "no_pair"}:
+        if protection not in {"released", "no_pair", "wbexit2_owner"}:
             self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
             return _done("refused_before_release")
 
@@ -6353,6 +6369,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 bid=reference_bid,
                 close_on_fill=close_on_fill,
                 confirmation_context=dict(close_context or {}),
+                **({"expected_managed_row_id": snapshot.managed_row_id} if protection == "wbexit2_owner" else {}),
             )
         except asyncio.CancelledError:
             self._finish_or_recover_confirmation_leg(
@@ -6392,6 +6409,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         expected_row_id: str,
         expires_at: datetime,
         decision: _ConfirmationFanoutDecision,
+        wbexit2_reason: str = "",
     ) -> str:
         """Release a Webull pair authoritatively before a confirmation sell.
 
@@ -6400,6 +6418,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         are two terminal/absent legs or one positively identified broker fill.
         """
         inline_started_at = time.monotonic()
+        from project_mai_tai.oms import wbexit2
 
         def _read_base(session: Session) -> tuple[bool, str, str, str]:
             row = self.store.get_open_managed_position(
@@ -6410,6 +6429,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             entry = self._find_oco_entry_order(session, acct, symbol)
             if entry is None:
                 return False, "", "", ""
+            marker = (entry.payload or {}).get("wbattach1", {}).get("wbexit2_owner_id")
+            if marker and not wbexit2.selected(self, wbexit2_reason, acct):
+                raise ValueError("wbexit2_retained_owner_not_legacy_release_permission")
+            if wbexit2.selected(self, wbexit2_reason, acct):
+                from project_mai_tai.oms.webull_attach_riskoff import marked_atr_episode
+                if (row.strategy_code != "schwab_1m_v2" or row.entry_order_id != entry.id
+                        or row.entry_client_order_id != entry.client_order_id or not marked_atr_episode(entry.payload or {})):
+                    raise ValueError("wbexit2_original_history_UNPROVEN_no_first_release")
+                return True, "__WBEXIT2_OWNER_HANDOFF__", str(entry.broker_order_id or ""), str(entry.id)
             return True, self._oco_exit_base_for_entry(
                 entry, broker_account_name=acct, symbol=symbol
             ), str(entry.broker_order_id or ""), str(entry.id)
@@ -6433,6 +6461,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
             return "refused"
         base = str(base or "")
+        if base == "__WBEXIT2_OWNER_HANDOFF__" and wbexit2.selected(self, wbexit2_reason, acct):
+            return "wbexit2_owner"  # Dispatch marker ONLY, never broker/protection evidence.
         if await self._legacy_webull_partial_handover_refused(acct, symbol):
             return "refused_cancelled_partial"
         if not base:
@@ -7429,6 +7459,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         ):
             self._log_native_oco_note(acct, symbol)
         quote = self._latest_quotes_by_symbol.get(symbol)
+        if getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True:
+            from project_mai_tai.oms.wbexit2 import resume_on_quote
+            if await resume_on_quote(self, acct, symbol, quote):
+                return
         if confirmation is not None:
             fanout_decision = self._confirmation_fanout_decision(confirmation)
             if not quote or key in confirmation_inflight:
@@ -10387,6 +10421,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         lock.release()
                 from project_mai_tai.oms.webull_attach_riskoff import atr_software_exit_required
                 software_handoff = kind != "SCALE" and atr_software_exit_required(self, session, row, reason)
+                from project_mai_tai.oms import wbexit2
+                if wbexit2.selected(self, reason, acct) and not software_handoff:
+                    from project_mai_tai.oms.webull_attach_riskoff import critical
+                    session.commit()
+                    await critical(self, acct, symbol, "wbexit2_original_history_UNPROVEN_no_first_release", entry_id=row.entry_order_id)
+                    return "refused"
                 if reason != "WEBULL_ATTACH_RISK_OFF":
                     from project_mai_tai.oms.webull_attach_riskoff import atr_other_exit_blocked, critical
                     if (atr_other_exit_blocked(session, row) and not software_handoff
@@ -10950,7 +10990,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         identity = dict(request=request, account=request.broker_account_name, symbol=request.symbol,
                         metadata=request.metadata, guards=guards)
         try:
-            reports = await self.broker_adapter.submit_order(request)
+            from project_mai_tai.oms.wbexit2 import submit_current
+            reports = await submit_current(self, request)
         except BaseException as exc:
             self._log_cw_target_attempt(**identity, error_type=type(exc).__name__)
             raise
@@ -11161,11 +11202,18 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             time_in_force="day",
         )
         from project_mai_tai.oms.managed_sell_prewire import prepare_managed_sell
-        intent_id = await prepare_managed_sell(
+        prepare_work = prepare_managed_sell(
             self, event=event, request=request, managed_row_id=str(row.id), now=utcnow(),
             target_context=confirmation_context,
             allow_pending_fill_writer=owned_quantity_args.get("allow_pending_fill_writer", False),
         )
+        from project_mai_tai.oms.webull_attach_riskoff import _ATR_CALL
+        owned_call = _ATR_CALL.get()
+        if strict_handoff and owned_call is not None and owned_call.wb2:
+            from project_mai_tai.oms.wbexit2 import prepare_current
+            intent_id = await prepare_current(self, request, prepare_work)
+        else:
+            intent_id = await prepare_work
         if intent_id is None:
             return _ManagedSellEvents(reservation=reservation, ownership_refused=True)
         if reason != "WEBULL_ATTACH_RISK_OFF" and not _managed_exit_session_matches_clock(request.metadata):
@@ -11223,8 +11271,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 row.broker_account_name, row.symbol,
                 metadata["cw_decided_at"], request.metadata["cw_submitted_at"],
             )
+        from project_mai_tai.oms.wbexit2 import submit_current
         reports = (await self._submit_cw_target_order(request, target_guards) if is_target
-                   else await self.broker_adapter.submit_order(request))
+                   else await submit_current(self, request))
         intent = session.get(TradeIntent, intent_id)
         if intent is None:
             raise RuntimeError("managed_sell_prepared_intent_disappeared")
@@ -11755,6 +11804,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
     async def _sync_broker_state_pass(
         self, *, account_names: list[str] | None = None
     ) -> dict[str, int]:
+        if getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True:
+            from project_mai_tai.oms.wbexit2 import log_pending_scan
+            # C1 02:15:11: symbol+original age EACH RTH scan, before fallible
+            # broker stages; logging only, no reordered DB/native work.
+            log_pending_scan(self)
         order_summary = await self.sync_broker_orders(account_names=account_names)
         if bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False)):
             try:
@@ -11792,6 +11846,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             raise
         except Exception:
             self.logger.exception("[WBATTACH1-BOOKKEEPING] cached terminal proof unavailable")
+        if getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True:
+            from project_mai_tai.oms.wbexit2 import refresh_pending
+            try:
+                await refresh_pending(self, report_scan=False)  # Reported at pass entry, not deduped across passes.
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.logger.critical("[WBEXIT2-RECONCILE-UNKNOWN] scan_exception=true", exc_info=True)
         return {
             "accounts": position_summary["accounts"],
             "positions": position_summary["positions"],
