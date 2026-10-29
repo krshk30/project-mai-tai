@@ -10,6 +10,8 @@ Rules (same as the 10-27 approved FIRSTBAR descriptions):
             closes, from 07:00 ET, before 15:45 ET and before the next SELL flip
   exits   = sell flip (first trade after that bar closes) / session end 20:00 ET,
             else target +5% (limit at the target, cent ceiling), else stop -8% (that trade's price)
+  filter  = only BUY flips whose bar closes while the stock is CONFIRMED on the momentum scanner
+            (scanner_confirmed_events CONFIRM..FADE), like the live ATR bot (operator 10-29)
   +2min   = also sold at the first trade after 2 minutes if it never traded +1% in those 2 minutes
 Trades are read only from each signal to its exit, so the cost does not grow with the day's tape.
 """
@@ -57,6 +59,26 @@ def flips_by_symbol(conn, anchor):
         rows = compute_atr_trail(series)
         out[symbol] = [(series[i], r["flip"]) for i, r in enumerate(rows) if r["flip"]]
     return out
+
+
+def confirmed_windows(conn, day):
+    """Momentum-scanner confirmation windows per symbol (CONFIRM opens, FADE closes)."""
+    rows = conn.execute(text(
+        "select symbol, event_type, event_at from scanner_confirmed_events "
+        "where trade_date = :d and event_type in ('CONFIRM','FADE') order by event_at, id"), {"d": day}).all()
+    windows, open_at = {}, {}
+    for symbol, kind, at in rows:
+        if kind == "CONFIRM":
+            open_at.setdefault(symbol, at)
+        elif symbol in open_at:
+            windows.setdefault(symbol, []).append((open_at.pop(symbol), at))
+    for symbol, at in open_at.items():
+        windows.setdefault(symbol, []).append((at, None))
+    return windows
+
+
+def on_scanner(windows, symbol, at):
+    return any(start <= at and (end is None or at < end) for start, end in windows.get(symbol, ()))
 
 
 def trades(conn, symbol, start, end):
@@ -153,9 +175,13 @@ def run(now=None):
     tables = {"FIRSTBAR": [], "FIRSTBAR+2min": []}
     with engine.connect() as conn:
         conn.execute(text("set statement_timeout = 20000"))
+        windows = confirmed_windows(conn, day)
         for symbol, flips in flips_by_symbol(conn, anchor).items():
             for i, (bar, flip) in enumerate(flips):
                 if flip != "BUY":
+                    continue
+                # Operator 10-29: only signals while the stock is confirmed on the momentum scanner.
+                if not on_scanner(windows, symbol, datetime.fromtimestamp(bar.ts / 1000 + 60, timezone.utc)):
                     continue
                 nxt = next((b for b, f in flips[i + 1:] if f == "SELL"), None)
                 sell_close = datetime.fromtimestamp(nxt.ts / 1000 + 60, timezone.utc) if nxt else None

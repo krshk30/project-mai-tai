@@ -51,3 +51,13 @@ def test_job_rules_target_cent_ceiling_and_round_lot_filter():
     assert job.ceil_cent(2.0 * 1.05) == 2.1
     assert job.eligible("") and job.eligible("14,41") and job.eligible(None)
     assert not job.eligible("37") and not job.eligible("12,37") and not job.eligible("16")
+
+
+def test_scanner_filter_only_counts_signals_inside_confirm_fade_windows():
+    t = lambda h, m: datetime(2026, 10, 29, h, m, tzinfo=timezone.utc)
+    windows = {"PCLA": [(t(13, 5), t(13, 59)), (t(14, 21), None)], "NUWE": [(t(13, 3), t(13, 3))]}
+    assert job.on_scanner(windows, "PCLA", t(13, 30))
+    assert not job.on_scanner(windows, "PCLA", t(14, 0))
+    assert job.on_scanner(windows, "PCLA", t(18, 0))
+    assert not job.on_scanner(windows, "NUWE", t(14, 15))
+    assert not job.on_scanner(windows, "JFIN", t(14, 15))
