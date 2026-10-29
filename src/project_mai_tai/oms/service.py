@@ -66,7 +66,7 @@ from project_mai_tai.events import (
     TradeTickEvent,
     stream_name,
 )
-from project_mai_tai.fanout_identity import carry_fanout_identity
+from project_mai_tai.fanout_identity import carry_fanout_identity, merge_broker_order_payload
 from project_mai_tai.log import configure_logging
 from project_mai_tai.services.strategy_engine_app import current_scanner_session_start_utc
 from project_mai_tai.oms.store import OmsStore
@@ -16610,7 +16610,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return [self._build_rejected_event(event, intent.id, reason=reason)]
         target.broker_order_id = report.broker_order_id
         target.order_type = request.order_type
-        target.payload = {**old_metadata, **metadata}
+        target.payload = merge_broker_order_payload(old_metadata, metadata)
         if (self.settings.orb_country_semantic_admission_enabled
                 and old_metadata.get("orb_country_route") == "true"):
             # Replacement changes the handle/price, not the original parent's

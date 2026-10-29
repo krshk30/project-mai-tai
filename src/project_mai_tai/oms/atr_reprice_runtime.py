@@ -18,6 +18,7 @@ from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequ
 from project_mai_tai.broker_adapters.atr_buy_readback import AtrBuyReadback
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, TradeIntent, Strategy
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+from project_mai_tai.fanout_identity import merge_broker_order_payload
 from project_mai_tai.oms.atr_reprice_handoff import (
     AtrRepriceHandoff, HandoffJournal, ReplacementDecision, SNAPSHOT_TYPE, _request,
     _request_dict, MAX_READS, READ_INTERVAL_SECONDS, READ_TIMEOUT_SECONDS,
@@ -729,7 +730,7 @@ class AtrRepriceRuntimeMixin:
                 status="aborted", reject_reason=reason,
             )
         order.status = "aborted"
-        order.payload = {**dict(order.payload or {}), **metadata, "reject_reason": reason}
+        order.payload = merge_broker_order_payload(order.payload, {**metadata, "reject_reason": reason})
         report = ExecutionReport(
             "aborted", order.client_order_id, symbol=order.symbol, side="buy",
             intent_type="open", quantity=order.quantity, reason=reason, origin="client", metadata=metadata,
