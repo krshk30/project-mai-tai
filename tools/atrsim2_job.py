@@ -136,6 +136,8 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base):
             exit_ = (ts, price, "stop -8%")
         if exit_:
             break
+    if exit_ is None and now >= session_end:
+        exit_ = (session_end, last, "session end")
     x_px = exit_[1] if exit_ else last
     return dict(base, trigger=trig, status="CLOSED" if exit_ else "OPEN", quantity=qty,
                 entry_time=f_ts.astimezone(ET).strftime("%H:%M:%S"), entry_price=round(f_px, 4),
@@ -210,15 +212,16 @@ def trades(conn, symbol, start, end):
     cursor = start
     while True:
         page = conn.execute(text(
-            "select event_ts, price, conditions from market_capture_trades where symbol=:s "
+            "select event_ts, price, conditions, size from market_capture_trades where symbol=:s "
             "and event_ts >= :a and event_ts < :b and size > 0 order by event_ts, id limit :n"),
             {"s": symbol, "a": cursor, "b": end, "n": PAGE}).all()
-        for ts, price, cond in page:
-            if eligible(cond):
+        for ts, price, cond, size in page:
+            # Same as the old FIRSTBAR execution rule: round lots only (>=100 shares) and no excluded condition.
+            if size >= 100 and eligible(cond):
                 yield ts, float(price)
         if len(page) < PAGE:
             return
-        cursor = page[-1][0] + timedelta(microseconds=1)
+        cursor = page[-1][0] + timedelta(microseconds=1)  # noqa: page rows are (ts, price, cond, size)
 
 
 def simulate(conn, symbol, bar, sell_close, day, now):
@@ -276,6 +279,9 @@ def simulate(conn, symbol, bar, sell_close, day, now):
                 results[name] = (ts, px, reason)
         if all(results.values()):
             break
+    if now >= session_end:  # no trade printed at/after 20:00: close at the session's last trade
+        for name in results:
+            results[name] = results[name] or (session_end, last, "session end")
     out = []
     for name in ("FIRSTBAR", "FIRSTBAR+2min"):
         r = results[name]
