@@ -6370,7 +6370,8 @@ class SchwabV2BotService:
                     or symbol not in self._subscription_symbols()
                     or self.strategy._now_ms() - history.through_ms > 180_000
                     or self.strategy._symbol_states.get(symbol) is not state):
-                self._keepwatch_mark_unknown(symbol, "bar_history_result_superseded")
+                if symbol in self._keepwatch_unknown:
+                    self._keepwatch_mark_unknown(symbol, "bar_history_result_superseded")
                 return False
             pins = self._keepwatch_pins_for(symbol, anchor)
             projected = project_history(history, pins, now_ms=self.strategy._now_ms())
@@ -6450,7 +6451,8 @@ class SchwabV2BotService:
                     or self._line_sessions.get(symbol) is not ledger or ledger.epoch != epoch
                     or session_start_ts_ms(self.strategy._now_ms()) != anchor
                     or symbol not in self._subscription_symbols()):
-                self._keepwatch_mark_unknown(symbol, "bar_prefix_result_superseded")
+                if symbol in self._keepwatch_unknown:
+                    self._keepwatch_mark_unknown(symbol, "bar_prefix_result_superseded")
                 return False
             ledger.observe_closed_live(bar)
             ledger.attest(history_coverage(history, bars, canonical=True))
@@ -6566,7 +6568,8 @@ class SchwabV2BotService:
                                 or session_start_ts_ms(self.strategy._now_ms()) != anchor
                                 or symbol not in self._subscription_symbols()
                                 or self.strategy._now_ms() - current > 180_000):
-                            self._keepwatch_mark_unknown(symbol, "closed_minute_history_superseded")
+                            if symbol in self._keepwatch_unknown:
+                                self._keepwatch_mark_unknown(symbol, "closed_minute_history_superseded")
                             continue
                         state = self.strategy.watchlist_state(symbol)
                         previous = state.bars[-1].timestamp_ms if state.bars else 0
@@ -6592,7 +6595,7 @@ class SchwabV2BotService:
                                     await self._handle_bar(symbol, bar, observation_phase="replay")
                                     self._try_complete_boot_state_restoration(
                                         self._watchlist, new_symbols=set())
-                            else:
+                            elif symbol in self._keepwatch_unknown:
                                 self._keepwatch_mark_unknown(symbol, "closed_minute_prepare_refused")
                         elif not recovered:
                             # No new candle exists. Attest empty intervals without manufacturing
