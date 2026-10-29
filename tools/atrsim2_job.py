@@ -85,7 +85,8 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base):
     if first > fi or rows[first - 1]["trail"] is None:
         return dict(base, status="SKIPPED", reason="no resting bar before the flip")
     seg_start = max(at(first), open_from)
-    seg_end = min(at(fi) + timedelta(seconds=60), cutoff)
+    # The live waiting buy stays after the flip bar closes until it fills, a sell flip, or 15:45.
+    seg_end = min(sell_close or cutoff, cutoff)
     if seg_end <= seg_start:
         return dict(base, status="SKIPPED", reason="outside the 07:00-15:45 entry window")
     stream = trades(conn, symbol, seg_start, min(session_end, now))
@@ -95,7 +96,11 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base):
     for ts, price in stream:
         if ts >= seg_end:
             break
-        bar_k = index.get(int(ts.timestamp() // 60) * 60_000)
+        minute = int(ts.timestamp() // 60) * 60_000
+        if minute > series[fi].ts:
+            bar_k = k  # after the flip: the last resting price is kept (no new short line)
+        else:
+            bar_k = index.get(minute)
         if bar_k is None or rows[bar_k - 1]["trail"] is None:
             continue  # minute without a stored bar: the bot had no line to rest on
         if bar_k != k:
