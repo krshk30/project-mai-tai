@@ -64,8 +64,8 @@ def flips_by_symbol(conn, anchor):
 
 LINES = {}
 # Live ATR rules read from the running bot 10-29: resting buy-stop at line + 0.5% (cent ceiling),
-# limit 0.5% above the trigger, placed once when the short segment starts and then held (the live log
-# 10-29 shows track_existing_rest_managed, no per-bar reprice); exits: OCO target +5% / stop -8%,
+# limit 0.5% above the trigger, following the line each minute while short (live log 10-29: PCLA re-placed
+# 13:53/13:56/13:58 UTC as the line fell; NCPL held 1.81 while its line stayed ~1.79); exits: OCO target +5% / stop -8%,
 # CONF1 confirmation (bar after the fill's bar must close long), sell flip.
 LIVE_OFFSET, LIVE_BAND, LIVE_TARGET, LIVE_STOP = 0.005, 0.005, 0.05, 0.08
 
@@ -90,14 +90,18 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base):
         return dict(base, status="SKIPPED", reason="outside the 07:00-15:45 entry window")
     stream = trades(conn, symbol, seg_start, min(session_end, now))
     fill = None
-    triggered = False
-    place = next(i for i in range(first, fi + 1) if at(i) + timedelta(seconds=60) > seg_start)
-    trigger = ceil_cent(rows[place - 1]["trail"] * (1 + LIVE_OFFSET))
-    limit = ceil_cent(trigger * (1 + LIVE_BAND))
+    triggered, k = False, None
+    index = {series[i].ts: i for i in range(first, fi + 1)}
     for ts, price in stream:
         if ts >= seg_end:
             break
-        k = first + int((ts - at(first)).total_seconds() // 60)
+        bar_k = index.get(int(ts.timestamp() // 60) * 60_000)
+        if bar_k is None or rows[bar_k - 1]["trail"] is None:
+            continue  # minute without a stored bar: the bot had no line to rest on
+        if bar_k != k:
+            k, triggered = bar_k, False
+            trigger = ceil_cent(rows[k - 1]["trail"] * (1 + LIVE_OFFSET))
+            limit = ceil_cent(trigger * (1 + LIVE_BAND))
         if not triggered and price >= trigger:
             triggered = True
         if triggered and price <= limit:
