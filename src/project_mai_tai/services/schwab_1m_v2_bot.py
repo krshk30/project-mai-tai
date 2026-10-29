@@ -6373,6 +6373,8 @@ class SchwabV2BotService:
         self._keepwatch_mark_unknown(symbol, "bar_history_read_pending")
         epoch = ledger.epoch
         source_identity = self._line_source_identity.get(symbol)
+        trade_through = bar.timestamp_ms if history is None else history.through_ms
+        trade_token = ledger.trade_evidence_token(trade_through) if self._line_sized_trade_policy_enabled() else None
         try:
             # Shared REST clients have one worker owner; independent symbols' trade/quote
             # callbacks remain runnable while this gap/boot-only I/O awaits completion.
@@ -6381,6 +6383,9 @@ class SchwabV2BotService:
             if not current_history_response(history, symbol=symbol, anchor_ms=anchor,
                     through_ms=bar.timestamp_ms, now_ms=self.strategy._now_ms()):
                 raise ValueError("foreign KEEPWATCH1 history window")
+            if trade_token is not None and ledger.trade_evidence_token(trade_through) != trade_token:
+                self._keepwatch_hold_unknown(symbol, "positive_trade_arrived_during_history")
+                return False
             if (self._stop_event.is_set()
                     or not self._keepwatch_work_current(symbol, expected_work)
                     or self._line_source_identity.get(symbol) != source_identity
@@ -6418,6 +6423,9 @@ class SchwabV2BotService:
             for row in prefix:
                 ledger.observe(row)
             ledger.attest(history_coverage(history, prefix, canonical=True))
+            if self._line_sized_trade_policy_enabled() and ledger.has_uncovered_trade(history.through_ms, merged):
+                self._keepwatch_hold_unknown(symbol, "empty_provider_conflicts_with_trade")
+                return False
             if ledger.has_unrecovered_traded_gap():
                 self._keepwatch_hold_unknown(symbol, "empty_provider_conflicts_with_trade")
                 self._keepwatch_refresh_current_recovery(symbol)
@@ -6467,6 +6475,7 @@ class SchwabV2BotService:
                     or not self._keepwatch_work_current(symbol, expected_work)
                     or self._line_source_identity.get(symbol) != source_identity
                     or self.strategy._symbol_states.get(symbol) is not state
+                    or (trade_token is not None and ledger.trade_evidence_token(trade_through) != trade_token)
                     or self._line_sessions.get(symbol) is not ledger or ledger.epoch != epoch
                     or session_start_ts_ms(self.strategy._now_ms()) != anchor
                     or symbol not in self._subscription_symbols()):
@@ -6571,6 +6580,7 @@ class SchwabV2BotService:
                     epoch = ledger.epoch
                     source_identity = self._line_source_identity.get(symbol)
                     source_state = self.strategy._symbol_states.get(symbol)
+                    trade_token = ledger.trade_evidence_token(current) if self._line_sized_trade_policy_enabled() else None
                     self._keepwatch_mark_unknown(symbol, "closed_minute_history_pending")
                     operation = object()
                     context_token = self._keepwatch_history_context.set(
@@ -6580,6 +6590,9 @@ class SchwabV2BotService:
                         if not current_history_response(history, symbol=symbol, anchor_ms=anchor,
                                 through_ms=current, now_ms=self.strategy._now_ms()):
                             raise ValueError("unproven KEEPWATCH1 history availability")
+                        if trade_token is not None and ledger.trade_evidence_token(current) != trade_token:
+                            self._keepwatch_hold_unknown(symbol, "positive_trade_arrived_during_history")
+                            continue
                         if (self._stop_event.is_set()
                                 or self._line_sessions.get(symbol) is not ledger or ledger.epoch != epoch
                                 or self._line_source_identity.get(symbol) != source_identity
@@ -6622,6 +6635,9 @@ class SchwabV2BotService:
                             known = {bar.timestamp_ms: bar for bar in projected}
                             known.update(ledger._bars)
                             rows = tuple(pins.current(stamp) for stamp in sorted(known))
+                            if self._line_sized_trade_policy_enabled() and ledger.has_uncovered_trade(current, known):
+                                self._keepwatch_hold_unknown(symbol, "empty_provider_conflicts_with_trade")
+                                continue
                             for row in rows:
                                 ledger.observe(row)
                             ledger.attest(history_coverage(history, rows, canonical=True))
@@ -8595,6 +8611,17 @@ class SchwabV2BotService:
             raw_codes = "COALESCE(t.raw->'conditions', t.raw->'c')"
             tick_filter = condition_filter(f"""CASE WHEN jsonb_typeof({raw_codes}) = 'array'
                 THEN ARRAY(SELECT jsonb_array_elements_text({raw_codes})) ELSE NULL END""")
+            if self._line_sized_trade_policy_enabled():
+                # C1 09:26 bot policy: positive size and NOT explicit37.
+                # Same existing query/SETs/timeouts; no added read or provider I/O.
+                capture_filter += """ AND t.size >= 100 AND NOT COALESCE(
+                    t.provider IN ('massive','polygon','schwab')
+                    AND '37' = ANY(string_to_array(t.conditions, ',')), FALSE)"""
+                tick_filter += f""" AND t.size >= 100 AND NOT COALESCE(
+                    t.provider IN ('massive','polygon','schwab') AND
+                    CASE WHEN jsonb_typeof({raw_codes}) = 'array'
+                    THEN {raw_codes} ? '37' OR {raw_codes} @> '[37]'::jsonb
+                    ELSE FALSE END, FALSE)"""
         query = text(f"""
             WITH gaps(lo, hi) AS (VALUES {values})
             SELECT lo, hi FROM gaps WHERE
@@ -8612,13 +8639,35 @@ class SchwabV2BotService:
             session.execute(text("SET LOCAL lock_timeout = '500ms'"))
             return tuple((int(row[0]), int(row[1])) for row in session.execute(query, params))
 
+    def _line_sized_trade_policy_enabled(self) -> bool:
+        return bool(getattr(self, "_keepwatch_enabled", False) and
+                    getattr(self.settings, "strategy_schwab_1m_v2_keepwatch_sized_trade_gap_enabled", False) and
+                    self.settings.strategy_schwab_1m_v2_gap_trade_conditions_filter_enabled)
+
+    @staticmethod
+    def _line_print_eligibility(*, size=None, conditions=None) -> bool:
+        """C1 09:26 BOT policy, not SEC/instrument round-lot identity.
+
+        A barrier requires positive sized >=100 and no explicit condition37.
+        Small/unsized observations alone cannot create it. Complete current
+        two-provider candle coverage is STILL required before spanning EMPTY.
+        """
+        if type(size) is not int or size < 100:
+            return False
+        if type(conditions) is str:
+            conditions = conditions.split(",")
+        if type(conditions) in {tuple, list}:
+            if any(type(code) in {str, int} and str(code) == "37" for code in conditions):
+                return False
+        return True
+
     def _observe_line_trade(self, symbol: str, timestamp_ms: int) -> None:
         if not getattr(self, "_line_restoration_enabled", False):
             return
         ledger = self._line_sessions.get(symbol.upper())
         if ledger is not None and 0 < timestamp_ms <= self.strategy._now_ms():
             revision = ledger.revision
-            ledger.observe_trade(timestamp_ms)
+            ledger.observe_trade(timestamp_ms, track_generation=self._line_sized_trade_policy_enabled())
             if ledger.revision != revision:
                 self._line_dirty.add(ledger.symbol)
                 self._line_rebuild_event.set()
@@ -9076,7 +9125,8 @@ class SchwabV2BotService:
         if not raw_symbol_is_uppercase(symbol) or not raw_symbol_is_uppercase(quote.symbol):
             return
         now = datetime.now(UTC)
-        self._observe_line_trade(symbol, int(getattr(quote, "trade_time_ms", 0) or 0))
+        if not self._line_sized_trade_policy_enabled():
+            self._observe_line_trade(symbol, int(getattr(quote, "trade_time_ms", 0) or 0))
         self._last_tick_at[symbol] = _format_eastern(now)
         # Watchdog: quotes flow whenever the market is actually trading
         # (holiday-safe), so this is the discriminator for whether a bar
@@ -9114,7 +9164,9 @@ class SchwabV2BotService:
     async def _handle_stream_tick(self, tick: SchwabTick) -> None:
         if not raw_symbol_is_uppercase(tick.symbol):
             return
-        if tick.kind == "trade":
+        if tick.kind == "trade" and (not self._line_sized_trade_policy_enabled()
+                or self._line_print_eligibility(size=tick.size,
+                    conditions=tick.raw.get("conditions", tick.raw.get("c")))):
             self._observe_line_trade(tick.symbol, int(tick.event_ts_ms))
         if self._eh_stream_cross_enabled and tick.service == "LEVELONE_EQUITIES":
             raw_ask = tick.raw.get("2")
