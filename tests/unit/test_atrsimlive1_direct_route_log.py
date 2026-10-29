@@ -165,4 +165,5 @@ def test_timer_unit_is_trader_end_to_end_without_rejected_root_paths():
     unit=(ROOT/'ops/systemd/project-mai-tai-atr-sim-today.service').read_text()
     assert 'User=trader\nGroup=trader\n'in unit
     assert '/usr/local/libexec/'not in unit and 'route-runs'not in unit
-    assert all(line in unit for line in('NoNewPrivileges=true','ProtectSystem=strict','ProtectHome=read-only','MemoryMax=2G','RuntimeMaxSec=260','Restart=no'))
+    assert all(line in unit for line in('NoNewPrivileges=true','ProtectSystem=strict','ProtectHome=read-only','MemoryMax=2G','TimeoutStartSec=150','TimeoutStopSec=4','Nice=19','IOSchedulingClass=idle','Restart=no'))
+    assert 'RuntimeMaxSec=260' not in unit

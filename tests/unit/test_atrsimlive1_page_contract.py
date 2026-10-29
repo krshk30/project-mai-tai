@@ -1,7 +1,7 @@
 """SOURCE-only controls for Main; no native/tape qualification or PAGE edits.
 
-The external PAGE hook is byte-pinned to Main-reviewed PAGE v3. Main may point it at
-its composed root only when these exact three PAGE file bytes are present.
+The external PAGE hook is byte-pinned to Main's reviewed composed PAGE bytes.
+The original v3 identities remain explicit; no loose-hash or missing-file skip.
 """
 
 from copy import deepcopy
@@ -17,10 +17,17 @@ import pytest
 from tests.unit.test_atrsimlive1_runtime import NOW, ROOT, module, runtime, unavailable
 
 
-PAGE_PINS = {
+ORIGINAL_PAGE_V3_PINS = {  # Immutable 0e133e4f source-era identities.
     "today_file": "fecae0b80b48210b3b60764a38cf1e5f15d6ea701cc9fdd43928fc37766cb7f3",
     "today_display": "cd4d751779da61a2653bd511cafbe234ce7b0904de0bf04dc911a2df1cd2000f",
     "cp_sim_display": "68ffd4c2aafe6d3995bb992e1715d954f7c887ec2fe70a1804b910dafa96414c",
+}
+PAGE_PINS = {
+    **ORIGINAL_PAGE_V3_PINS,
+    # Reviewed compact-envelope validation/run-summary extensions. The legacy
+    # V1 roundtrip and all original field/escaping/UNKNOWN assertions below stay.
+    "today_file": "bc350e4655550d77491ef08127424dda7f12260ddf18e5a60a5883e6644c3763",
+    "today_display": "d5bb6d3f04a626ad5594716e1135c88e52b4b4eb4a8db3380920ec08e78bf5fd",
 }
 
 
