@@ -4596,12 +4596,13 @@ def build_app(
             )
         firstbar_html = ""
         if strategy_code == "schwab_1m_v2":
-            from project_mai_tai.atr_simulation.today_display import render_today_page
+            from project_mai_tai.atr_simulation.sim2_display import ET as SIM2_ET, load_day, render_day
 
-            # Local immutable snapshot only: no history DB/engine work per page.
-            today_context = await asyncio.to_thread(active_today_reader, now=utcnow())
-            firstbar_html = await asyncio.to_thread(render_today_page, today_context,
-                                                   render_row=_render_completed_position_row)
+            # Operator 10-29: only FIRSTBAR and FIRSTBAR+2min, today only; one stored row per day
+            # written by the 5-minute ATRSIM2 job (earlier days stay in the table as the archive).
+            sim2_day = utcnow().astimezone(SIM2_ET).date().isoformat()
+            sim2_doc = await asyncio.to_thread(load_day, active_session_factory, sim2_day)
+            firstbar_html = render_day(sim2_doc, render_row=_render_completed_position_row, day=sim2_day)
         rendered = _render_bot_detail_page(
             data,
             strategy_code,

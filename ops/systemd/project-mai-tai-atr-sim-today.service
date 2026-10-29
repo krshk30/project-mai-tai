@@ -1,5 +1,5 @@
 [Unit]
-Description=Bounded TODAY ATR simulation file (no trading writes)
+Description=ATRSIM2: FIRSTBAR + FIRSTBAR+2min paper tables for today (operator 10-29; simulation only, no orders)
 After=network.target
 
 [Service]
@@ -9,9 +9,9 @@ Group=trader
 WorkingDirectory=/home/trader/project-mai-tai
 EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/usr/bin/ionice -c 3 /home/trader/project-mai-tai/.venv/bin/python /home/trader/project-mai-tai/tools/atrsimlive1_refresh_job.py --source-manifest /etc/project-mai-tai/atrsimlive1-source.json --policy /var/lib/project-mai-tai/atr-simulation/policy/oct5-condition-rules.json --incremental-cache-root /var/lib/project-mai-tai/atr-simulation/today/cache-v2 --evidence-root /var/lib/project-mai-tai/atr-simulation/today/evidence --dsn-env MAI_TAI_DATABASE_URL --cache-closed-components
+ExecStart=/usr/bin/ionice -c 3 /home/trader/project-mai-tai/.venv/bin/python /home/trader/project-mai-tai/tools/atrsim2_job.py
 # Type=oneshot uses TimeoutStartSec, not RuntimeMaxSec.
-TimeoutStartSec=150
+TimeoutStartSec=120
 TimeoutStopSec=4
 KillMode=control-group
 Restart=no

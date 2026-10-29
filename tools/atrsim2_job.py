@@ -1,0 +1,185 @@
+"""ATRSIM2 — the two paper tables the operator asked for (10-29): FIRSTBAR and FIRSTBAR+2min.
+
+Simulation only, never orders. Runs every 5 minutes; writes ONE dashboard_snapshots row per
+trading day (snapshot_type 'atr_sim2_day'), replacing that day's row each run. Rows of earlier
+days are kept untouched — that is the archive. The ATR page shows today's row.
+
+Rules (same as the 10-27 approved FIRSTBAR descriptions):
+  signal  = a BUY flip of the ATR line on the bot's own stored 1-minute bars (04:00 ET seed)
+  entry   = first round-lot trade at or above the flip bar's high + $0.01, after the flip bar
+            closes, from 07:00 ET, before 15:45 ET and before the next SELL flip
+  exits   = sell flip (first trade after that bar closes) / session end 20:00 ET,
+            else target +5% (limit at the target, cent ceiling), else stop -8% (that trade's price)
+  +2min   = also sold at the first trade after 2 minutes if it never traded +1% in those 2 minutes
+Trades are read only from each signal to its exit, so the cost does not grow with the day's tape.
+"""
+from __future__ import annotations
+
+import json
+import math
+import os
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import create_engine, text
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+from project_mai_tai.backtest.atr_oracle import Bar, compute_atr_trail  # noqa: E402
+
+ET = ZoneInfo("America/New_York")
+SNAPSHOT_TYPE = "atr_sim2_day"
+NOTIONAL = 600.0
+# Same condition filter as the bot's bars: non-last-updating conditions and odd lots never fill.
+EXCLUDED = {"2", "7", "10", "13", "15", "16", "20", "21", "22", "29", "33", "37", "38", "52", "53"}
+PAGE = 5000
+
+
+def eligible(conditions: str | None) -> bool:
+    return not (set((conditions or "").split(",")) & EXCLUDED)
+
+
+def ceil_cent(value: float) -> float:
+    return math.ceil(round(value * 100, 6)) / 100
+
+
+def flips_by_symbol(conn, anchor):
+    rows = conn.execute(text(
+        "select symbol, bar_time, open_price, high_price, low_price, close_price, volume "
+        "from strategy_bar_history where strategy_code='schwab_1m_v2' and interval_secs=60 "
+        "and bar_time >= :a order by symbol, bar_time"), {"a": anchor}).all()
+    bars = {}
+    for s, t, o, h, l, c, v in rows:
+        bars.setdefault(s, []).append(Bar(int(t.timestamp() * 1000), float(o), float(h), float(l), float(c), int(v or 0)))
+    out = {}
+    for symbol, series in bars.items():
+        rows = compute_atr_trail(series)
+        out[symbol] = [(series[i], r["flip"]) for i, r in enumerate(rows) if r["flip"]]
+    return out
+
+
+def trades(conn, symbol, start, end):
+    """Eligible trades in [start, end), streamed in pages so a caller can stop early."""
+    cursor = start
+    while True:
+        page = conn.execute(text(
+            "select event_ts, price, conditions from market_capture_trades where symbol=:s "
+            "and event_ts >= :a and event_ts < :b and size > 0 order by event_ts, id limit :n"),
+            {"s": symbol, "a": cursor, "b": end, "n": PAGE}).all()
+        for ts, price, cond in page:
+            if eligible(cond):
+                yield ts, float(price)
+        if len(page) < PAGE:
+            return
+        cursor = page[-1][0] + timedelta(microseconds=1)
+
+
+def simulate(conn, symbol, bar, sell_close, day, now):
+    flip_close = datetime.fromtimestamp(bar.ts / 1000 + 60, timezone.utc)
+    open_from = datetime.combine(day, datetime.min.time(), ET).replace(hour=7)
+    cutoff = datetime.combine(day, datetime.min.time(), ET).replace(hour=15, minute=45)
+    session_end = datetime.combine(day, datetime.min.time(), ET).replace(hour=20)
+    entry_end = min(cutoff, sell_close or session_end)
+    trigger = round(bar.high + 0.01, 4)
+    signal = flip_close.astimezone(ET).strftime("%H:%M")
+    base = {"symbol": symbol, "signal": signal, "trigger": trigger}
+    if flip_close >= entry_end:
+        return [dict(base, status="SKIPPED", reason="entry window ended")] * 2
+    horizon = min(session_end, now)
+    stream = trades(conn, symbol, max(flip_close, open_from), horizon)
+    entry = None
+    pending = []
+    for ts, price in stream:
+        if entry is None:
+            if ts >= entry_end:
+                break
+            if price >= trigger:
+                entry = (ts, price)
+                break
+    if entry is None:
+        reason = "buy price never reached" if now >= entry_end else "waiting for buy price"
+        return [dict(base, status="SKIPPED" if now >= entry_end else "WAITING", reason=reason)] * 2
+    e_ts, e_px = entry
+    qty = int(NOTIONAL // e_px)
+    target = ceil_cent(e_px * 1.05)
+    stop = e_px * 0.92
+    deadline = e_ts + timedelta(seconds=120)
+    results = {"FIRSTBAR": None, "FIRSTBAR+2min": None}
+    hit_one = False
+    last = e_px
+    for ts, price in stream:  # continues after the entry trade
+        last = price
+        if ts <= deadline and price >= e_px * 1.01:
+            hit_one = True
+        for name in results:
+            if results[name] is not None:
+                continue
+            reason, px = None, price
+            if sell_close is not None and ts >= sell_close:
+                reason = "sell flip"
+            elif ts >= session_end:
+                reason = "session end"
+            elif price >= target:
+                reason, px = "target +5%", target
+            elif price <= stop:
+                reason = "stop -8%"
+            elif name == "FIRSTBAR+2min" and ts >= deadline and not hit_one:
+                reason = "not +1% in 2 min"
+            if reason:
+                results[name] = (ts, px, reason)
+        if all(results.values()):
+            break
+    out = []
+    for name in ("FIRSTBAR", "FIRSTBAR+2min"):
+        r = results[name]
+        row = dict(base, status="CLOSED" if r else "OPEN", quantity=qty, entry_time=e_ts.astimezone(ET).strftime("%H:%M:%S"),
+                   entry_price=round(e_px, 4))
+        x_px = r[1] if r else last
+        row.update(exit_time=r[0].astimezone(ET).strftime("%H:%M:%S") if r else "open",
+                   exit_price=round(x_px, 4), reason=r[2] if r else "still open (marked at last trade)",
+                   pnl=round((x_px - e_px) * qty, 2), pnl_pct=round((x_px / e_px - 1) * 100, 2))
+        out.append(row)
+    return out
+
+
+def run(now=None):
+    started = time.monotonic()
+    now = now or datetime.now(timezone.utc)
+    day = now.astimezone(ET).date()
+    anchor = datetime.combine(day, datetime.min.time(), ET).replace(hour=4)
+    url = os.environ["MAI_TAI_DATABASE_URL"]
+    engine = create_engine(url, pool_pre_ping=True)
+    tables = {"FIRSTBAR": [], "FIRSTBAR+2min": []}
+    with engine.connect() as conn:
+        conn.execute(text("set statement_timeout = 20000"))
+        for symbol, flips in flips_by_symbol(conn, anchor).items():
+            for i, (bar, flip) in enumerate(flips):
+                if flip != "BUY":
+                    continue
+                nxt = next((b for b, f in flips[i + 1:] if f == "SELL"), None)
+                sell_close = datetime.fromtimestamp(nxt.ts / 1000 + 60, timezone.utc) if nxt else None
+                if sell_close is not None and sell_close > now:
+                    sell_close = None
+                a, b = simulate(conn, symbol, bar, sell_close, day, now)
+                tables["FIRSTBAR"].append(a)
+                tables["FIRSTBAR+2min"].append(b)
+    for rows in tables.values():
+        rows.sort(key=lambda r: (r.get("entry_time") or "99", r["signal"], r["symbol"]))
+    doc = {"schema": "ATRSIM2_DAY_V1", "trading_day": day.isoformat(), "generated_at": now.isoformat(),
+           "elapsed_seconds": round(time.monotonic() - started, 2), "notional_usd": NOTIONAL, "tables": tables}
+    with engine.begin() as conn:
+        conn.execute(text("delete from dashboard_snapshots where snapshot_type=:t and payload->>'trading_day'=:d"),
+                     {"t": SNAPSHOT_TYPE, "d": day.isoformat()})
+        conn.execute(text("insert into dashboard_snapshots (id, snapshot_type, payload, created_at) "
+                          "values (gen_random_uuid(), :t, cast(:p as json), now())"),
+                     {"t": SNAPSHOT_TYPE, "p": json.dumps(doc)})
+    counts = {k: sum(1 for r in v if r["status"] in ("CLOSED", "OPEN")) for k, v in tables.items()}
+    print(json.dumps({"event": "ATRSIM2_WRITTEN", "trading_day": doc["trading_day"], "trades": counts,
+                      "signals": len(tables["FIRSTBAR"]), "elapsed_seconds": round(time.monotonic() - started, 2)}),
+          flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(run())

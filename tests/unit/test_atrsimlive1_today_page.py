@@ -325,6 +325,7 @@ def test_coverage_visible_escaped_beside_original_exit_reason_and_nine_cells():
     assert data == before
 
 
+@pytest.mark.skip(reason="operator 10-29: ATR page now shows only FIRSTBAR / FIRSTBAR+2min from ATRSIM2 (test_atrsim2.py)")
 def test_real_today_route_reads_and_renders_offloop_without_any_historical_port(monkeypatch):
     calls, render_threads = [], []
 
