@@ -138,8 +138,14 @@ def test_copy_boundary_duplicate_is_reported_not_invented_twice(route,tmp_path):
 def controlled_cli(monkeypatch):
     monkeypatch.syspath_prepend(str(ROOT/'tools'));cli=importlib.import_module('atrsimlive1');seen=[]
     monkeypatch.setattr(cli,'source_binding',lambda path:{'head':'a'*40})
-    def collect(*,dsn,processor,capture_log_path):return[processor({'symbol':s})for s in('CHSN','ELPW')]
-    def produce(data,*,policy_path,producer,route_packet):seen.append(route_packet);return data
+    def collect(*,dsn,processor,capture_log_path,working_policy_path,null_policy):
+        assert dsn == 'CONTROLLED_NO_DB'
+        assert working_policy_path is None and null_policy is None
+        return[processor({'symbol':s})for s in('CHSN','ELPW')]
+    def produce(data,*,policy_path,producer,route_packet,same_sip_policy,null_policy):
+        assert policy_path is None and same_sip_policy is None and null_policy is None
+        seen.append(route_packet)
+        return data
     monkeypatch.setitem(sys.modules,'atrsimlive1_collect',SimpleNamespace(collect=collect,dsn_from_environment=lambda name:'CONTROLLED_NO_DB',encoded=lambda value:json.dumps(value).encode()))
     monkeypatch.setitem(sys.modules,'atrsimlive1_models',SimpleNamespace(produce=produce,combine=lambda rows:{'rows':rows}))
     return cli,seen

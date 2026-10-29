@@ -317,7 +317,8 @@ def test_coverage_visible_escaped_beside_original_exit_reason_and_nine_cells():
         summary="CONTROLLED ORIGINAL_EXIT_REASON")
     before = deepcopy(data)
     html = today_display.render_today_page(context(data), render_row=cp._render_completed_position_row)
-    assert 'CONTROLLED ORIGINAL_EXIT_REASON<br><small class="sim-row-coverage">' in html
+    assert ('CONTROLLED ORIGINAL_EXIT_REASON; percent evidence UNKNOWN (legacy row)'
+            '<br><small class="sim-row-coverage">') in html
     assert "&lt;b&gt;literal&lt;/b&gt;" in html and "<b>literal</b>" not in html
     assert html.count('class="sim-row-coverage"') == 7
     assert html.count("<td") == 7*9

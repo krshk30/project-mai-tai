@@ -49,7 +49,7 @@ def test_parent_forwards_literal_null_version_to_child(monkeypatch, tmp_path):
     def child(command, *, seconds):
         calls.append(command)
         assert seconds == 240
-        return b'{}', 0.01
+        return b'{"schema":"ATRSIMLIVE1_TODAY_V1"}', 0.01
     monkeypatch.setattr(cli, 'bounded_child', child)
     monkeypatch.setattr(cli, 'publish', lambda *args: 2)
     assert cli.main(['--source-manifest', str(tmp_path/'source.json'), '--dsn-env', 'DATABASE_URL',

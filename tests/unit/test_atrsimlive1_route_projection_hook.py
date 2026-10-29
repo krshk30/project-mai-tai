@@ -79,10 +79,12 @@ def test_child_loads_bound_projection_once_and_shares_same_packet_across_symbols
         return original(name, *args, **kwargs)
     monkeypatch.setattr(cli.os, 'open', observed)
     monkeypatch.setattr(cli, 'source_binding', lambda name: {'head': 'a'*40})
-    def collect(*, dsn, processor, capture_log_path):
+    def collect(*, dsn, processor, capture_log_path, working_policy_path, null_policy):
         assert dsn == 'CONTROLLED_NO_DATABASE'
+        assert working_policy_path is None and null_policy is None
         return [processor({'symbol': s}) for s in ('ELPW', 'POM')]
-    def produce(data, *, policy_path, producer, route_packet):
+    def produce(data, *, policy_path, producer, route_packet, same_sip_policy, null_policy):
+        assert policy_path is None and same_sip_policy is None and null_policy is None
         produced.append((data['symbol'], route_packet, producer['country_route_projection_status']))
         return data
     monkeypatch.setitem(sys.modules, 'atrsimlive1_collect', SimpleNamespace(

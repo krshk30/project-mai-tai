@@ -163,9 +163,10 @@ def test_real_context_binds_current_RR_scope_and_only_commits_after_success(monk
         return '/CONTROLLED/never-opened/' + namespaces.namespace_name(binding)
     monkeypatch.setattr(namespaces, 'namespace_root', namespace)
     @contextmanager
-    def session(root, binding, *, version):
+    def session(root, binding, *, version, retention_enabled):
         assert root == args.incremental_cache_root + '/' + namespaces.namespace_name(binding)
         assert version == cli.INCREMENTAL_VERSION
+        assert retention_enabled is False
         assert binding['input_scope'] == 'CURRENT_RR'
         assert set(binding) == {'version', 'input_scope', 'trading_day', 'source_seal', 'policies'}
         assert binding['source_seal'] == cache.fingerprint({'source.py':'a'*64})
