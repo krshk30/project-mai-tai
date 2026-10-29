@@ -219,6 +219,9 @@ class Settings(BaseSettings):
     # intent can pass OMS unless this is deliberately enabled after review.
     orb_live_schwab_orders_enabled: bool = False
     orb_country_routing_enabled: bool = False
+    # ORBCOUNTRY1: fresh route semantics; retain original parent stamp as provenance.
+    # Enable at the separately reviewed next-package install only.
+    orb_country_semantic_admission_enabled: bool = False
     orb_webull_account_name: str = ""
     # ORBPURPLE1: initial RTH resting buy needs the prior completed Schwab close
     # at/above the exit ATR line. ON at deploy; independent paper-free rollback.
@@ -697,6 +700,8 @@ class Settings(BaseSettings):
     strategy_seeded_snapshot_max_age_seconds: float = 3600.0
     scanner_feed_retention_enabled: bool = True
     scanner_confirmed_capture_enabled: bool = False
+    # Correct only the research capture key; scanner decisions remain unchanged.
+    scanner_confirmed_capture_session_day_enabled: bool = False
     scanner_feed_retention_structure_bars: int = 10
     scanner_feed_retention_no_activity_minutes: int = 20
     scanner_feed_retention_cooldown_volume_ratio: float = 0.4

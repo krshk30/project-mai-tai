@@ -4736,6 +4736,8 @@ class StrategyEngineState:
                     all_confirmed=self.all_confirmed,
                     faded_symbols=faded_confirmed_symbols,
                     dropped_retention_symbols=dropped_retention,
+                    session_day_enabled=getattr(
+                        self.settings, "scanner_confirmed_capture_session_day_enabled", False),
                 )
             except Exception:
                 logger.exception("scanner_confirmed_capture hook failed")

@@ -3191,6 +3191,24 @@ class SchwabV2Strategy:
         from project_mai_tai.brokerdecides1_owner_watchdog import note_owner_refusal
 
         note_owner_refusal(self, state, reason=reason, allowed=allowed)
+        # Observational only: use this invocation's already computed decision.
+        # Keep old markers/counters and do not evaluate any admission guard twice.
+        if reason == "retry_segment_mismatch":
+            try:
+                no_chase = state.__dict__.get("_postflip_nochase_log")
+                if no_chase is not None:
+                    message = no_chase.observed_line(
+                        anchor_ms=state.atr_session_anchor_ms, allowed=allowed,
+                        refusal_reason=reason, atr_state=state.atr_state,
+                        short_segment=short_segment, retry_segment=state.retry_one_segment_id,
+                    )
+                    if message is not None:
+                        logger.info("%s", message)
+            except Exception:
+                # Only this new annotation may fail; old logs/decision still run.
+                # Keep the attempted-flip marker if a sink may already have
+                # written before raising; do not retry a possibly emitted line.
+                pass
         bar_key = self._now_ms() // 60000
         logged = self.__dict__.setdefault("_flip_owner_admission_logged_bar", {})
         if logged.get(state.symbol) == bar_key:
@@ -5082,6 +5100,13 @@ class SchwabV2Strategy:
     def _reset_atr_indicator_state(self, state: SymbolState, anchor: int) -> None:
         """Reset only the mathematical ATR state at a 04:00-ET boundary."""
 
+        try:
+            no_chase = state.__dict__.get("_postflip_nochase_log")
+            if no_chase is not None:
+                no_chase.reset_indicator()
+        except Exception:
+            # Discard only broken diagnostic state, never owner/trading fields.
+            state.__dict__.pop("_postflip_nochase_log", None)
         period = self._atr_period
         state.atr_session_anchor_ms = anchor
         state.atr_hl = deque(maxlen=period)
@@ -5464,12 +5489,24 @@ class SchwabV2Strategy:
         seeded_anchor = self._atr_seeded_session_anchors.get(state.symbol.upper())
         if not state_only and seeded_anchor == anchor:
             snapshot = self._atr_indicator_snapshot(state)
+            diagnostic_restore = None
+            try:
+                no_chase = state.__dict__.get("_postflip_nochase_log")
+                if no_chase is not None:
+                    diagnostic_restore = (no_chase, no_chase.current)
+            except Exception:
+                state.__dict__.pop("_postflip_nochase_log", None)
             self._apply_session_anchor_reset(
                 state,
                 anchor,
                 owner_boundary_is_current=self._fanout_identity_bar_is_live(state),
             )
             self._restore_atr_indicator_snapshot(state, snapshot)
+            if diagnostic_restore is not None:
+                try:
+                    diagnostic_restore[0].current = diagnostic_restore[1]
+                except Exception:
+                    state.__dict__.pop("_postflip_nochase_log", None)
             self._atr_seeded_session_anchors.pop(state.symbol.upper(), None)
         elif anchor != state.atr_session_anchor_ms:
             if state_only:
@@ -5637,6 +5674,21 @@ class SchwabV2Strategy:
                     flip, state.atr_state_age = "BUY", 0
                     state.atr_short_flip_bar_ts = 0
                     state.slotclear_deferred_sell = None
+
+        if flip is not None:
+            # Dynamic diagnostics follow this SymbolState's lifetime; excluded
+            # from dataclass fields, ATR snapshots and durable owner records.
+            try:
+                from project_mai_tai.strategy_core.postflip_nochase_log import PostFlipNoChaseLog
+
+                no_chase = state.__dict__.get("_postflip_nochase_log")
+                if no_chase is None:
+                    no_chase = PostFlipNoChaseLog(state.symbol)
+                    state.__dict__["_postflip_nochase_log"] = no_chase
+                no_chase.observe_transition(flip=flip, bar_ms=int(cur.timestamp_ms),
+                                            anchor_ms=anchor)
+            except Exception:
+                state.__dict__.pop("_postflip_nochase_log", None)
 
         # Roll prev trail/state to THIS bar's values for the next bar's touch test.
         state.atr_prev_trail = state.atr_trail

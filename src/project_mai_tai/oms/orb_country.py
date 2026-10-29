@@ -21,6 +21,30 @@ PROTECTION = "orbroute1_protection"
 _ET = ZoneInfo("America/New_York")
 
 
+def country_route_metadata_matches(service, expected, current, *, context, keys=(
+        "orb_country_broker", "orb_country_reason", "orb_country_status", "orb_country_as_of")):
+    """Compare route authority without modifying either provenance record.
+
+    OFF retains the original exact version comparison. ORBCOUNTRY1 changes only
+    stamp equality; callers still own fresh reads, source/account/clock/session
+    validation and every independent placement/replacement fence.
+    """
+    semantic = getattr(service.settings, "orb_country_semantic_admission_enabled", False)
+    matched = all(expected.get(key) == current.get(key) for key in keys
+                  if not (semantic and key == "orb_country_as_of"))
+    if semantic:
+        service.logger.info(
+            "[ORBCOUNTRY1] context=%s matched=%s original_as_of=%s current_as_of=%s "
+            "original_broker=%s current_broker=%s original_reason=%s current_reason=%s "
+            "original_status=%s current_status=%s",
+            context, matched, expected.get("orb_country_as_of"), current.get("orb_country_as_of"),
+            expected.get("orb_country_broker"), current.get("orb_country_broker"),
+            expected.get("orb_country_reason"), current.get("orb_country_reason"),
+            expected.get("orb_country_status"), current.get("orb_country_status"),
+        )
+    return matched
+
+
 async def verify_country_admission(service, event, now):
     from project_mai_tai.momentum_live_sec import CountryRouter, CountryStore
     router = CountryRouter(CountryStore(service.session_factory))
@@ -28,10 +52,12 @@ async def verify_country_admission(service, event, now):
     decision = router.route_for(event.payload.symbol, now)
     metadata = event.payload.metadata
     stamp = decision.as_of.isoformat() if decision.as_of else ""
-    return (decision.broker == metadata.get("orb_country_broker")
-            and decision.reason == metadata.get("orb_country_reason")
-            and decision.status == metadata.get("orb_country_status")
-            and stamp == metadata.get("orb_country_as_of"))
+    return country_route_metadata_matches(service, metadata, {
+        "orb_country_broker": decision.broker,
+        "orb_country_reason": decision.reason,
+        "orb_country_status": decision.status,
+        "orb_country_as_of": stamp,
+    }, context="fresh_admission")
 
 
 def orb_route_owner_conflict(session, account_id, account_name, symbol, strategy_id, *, admission=False):
@@ -665,12 +691,16 @@ async def reprice_webull(service, session, intent, event, target):
     metadata = dict(target.payload or {})
     selected = selection_from_metadata(target.symbol, account.name, metadata) if account else None
     if (selected is None or strategy is None or strategy.code != "orb_schwab"
+            or (getattr(service.settings, "orb_country_semantic_admission_enabled", False)
+                and selected.country.as_of is not None
+                and (selected.country.as_of.tzinfo is None or selected.country.as_of.utcoffset() is None))
             or not controlled_live_scope(strategy.code, strategy.execution_mode, account.name) or not account.is_active
             or account.provider != "webull" or account.name != event.payload.broker_account_name
             or target.symbol != event.payload.symbol or target.side != "buy"
             or not target.broker_order_id or not target.client_order_id
             or entry_quantity(target) != Decimal("10")
-            or any(event.payload.metadata.get(k) != v for k, v in country_metadata(selected).items())
+            or not country_route_metadata_matches(service, country_metadata(selected),
+                event.payload.metadata, context="webull_reprice_parent", keys=tuple(country_metadata(selected)))
             or Decimal(event.payload.metadata["stop_price"]) <= Decimal(metadata["stop_price"])):
         raise ValueError("orb_webull_reprice_binding_invalid")
     refusal = orb_schwab_intent_refusal(event, service.settings, datetime.now(UTC))

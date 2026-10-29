@@ -951,6 +951,10 @@ def check_oms_order_lifecycle() -> tuple[str, str, str]:
     where = (
         f"ti.status NOT IN {terminal} "
         "AND bo.id IS NULL "
+        # WBATTACH submits its exit pair directly; no BrokerOrder is created for
+        # this intent (webull_attach_riskoff.py:591-649). This exception says
+        # nothing about protection: check_stops_armed still grades the position.
+        "AND ti.reason IS DISTINCT FROM 'WBATTACH1_PROTECTION' "
         "AND ti.created_at < now() - interval '10 min' "
         "AND ti.created_at > now() - interval '6 hours'"
     )

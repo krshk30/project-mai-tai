@@ -1956,7 +1956,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return []
         if strategy_code == "orb_schwab" and not reserve1_dispatch:
             refusal = orb_schwab_intent_refusal(event, self.settings, utcnow())
-            if (refusal is None and event.payload.intent_type == "open"
+            if (refusal is None and (event.payload.intent_type == "open" or (
+                    self.settings.orb_country_semantic_admission_enabled
+                    and event.payload.metadata.get("orb_schwab_reprice") == "true"))
                     and event.payload.metadata.get("orb_country_route") == "true"):
                 from project_mai_tai.oms.orb_country import verify_country_admission
                 try:
@@ -16327,10 +16329,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         root = unsent_plan(session, intent, utcnow())
         prior = (root.payload or {}).get("metadata", {})
         # Route/control authority belongs to the new event; the root binds the plan/account/day.
-        for key in ("orb_country_route", "orb_country_broker", "orb_country_reason",
-                    "orb_country_status", "orb_country_as_of"):
-            if prior.get(key) != event.payload.metadata.get(key):
-                raise ValueError("orb_pastlevel_plan_route_changed")
+        from project_mai_tai.oms.orb_country import country_route_metadata_matches
+        if not country_route_metadata_matches(self, prior, event.payload.metadata,
+                context="schwab_pastlevel_parent", keys=("orb_country_route",
+                "orb_country_broker", "orb_country_reason", "orb_country_status",
+                "orb_country_as_of")):
+            raise ValueError("orb_pastlevel_plan_route_changed")
         for row in day_intents(session, intent, utcnow()):
             if (row.payload or {}).get("event_id") == str(event.event_id):
                 raise ValueError("orb_pastlevel_redelivery_no_retry")
@@ -16545,6 +16549,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         target.broker_order_id = report.broker_order_id
         target.order_type = request.order_type
         target.payload = {**old_metadata, **metadata}
+        if (self.settings.orb_country_semantic_admission_enabled
+                and old_metadata.get("orb_country_route") == "true"):
+            # Replacement changes the handle/price, not the original parent's
+            # country-record version. The new event/receipt retains its own stamp.
+            target.payload = {**target.payload,
+                              "orb_country_as_of": old_metadata.get("orb_country_as_of")}
         self.store.append_order_event(
             session,
             order=target,
