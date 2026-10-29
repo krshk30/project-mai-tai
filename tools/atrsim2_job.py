@@ -117,7 +117,11 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base):
                     reason="live resting buy never filled" if now >= seg_end else "live resting buy waiting")
     f_ts, f_px, fk, trig = fill
     qty = int(NOTIONAL // f_px)
-    target, stop = f_px * (1 + LIVE_TARGET), f_px * (1 - LIVE_STOP)
+    # Live OCO target goes through broker_adapters.target_price.target_limit_price (ROUND_CEILING to the tick).
+    from decimal import Decimal
+    from project_mai_tai.broker_adapters.target_price import target_limit_price
+    target = float(target_limit_price(Decimal(str(f_px)) * Decimal(str(1 + LIVE_TARGET))))
+    stop = f_px * (1 - LIVE_STOP)
     # CONF1 (live confirmation_bar_start_ms): the bar after the bar that CONTAINS the fill.
     fill_bar_ms = int(f_ts.timestamp() // 60) * 60_000
     by_ts = {b.ts: i for i, b in enumerate(series)}
