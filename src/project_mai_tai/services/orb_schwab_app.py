@@ -782,9 +782,29 @@ async def main() -> None:
     configure_logging(_SERVICE, settings.log_level)
     task = asyncio.current_task()
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, task.cancel)
-    await OrbSchwabService().run()
+    shutdown_token = object()
+    shutdown_requested = False
+    installed_signals = []
+
+    def request_shutdown():
+        nonlocal shutdown_requested
+        if not shutdown_requested:
+            shutdown_requested = True
+            task.cancel(shutdown_token)
+
+    try:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, request_shutdown)
+            installed_signals.append(sig)
+        await OrbSchwabService().run()
+    except asyncio.CancelledError as exc:
+        # Only our signal request is a clean stop, after run() finishes cleanup.
+        # An unrelated cancellation or a replacement cleanup failure stays visible.
+        if not (shutdown_requested and len(exc.args) == 1 and exc.args[0] is shutdown_token):
+            raise
+    finally:
+        for sig in installed_signals:
+            loop.remove_signal_handler(sig)
 
 
 def run() -> None:
