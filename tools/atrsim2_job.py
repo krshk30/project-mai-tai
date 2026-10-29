@@ -83,7 +83,7 @@ def sane(symbol, ts, price):
 LIVE_OFFSET, LIVE_BAND, LIVE_TARGET, LIVE_STOP = 0.005, 0.005, 0.05, 0.08
 
 
-def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base):
+def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=False):
     """Same signal, the live bot's own entry and exit rules (simulation, not real fills)."""
     series, rows = LINES[symbol]
     fi = next(i for i, b in enumerate(series) if b.ts == flip_bar.ts)
@@ -143,10 +143,16 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base):
     conf_fails = conf_i is not None and rows[conf_i]["state"] != "long" and conf_close <= now
     exit_ = None
     last = f_px
+    deadline, hit_one = f_ts + timedelta(seconds=120), False
     for ts, price in stream:
         last = price
+        if ts <= deadline and price >= f_px * 1.01:
+            hit_one = True
         if sell_close is not None and ts >= sell_close:
             exit_ = (ts, price, "sell flip")
+        elif two_min and ts >= deadline and not hit_one:
+            # Operator 10-29 4th table: live entry + the 2-minute rule (not +1% within 2 min -> sell).
+            exit_ = (ts, price, "not +1% in 2 min")
         elif conf_fails and ts >= conf_close:
             exit_ = (ts, price, "confirmation exit (bar after fill not long)")
         elif ts >= session_end:
@@ -324,7 +330,7 @@ def run(now=None):
     anchor = datetime.combine(day, datetime.min.time(), ET).replace(hour=4)
     url = os.environ["MAI_TAI_DATABASE_URL"]
     engine = create_engine(url, pool_pre_ping=True)
-    tables = {"FIRSTBAR": [], "FIRSTBAR+2min": [], "LIVE rules SIM": []}
+    tables = {"FIRSTBAR": [], "FIRSTBAR+2min": [], "LIVE rules SIM": [], "LIVE+2min SIM": []}
     with engine.connect() as conn:
         conn.execute(text("set statement_timeout = 20000"))
         windows = confirmed_windows(conn, day)
@@ -346,6 +352,8 @@ def run(now=None):
                 tables["FIRSTBAR+2min"].append(b)
                 tables["LIVE rules SIM"].append(live_rules_sim(conn, symbol, bar, sell_close, day, now,
                     {"symbol": symbol, "signal": a["signal"], "trigger": a["trigger"]}))
+                tables["LIVE+2min SIM"].append(live_rules_sim(conn, symbol, bar, sell_close, day, now,
+                    {"symbol": symbol, "signal": a["signal"], "trigger": a["trigger"]}, two_min=True))
     for rows in tables.values():
         rows.sort(key=lambda r: (r.get("entry_time") or "99", r["signal"], r["symbol"]))
     doc = {"schema": "ATRSIM2_DAY_V1", "trading_day": day.isoformat(), "generated_at": now.isoformat(),

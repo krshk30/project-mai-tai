@@ -15,10 +15,13 @@ from .cp_sim_display import panel
 
 ET = ZoneInfo("America/New_York")
 SNAPSHOT_TYPE = "atr_sim2_day"
-TITLES = ("FIRSTBAR", "FIRSTBAR+2min", "LIVE rules SIM")
+TITLES = ("FIRSTBAR", "FIRSTBAR+2min", "LIVE rules SIM", "LIVE+2min SIM")
+LIVE2_TITLE = "LIVE+2min SIM"
+LIVE2_DESCRIPTION = ("Simulation, not real trades: the LIVE rules SIM entry and exits, plus the 2-minute rule — "
+                     "a trade that is not up 1% within 2 minutes of the fill is sold.")
 LIVE_TITLE = "LIVE rules SIM"
 LIVE_DESCRIPTION = ("Simulation, not real trades: the same scanner-confirmed signals traded with the live ATR bot's "
-                    "own rules — waiting buy at the line +0.5% (limit +0.5% more), following the line every minute while short; "
+                    "own rules — waiting buy at the line +0.5% (limit +0.5% more), following the line every minute while short and kept after the flip until filled; "
                     "exits: target +5%, stop -8%, confirmation exit if the bar after the fill does not close long, "
                     "sell flip.")
 # Operator 10-29 17:1x: full-width panels, all rows visible, readable columns.
@@ -86,7 +89,8 @@ def render_day(doc, *, render_row, day: str):
         total = sum(r.get("pnl", 0.0) for r in traded)
         updated = (f"{doc['trading_day']} · updated {generated} ET · {len(traded)} trades, {skipped} signals without a trade"
                    f" · total ${total:+.2f} on ${doc.get('notional_usd', 600):.0f} per trade")
-        extra = {"description": LIVE_DESCRIPTION} if title == LIVE_TITLE else {}
+        extra = ({"description": LIVE_DESCRIPTION} if title == LIVE_TITLE
+                 else {"description": LIVE2_DESCRIPTION} if title == LIVE2_TITLE else {})
         panels.append(panel(title, [_display(r) for r in shown], render_row=render_row, marker=title,
                             updated_text=updated, **extra))
     return ('<div id="atr-sim2" class="full" data-atrsim2="day" data-firstbar-mount="true" data-atrsim-firstbar="true">'
