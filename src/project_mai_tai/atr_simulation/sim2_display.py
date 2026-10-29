@@ -16,6 +16,15 @@ from .cp_sim_display import panel
 ET = ZoneInfo("America/New_York")
 SNAPSHOT_TYPE = "atr_sim2_day"
 TITLES = ("FIRSTBAR", "FIRSTBAR+2min")
+# Operator 10-29 17:1x: full-width panels, all rows visible, readable columns.
+STYLE = ('<style>#atr-sim2{grid-column:1/-1;min-width:0;max-width:100%;width:100%}'
+         '#atr-sim2 .panel{max-width:100%;width:100%;margin-bottom:16px;box-sizing:border-box}'
+         '#atr-sim2 .panel-header{flex-wrap:wrap}'
+         '#atr-sim2 .table-wrap{max-width:100%;max-height:none;overflow-x:auto;overflow-y:visible}'
+         '#atr-sim2 table{width:100%;min-width:900px;table-layout:auto}'
+         '#atr-sim2 th,#atr-sim2 td{white-space:nowrap;padding:6px 10px}'
+         '#atr-sim2 td:last-child{white-space:normal;max-width:none!important;overflow:visible!important}'
+         '</style>')
 
 
 def load_day(session_factory, day: str):
@@ -39,8 +48,7 @@ def load_day(session_factory, day: str):
 def _display(row):
     traded = row.get("status") in ("CLOSED", "OPEN")
     pnl = row.get("pnl", 0.0) if traded else 0.0
-    summary = ("signal " + row.get("signal", "?") + " · buy at " + str(row.get("trigger", "?"))
-               + " · " + row.get("reason", ""))
+    summary = row.get("reason", "") + " · signal " + row.get("signal", "?") + " · buy at " + str(row.get("trigger", "?"))
     return {
         "ticker": row.get("symbol", ""),
         "path": row.get("status", ""),
@@ -73,4 +81,4 @@ def render_day(doc, *, render_row, day: str):
         panels.append(panel(title, [_display(r) for r in traded], render_row=render_row, marker=title,
                             updated_text=updated))
     return ('<div id="atr-sim2" class="full" data-atrsim2="day" data-firstbar-mount="true" data-atrsim-firstbar="true">'
-            + "".join(panels) + "</div>")
+            + STYLE + "".join(panels) + "</div>")
