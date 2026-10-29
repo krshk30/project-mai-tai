@@ -706,13 +706,6 @@ class OrbSchwabService(OrbService):
                 for entry in open_entries(self.session_factory, account)]
 
     async def run(self) -> None:
-        logger.info(
-            "[STARTUP-FLAGS] orb_country_semantic_admission_enabled=%s scanner_confirmed_capture_session_day_enabled=%s keepwatch1=%s brokerdecides1=%s",
-            self.settings.orb_country_semantic_admission_enabled,
-            self.settings.scanner_confirmed_capture_session_day_enabled,
-            self.settings.strategy_schwab_1m_v2_keepwatch1_enabled,
-            self.settings.strategy_schwab_1m_v2_brokerdecides1_enabled,
-        )
         if not self.settings.orb_enabled or not (
             self.settings.orb_live_schwab_orders_enabled or self._observe_only
         ):
