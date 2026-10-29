@@ -68,6 +68,16 @@ class RestHoldPolicy:
             return True
         return False
 
+    def deferring(self, symbol):
+        """Only a live F1 grace record adds an entry fence.
+
+        Ordinary history-pending UNKNOWN marks must retain the preexisting
+        current-publication admission path. This query grants no permission.
+        """
+        current = self._pending.get(symbol)
+        return bool(current is not None and not current.exhausted
+                    and current.proof is not None)
+
     def clear_proven(self, symbol):
         self._pending.pop(symbol, None)
 

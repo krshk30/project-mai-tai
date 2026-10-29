@@ -3360,9 +3360,9 @@ class SchwabV2BotService:
 
     def _keepwatch_entry_allowed(self, symbol: str) -> bool:
         if (getattr(self.settings, "strategy_schwab_1m_v2_keepwatch_transient_rest_hold_enabled", False)
-                and symbol in self._keepwatch_unknown):
-            # Retaining an existing rest never authorizes a new placement, even
-            # when the separate current-bar recovery publication is available.
+                and self._keepwatch_rest_hold.deferring(symbol)):
+            # Only an active F1 deferral adds a new-entry fence. Ordinary
+            # per-minute UNKNOWN marks retain the current-publication path.
             return False
         if symbol in self._keepwatch_boot_excluded_symbols():
             return False
