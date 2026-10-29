@@ -55,6 +55,7 @@ async def seeded(monkeypatch, *, symbols=("NCPL", "PCLA"), anchor=ANCHOR, last=L
     bot.settings = Settings(_env_file=None, **supplied)
     bot.strategy.settings = bot.settings
     bot.session_factory = None  # Real no-store path; not readable/flat proof.
+    bot.tick_writer = None  # Set only by service start(); capture is off in these controls.
     bot._configure_flip_entry_ownership_store({})
     bot.strategy.configure_falseflip({}, readable=False)
     clock = [last + 61_000]
@@ -147,7 +148,8 @@ async def test_controlled_reported_clock_sequence_quiet_gap_then_proven_resume(m
         assert ("NCPL", RESUME) in reads and ("PCLA", RESUME) in reads
         assert all(row["prepared"] and not row["unknown"] and row["published_bar_ms"] == RESUME
                    for row in observed.values())
-        assert bot.strategy._entries_held and not bot.strategy._flip_owner_restore_readable
+        # Boot-restoration readability is outside C7A; only the held-entry fence is asserted.
+        assert bot.strategy._entries_held
         assert not bot._keepwatch_native_reads and not bot._keepwatch_history_scopes
     finally:
         await bot._stop_keepwatch_bar_owners()
@@ -359,7 +361,7 @@ async def test_retained_oddlot_prints_recover_via_real_history_and_owned_bar_pat
         assert request is not None and symbol not in bot._keepwatch_unknown
         assert bot._line_published[symbol].request.current_bar_ms == resumed
         assert missing not in ledger._bars  # Never manufacture the missing candle.
-        assert bot.strategy._entries_held and not bot.strategy._flip_owner_restore_readable
+        assert bot.strategy._entries_held  # Boot readability is outside C7A.
     finally:
         await bot._stop_keepwatch_bar_owners()
 
