@@ -7,7 +7,7 @@ methods and all guards run unchanged. Clock and capture I/O are explicit ports.
 from collections import defaultdict, deque
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 import hashlib
@@ -129,6 +129,8 @@ def state_bytes(state, *, clock, port):
             return ["Decimal", str(value)]
         if isinstance(value, datetime):
             return ["datetime", value.isoformat(), value.fold, getattr(value.tzinfo, "key", None)]
+        if isinstance(value, time):
+            return ["time", value.isoformat(), value.fold, freeze(value.tzinfo)]
         if isinstance(value, date):
             return ["date", value.isoformat()]
         if isinstance(value, timedelta):

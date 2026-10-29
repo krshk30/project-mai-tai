@@ -108,3 +108,14 @@ SQL or overnight ALL-ON/boot qualification from source alone. Main inspect exact
 three-path diff/hash fixture, bind memory/source-only test fence and claim11.
 If an unsupported state object occurs, preserve failure and add exact source-
 specific representation for review, never shrink the state comparison.
+
+FIRST11 ACTUAL MAIN RECEIPT / EXACT TIME-TYPE SUCCESSOR
+Main subset8c23 had exact9d three new files. First11 physically closed21:51:26:
+1PASS10FAIL2.40s, fence0/all3471pins unchanged. All10 failures preceded NEW
+comparison: actual OLD Settings contains datetime.time, which the full-state
+walker explicitly refused. Original9d/source/raw first11 remain preserved.
+This successor adds ONLY datetime.time representation: exact ISO text (including
+microseconds/offset), fold and recursively represented timezone identity.
+No fields/types omitted, no rounding/defaultstr/repr fallback, no APP/assertion/
+envelope change. No author tests/imports/runtime. Main onlyfailed10 after review;
+original serializer-adverse1PASS remains retained/not selected again.
