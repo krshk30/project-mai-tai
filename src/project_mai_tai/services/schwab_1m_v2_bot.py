@@ -5879,12 +5879,13 @@ class SchwabV2BotService:
     async def _run_keepwatch_bar_owner(self, symbol: str) -> None:
         inbox = self._keepwatch_bar_inboxes[symbol]
         event = self._keepwatch_bar_events[symbol]
-        overflow_logged = 0
         try:
             while inbox.pending and not self._stop_event.is_set():
                 event.clear()
-                if inbox.rejected != overflow_logged:
-                    overflow_logged = inbox.rejected
+                # The logged count lives on the inbox: each owner run is a new task,
+                # and a local counter re-held UNKNOWN every minute for one old rejection.
+                if inbox.rejected != inbox.rejected_logged:
+                    inbox.rejected_logged = inbox.rejected
                     self._keepwatch_hold_unknown(symbol, "bar_inbox_overflow")
                     logger.error("[V2-KEEPWATCH1-BAR-OWNER] sym=%s outcome=UNKNOWN "
                                  "rejected=%d first_rejected_ms=%d last_rejected_ms=%d "
