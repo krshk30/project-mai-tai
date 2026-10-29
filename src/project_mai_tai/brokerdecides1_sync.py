@@ -223,7 +223,8 @@ def local_nonentry_activity(session, account_ids, terminal):
 PRIOR_SESSION_TERMINAL = frozenset({"cancelled", "filled", "rejected", "expired", "aborted"})
 
 
-def local_evidence(session, names, *, prior_session_attempts_final=False):
+def local_evidence(session, names, *, prior_session_attempts_final=False,
+                   same_day_event_binding=False):
     """Durable OWN uncertainty/fills only. No native-flat claim comes from this DB."""
     from project_mai_tai.cancelack1 import _closed_with_replacements, working_buy_present
 
@@ -310,9 +311,33 @@ def local_evidence(session, names, *, prior_session_attempts_final=False):
     unknown_rows, unknown_examples = {}, {}
     observed = now_ms()
     anchor = current_session_anchor()
+    event_bound = {}
+    if same_day_event_binding:
+        try:
+            from project_mai_tai.brokerdecides1_event_binding import accepted_event_bindings, zero_execution_closure
+
+            unmatched = {token: attempt for token, attempt in attempt_by_token.items()
+                if token not in by_token and attempt.created_at is not None
+                and (attempt.created_at.replace(tzinfo=UTC) if attempt.created_at.tzinfo is None
+                     else attempt.created_at) >= anchor}
+            if unmatched:
+                # A failed PostgreSQL statement aborts its transaction. Isolate
+                # new recovery reads so the original census can still finish.
+                with session.begin_nested():
+                    event_bound = accepted_event_bindings(session, unmatched,
+                        account_id_by_name, strategy_id, observed, anchor)
+        except Exception as error:
+            # Recovery is additive. A missing/overflowed new proof cannot
+            # invalidate the original census or unrelated symbols.
+            event_bound = {}
+            logging.getLogger(__name__).warning(
+                "[BROKERDECIDES1-EVENT-BINDING-REFUSED] reason=%s", type(error).__name__)
     prior_final = 0
     for symbol, token, account, opportunity, changed_receipt in scoped_attempts:
         own = by_token.get(token, ())
+        recovered = token in event_bound
+        if recovered:
+            own = (event_bound[token],)
         # C7B-min: a v2 open is DAY-only (OrderRequest default; no v2 producer sets TIF), so an
         # attempt from a closed session with no order row cannot still be a working order. Only
         # entry admission reads this set; current-session lost ACKs stay UNKNOWN.
@@ -326,11 +351,20 @@ def local_evidence(session, names, *, prior_session_attempts_final=False):
                 and all(order.status in PRIOR_SESSION_TERMINAL for order in own)):
             prior_final += 1
             continue
+        recovered_closed = False
+        if recovered:
+            try:
+                with session.begin_nested():
+                    recovered_closed = zero_execution_closure(session, own[0], observed)
+            except Exception as error:
+                logging.getLogger(__name__).warning(
+                    "[BROKERDECIDES1-EVENT-BINDING-REFUSED] reason=%s", type(error).__name__)
         if (changed_receipt or not own or any(order.symbol != symbol or order.strategy_id != strategy_id
                 or order.broker_account_id != account_id_by_name[account]
                 or order.side != "buy"
-                or str(order.payload.get("fanout_segment_id")) != str(opportunity)
-                or not _closed_with_replacements(session, order, observed)
+                or not recovered and str(order.payload.get("fanout_segment_id")) != str(opportunity)
+                or not (recovered_closed if recovered
+                        else _closed_with_replacements(session, order, observed))
                 for order in own)):
             inflight.add(symbol)  # No row / lost XADD ACK is UNKNOWN, including after restart.
             unknown_rows.setdefault(symbol, set()).add((attempt_by_token[token].id, changed_receipt))
@@ -484,7 +518,13 @@ async def finish_pass(service, generation, *, sync_succeeded):
                 require_background_priority()
                 token = LOCAL_CENSUS_DIAGNOSTICS.set(census_diagnostics)
                 try:
-                    if getattr(service.settings, "strategy_schwab_1m_v2_brokerdecides1_legacy_resolution_enabled", False):
+                    legacy = getattr(service.settings, "strategy_schwab_1m_v2_brokerdecides1_legacy_resolution_enabled", False)
+                    event_binding = getattr(service.settings,
+                        "strategy_schwab_1m_v2_brokerdecides1_same_day_event_binding_enabled", False) is True
+                    if event_binding:
+                        return local_evidence(session, publisher.accounts,
+                            prior_session_attempts_final=legacy, same_day_event_binding=True)
+                    if legacy:
                         return local_evidence(session, publisher.accounts, prior_session_attempts_final=True)
                     return local_evidence(session, publisher.accounts)
                 finally:

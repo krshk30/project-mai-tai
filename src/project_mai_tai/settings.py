@@ -568,6 +568,7 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_flip_owned_first_entry_enabled: bool = False
     strategy_schwab_1m_v2_brokerdecides1_enabled: bool = False
     strategy_schwab_1m_v2_brokerdecides1_legacy_resolution_enabled: bool = False
+    strategy_schwab_1m_v2_brokerdecides1_same_day_event_binding_enabled: bool = False
     # Next package WBEXIT2 only. H2's removed close feature/flag is not restored.
     strategy_schwab_1m_v2_wbexit2_enabled: bool = False
     # Claude 14:42:27: measured 4,438 passes, 15s cadence / 1.632s p99
