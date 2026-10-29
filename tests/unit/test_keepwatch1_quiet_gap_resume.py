@@ -18,6 +18,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
 from project_mai_tai.services import schwab_1m_v2_bot as service
 from project_mai_tai.strategy_core.session_line_restore import history_fingerprint
 from tests.unit.test_keepwatch_central_boot_retry import controlled_bot
+from tests.unit.test_keepwatch_session_producer_pin import published
 
 ANCHOR = int(datetime(2026, 10, 29, 8, tzinfo=UTC).timestamp() * 1000)
 LAST = ANCHOR + 123 * 60_000  # 10:03Z, reported last real minute.
@@ -197,3 +198,64 @@ async def test_real_background_failed_reads_warn_once_per_symbol_and_keep_exact_
         diagnostics(bot, "failed_reads_stay_held")
     finally:
         await bot._stop_keepwatch_bar_owners()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["clock", "logger"])
+async def test_diagnostic_failure_cannot_prevent_unknown_or_real_cancel(monkeypatch, caplog, fault):
+    bot, _ledger, _bars, _raw, state, queued = await published()
+    caplog.set_level(logging.WARNING)
+    caplog.clear()
+    original_cancel = bot.strategy._queue_resting_cancel
+    original_clock = bot.strategy._now_ms
+    phase = {"cancel_completed": False}
+
+    def real_cancel(actual, *, reason):
+        assert actual.symbol in bot._keepwatch_unknown  # Fence precedes cancel.
+        original_cancel(actual, reason=reason)  # Actual two-leg cancellation, no success stub.
+        phase["cancel_completed"] = True
+
+    def clock():
+        if phase["cancel_completed"]:
+            raise RuntimeError("CONTROLLED_DIAGNOSTIC_CLOCK_FAILURE")
+        return original_clock()
+
+    def broken_warning(*_args, **_kwargs):
+        assert phase["cancel_completed"]  # Diagnostics follow original cancellation.
+        raise RuntimeError("CONTROLLED_DIAGNOSTIC_LOGGER_FAILURE")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(bot.strategy, "_queue_resting_cancel", real_cancel)
+        if fault == "clock":
+            patch.setattr(bot.strategy, "_now_ms", clock)
+        else:
+            patch.setattr(service.logger, "warning", broken_warning)
+        bot._keepwatch_hold_unknown("IZM", "controlled_diagnostic_failure")
+        assert phase["cancel_completed"] and queued
+        assert all(draft.intent_type == "cancel" for draft in queued)
+        count = len(queued)
+        bot._keepwatch_hold_unknown("IZM", "controlled_diagnostic_failure")
+        assert len(queued) == count  # Original cancellation dedup survives failure.
+    assert "IZM" in bot._keepwatch_unknown and "IZM" in bot._keepwatch_cancel_requested
+    assert bot.strategy._entries_held
+    assert not unknown_warnings(caplog)
+    bot._keepwatch_hold_unknown("IZM", "controlled_diagnostic_failure")
+    assert len(queued) == count
+    assert len(unknown_warnings(caplog)) == 1  # Failed logger was not labelled emitted.
+    if fault == "clock":
+        assert "age_s=UNKNOWN" in unknown_warnings(caplog)[0].getMessage()
+
+
+@pytest.mark.parametrize("fault", ["clock", "logger"])
+def test_mark_unknown_sets_fence_even_if_diagnostic_fails(monkeypatch, fault):
+    bot = controlled_bot(symbols=("NCPL",))
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("CONTROLLED_DIAGNOSTIC_FAILURE")
+
+    if fault == "clock":
+        monkeypatch.setattr(bot.strategy, "_now_ms", broken)
+    else:
+        monkeypatch.setattr(service.logger, "warning", broken)
+    bot._keepwatch_mark_unknown("NCPL", "controlled_mark_failure")
+    assert "NCPL" in bot._keepwatch_unknown and bot.strategy._entries_held

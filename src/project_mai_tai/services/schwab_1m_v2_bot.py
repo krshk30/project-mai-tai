@@ -5264,7 +5264,7 @@ class SchwabV2BotService:
                     sym: proof for sym, proof in self._keepwatch_proven.items()
                     if proof.anchor_ms == self._keepwatch.anchor_ms}
                 self._keepwatch_unknown.intersection_update(scanner_selected)
-                self._keepwatch_unknown_episodes.clear()
+                self._keepwatch_forget_unknown_episode()
                 self._keepwatch_cancel_requested.intersection_update(scanner_selected)
                 self._keepwatch_bar_locks = {
                     sym: lock for sym, lock in self._keepwatch_bar_locks.items()
@@ -5764,14 +5764,25 @@ class SchwabV2BotService:
         protected.update(self._fetch_open_positions())
         return protected
 
-    def _keepwatch_mark_unknown(self, symbol: str, reason: str, *, emit: bool = True) -> None:
+    def _keepwatch_mark_unknown(self, symbol: str, reason: str, *, was_unknown: bool | None = None) -> None:
+        """Set the original fence BEFORE any best-effort diagnostic operation."""
+        if was_unknown is None:
+            was_unknown = symbol in self._keepwatch_unknown
+        self._keepwatch_unknown.add(symbol)
+        try:
+            self._keepwatch_log_unknown(symbol, reason, was_unknown=was_unknown)
+        except Exception:
+            # A broken clock/logger/diagnostic record cannot undo or interrupt
+            # an original UNKNOWN transition. Never invent a fallback age.
+            pass
+
+    def _keepwatch_log_unknown(self, symbol: str, reason: str, *, was_unknown: bool) -> None:
         """Observe the existing fence only; no retry, cancellation or permission.
 
         First WARNING per episode; reason changes are INFO with the same age.
         An older silent set member has UNKNOWN onset, never an invented age.
         No provider/DB calls; repeated holds of the same reason are silent.
         """
-        was_unknown = symbol in self._keepwatch_unknown
         now_ms = self.strategy._now_ms()
         anchor = session_start_ts_ms(now_ms)
         episode = self._keepwatch_unknown_episodes.get(symbol)
@@ -5779,9 +5790,6 @@ class SchwabV2BotService:
             episode = {"anchor_ms": anchor, "since_ms": None if was_unknown else now_ms,
                        "warned": False, "reason": None}
             self._keepwatch_unknown_episodes[symbol] = episode
-        self._keepwatch_unknown.add(symbol)
-        if not emit:
-            return
         since = episode["since_ms"]
         age = "UNKNOWN" if since is None or now_ms < since else f"{(now_ms - since) / 1000:.3f}"
         receipt = self._keepwatch_proven.get(symbol)
@@ -5791,24 +5799,35 @@ class SchwabV2BotService:
         ledger = self._line_sessions.get(symbol)
         incomplete = ledger.incomplete_reason if ledger is not None else "observation_epoch_missing"
         if not episode["warned"]:
-            episode["warned"] = True
             logger.warning("[V2-KEEPWATCH1] sym=%s outcome=UNKNOWN reason=%s age_s=%s "
                            "last_proven_age_s=%s incomplete_reason=%s entry_allowed=0 line_reset=0",
                            symbol, reason, age, proven_age, incomplete)
+            episode["warned"] = True
         elif episode["reason"] != reason:
             logger.info("[V2-KEEPWATCH1-HOLD] sym=%s outcome=UNKNOWN reason=%s age_s=%s "
                         "last_proven_age_s=%s incomplete_reason=%s entry_allowed=0 line_reset=0",
                         symbol, reason, age, proven_age, incomplete)
         episode["reason"] = reason
 
+    def _keepwatch_forget_unknown_episode(self, symbol: str | None = None) -> None:
+        try:
+            if symbol is None:
+                self._keepwatch_unknown_episodes.clear()
+            else:
+                self._keepwatch_unknown_episodes.pop(symbol, None)
+        except Exception:
+            # Diagnostic cleanup is never a condition of actual proof recovery.
+            pass
+
     def _keepwatch_hold_unknown(self, symbol: str, reason: str) -> None:
-        self._keepwatch_mark_unknown(symbol, reason, emit=False)
+        was_unknown = symbol in self._keepwatch_unknown
+        self._keepwatch_unknown.add(symbol)
         state = self.strategy._symbol_states.get(symbol)
         if (symbol not in self._keepwatch_cancel_requested and state is not None
                 and (state.resting_active or state.webull_resting_active)):
             self.strategy._queue_resting_cancel(state, reason="keepwatch_history_unknown")
             self._keepwatch_cancel_requested.add(symbol)
-        self._keepwatch_mark_unknown(symbol, reason)
+        self._keepwatch_mark_unknown(symbol, reason, was_unknown=was_unknown)
 
     def _keepwatch_pins_for(self, symbol: str, anchor: int):
         from project_mai_tai.market_data.keepwatch_producer import SessionProducerPins
@@ -6481,7 +6500,7 @@ class SchwabV2BotService:
             self._keepwatch_proven[symbol] = history
             self._keepwatch_record_halt_binding(symbol, ledger, history)
             self._keepwatch_unknown.discard(symbol)
-            self._keepwatch_unknown_episodes.pop(symbol, None)
+            self._keepwatch_forget_unknown_episode(symbol)
             self._keepwatch_cancel_requested.discard(symbol)
             self._db_seeded.add(symbol)
             self._line_source_waiting.pop(symbol, None)
@@ -6612,7 +6631,7 @@ class SchwabV2BotService:
                             self._keepwatch_proven[symbol] = history
                             self._keepwatch_record_halt_binding(symbol, ledger, history)
                             self._keepwatch_unknown.discard(symbol)
-                            self._keepwatch_unknown_episodes.pop(symbol, None)
+                            self._keepwatch_forget_unknown_episode(symbol)
                             self._keepwatch_cancel_requested.discard(symbol)
                             left_ms = state.gap_line_left_bar_ms or previous
                             if (state.gap_hold_active
