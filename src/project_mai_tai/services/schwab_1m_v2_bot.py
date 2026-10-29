@@ -452,6 +452,8 @@ class SchwabV2BotService:
         self._keepwatch_unknown: set[str] = set()
         self._keepwatch_unknown_episodes: dict[str, dict] = {}
         self._keepwatch_cancel_requested: set[str] = set()
+        from project_mai_tai.services.keepwatch_rest_hold import RestHoldPolicy
+        self._keepwatch_rest_hold = RestHoldPolicy()
         self._keepwatch_proven: dict[str, object] = {}
         self._keepwatch_current_recoveries: dict[str, object] = {}
         self._line_pg_poll_fallbacks: dict[str, dict] = {}
@@ -3357,6 +3359,11 @@ class SchwabV2BotService:
                     and symbol in self._keepwatch.first_seen_ms)))
 
     def _keepwatch_entry_allowed(self, symbol: str) -> bool:
+        if (getattr(self.settings, "strategy_schwab_1m_v2_keepwatch_transient_rest_hold_enabled", False)
+                and symbol in self._keepwatch_unknown):
+            # Retaining an existing rest never authorizes a new placement, even
+            # when the separate current-bar recovery publication is available.
+            return False
         if symbol in self._keepwatch_boot_excluded_symbols():
             return False
         if self._keepwatch_current_publication(symbol) is not None:
@@ -5266,6 +5273,7 @@ class SchwabV2BotService:
                 self._keepwatch_unknown.intersection_update(scanner_selected)
                 self._keepwatch_forget_unknown_episode()
                 self._keepwatch_cancel_requested.intersection_update(scanner_selected)
+                self._keepwatch_rest_hold.retain_members(scanner_selected)
                 self._keepwatch_bar_locks = {
                     sym: lock for sym, lock in self._keepwatch_bar_locks.items()
                     if lock.locked() or sym in selected}
@@ -5819,12 +5827,59 @@ class SchwabV2BotService:
             # Diagnostic cleanup is never a condition of actual proof recovery.
             pass
 
-    def _keepwatch_hold_unknown(self, symbol: str, reason: str) -> None:
+    def _keepwatch_transient_rest_proof(self, symbol, *, ledger, epoch, state,
+            source_identity, expected_work, trade_through, trade_token, anchor):
+        """Reverify the existing owned attempt; no clock grace or new placement."""
+        from project_mai_tai.services.keepwatch_rest_hold import RestHoldProof
+
+        operation = self._keepwatch_history_context.get()
+        if (not operation or len(operation) != 2
+                or self._keepwatch_history_scopes.get(operation[0]) != (symbol, anchor, epoch)
+                or operation[1] != (symbol, anchor, epoch)
+                or self._stop_event.is_set() or not self._line_sized_trade_policy_enabled()
+                or self._line_sessions.get(symbol) is not ledger or ledger.epoch != epoch
+                or ledger.anchor_ms != anchor or ledger.incomplete_reason != "stale_rebuild"
+                or self.strategy._symbol_states.get(symbol) is not state
+                or source_identity is None or self._line_source_identity.get(symbol) != source_identity
+                or not self._keepwatch_work_current(symbol, expected_work)
+                or trade_token is None or ledger.trade_evidence_token(trade_through) != trade_token
+                or session_start_ts_ms(self.strategy._now_ms()) != anchor
+                or symbol not in self._subscription_symbols()
+                or symbol in self._line_readd_needs_live
+                or self._keepwatch_bar_quarantine.get(symbol) == anchor):
+            return None
+        primary, mirror = state.resting_active, state.webull_resting_active
+        if (type(primary) is not bool or type(mirror) is not bool or not (primary or mirror)
+                or (primary and (state.resting_is_broker_order is not True
+                    or not (state.resting_schwab_generation or state.resting_webull_generation)))
+                or (mirror and not state.webull_resting_generation_id)):
+            return None
+        rest_identity = (primary, state.resting_is_broker_order,
+            state.resting_schwab_generation, state.resting_webull_generation,
+            state.resting_schwab_quantity, state.resting_webull_quantity,
+            mirror, state.webull_resting_generation_id, state.fanout_segment_id)
+        return RestHoldProof(symbol, anchor, epoch, ledger, state, source_identity,
+                             expected_work, trade_token, rest_identity, operation[0])
+
+    def _keepwatch_hold_unknown(self, symbol: str, reason: str, *, transient_scope=None) -> None:
         was_unknown = symbol in self._keepwatch_unknown
         self._keepwatch_unknown.add(symbol)
         state = self.strategy._symbol_states.get(symbol)
+        cancel_required = True
+        if getattr(self.settings, "strategy_schwab_1m_v2_keepwatch_transient_rest_hold_enabled", False):
+            # Policy state is independent of best-effort diagnostic episodes. A
+            # hard reason latches even before a delayed rest acknowledgement.
+            try:
+                proof = (self._keepwatch_transient_rest_proof(symbol, **transient_scope)
+                         if reason == "prefix_publication_unproven" and transient_scope else None)
+                cancel_required = self._keepwatch_rest_hold.cancel_required(symbol, proof)
+            except Exception:
+                try:
+                    self._keepwatch_rest_hold.cancel_required(symbol)
+                except Exception:
+                    pass  # Policy failure cannot prevent the immediate cancel.
         if (symbol not in self._keepwatch_cancel_requested and state is not None
-                and (state.resting_active or state.webull_resting_active)):
+                and (state.resting_active or state.webull_resting_active) and cancel_required):
             self.strategy._queue_resting_cancel(state, reason="keepwatch_history_unknown")
             self._keepwatch_cancel_requested.add(symbol)
         self._keepwatch_mark_unknown(symbol, reason, was_unknown=was_unknown)
@@ -6450,7 +6505,10 @@ class SchwabV2BotService:
             # replace live indicator/arm/owner state to recover OLD behaviour.
             if prefix:
                 if state.bars and state.bars[-1].timestamp_ms > prefix[-1].timestamp_ms:
-                    self._keepwatch_hold_unknown(symbol, "prefix_publication_unproven")
+                    self._keepwatch_hold_unknown(symbol, "prefix_publication_unproven", transient_scope=dict(
+                        ledger=ledger, epoch=epoch, state=state, source_identity=source_identity,
+                        expected_work=expected_work, trade_through=trade_through,
+                        trade_token=trade_token, anchor=anchor))
                     return False
                 reconciled = await self._reconcile_line_store(
                     symbol, ledger, state, prefix[-1].timestamp_ms,
@@ -6469,7 +6527,10 @@ class SchwabV2BotService:
             # This preserves the next real flip without replaying a recovered BUY.
             if prefix and not await self._rebuild_session_line(
                     symbol, ledger, prefix_through_ms=prefix[-1].timestamp_ms):
-                self._keepwatch_hold_unknown(symbol, "prefix_publication_unproven")
+                self._keepwatch_hold_unknown(symbol, "prefix_publication_unproven", transient_scope=dict(
+                    ledger=ledger, epoch=epoch, state=state, source_identity=source_identity,
+                    expected_work=expected_work, trade_through=trade_through,
+                    trade_token=trade_token, anchor=anchor))
                 return False
             if (self._stop_event.is_set()
                     or not self._keepwatch_work_current(symbol, expected_work)
@@ -6511,6 +6572,7 @@ class SchwabV2BotService:
             self._keepwatch_unknown.discard(symbol)
             self._keepwatch_forget_unknown_episode(symbol)
             self._keepwatch_cancel_requested.discard(symbol)
+            self._keepwatch_rest_hold.clear_proven(symbol)
             self._db_seeded.add(symbol)
             self._line_source_waiting.pop(symbol, None)
             self._line_dirty.add(symbol)
@@ -6649,6 +6711,7 @@ class SchwabV2BotService:
                             self._keepwatch_unknown.discard(symbol)
                             self._keepwatch_forget_unknown_episode(symbol)
                             self._keepwatch_cancel_requested.discard(symbol)
+                            self._keepwatch_rest_hold.clear_proven(symbol)
                             left_ms = state.gap_line_left_bar_ms or previous
                             if (state.gap_hold_active
                                     and left_ms + 60_000 <= state.gap_hold_detected_at_ms

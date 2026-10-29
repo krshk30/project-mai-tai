@@ -493,6 +493,8 @@ class Settings(BaseSettings):
     # C7A: only positive sized, non-37 prints create the missing-bar barrier.
     # Independent default OFF; enable only with the reviewed C7A source.
     strategy_schwab_1m_v2_keepwatch_sized_trade_gap_enabled: bool = False
+    # C7-F1: one owned-history-attempt cancel deferral for stale rebuild only.
+    strategy_schwab_1m_v2_keepwatch_transient_rest_hold_enabled: bool = False
     # Missing-minute tape counts only prints that can establish an OHLC bar.
     strategy_schwab_1m_v2_gap_trade_conditions_filter_enabled: bool = True
     strategy_schwab_1m_v2_gap_hold_detect_seconds: float = 90.0  # Seconds past the last bar's CLOSE.
