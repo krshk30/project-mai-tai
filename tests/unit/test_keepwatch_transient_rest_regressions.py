@@ -3,11 +3,15 @@
 The retained print operands remain real, their provider bars explicitly controlled.
 These are C7A/KWSTALE1 compatibility checks, not the original 12:38 NCPL race.
 """
+import hashlib
+import json
+from pathlib import Path
+
 import pytest
 
 from tests.unit import test_keepwatch1_quiet_gap_resume as gap
 from tests.unit import test_keepwatch_stale_overflow_counter as overflow
-from tests.unit import test_pmprint1_tonight_flags as flags
+from project_mai_tai.settings import Settings
 
 
 def enable_f1(bot):
@@ -58,4 +62,23 @@ async def test_f1_on_keeps_C7A_OFF_and_positive_generation_fences(monkeypatch, c
 
 
 def test_f1_audit_addition_keeps_exact_preexisting_flag_denominators():
-    flags.test_s6_catalog_matches_all_on_live_set_and_149_checks_with_restoration_on()
+    root = Path(__file__).parents[2]
+    raw = (root / "ops/health/expected_flags.json").read_bytes()
+    name = "strategy_schwab_1m_v2_keepwatch_transient_rest_hold_enabled"
+    lines = raw.splitlines(keepends=True)
+    added = [line for line in lines if ('"name": "' + name + '"').encode() in line]
+    assert len(added) == 1
+    # Exact installed04cd artifact, including all preexisting values/metadata/
+    # whitespace. Only the new audit row may be removed to recover these bytes.
+    baseline_raw = b"".join(line for line in lines if line not in added)
+    assert hashlib.sha256(baseline_raw).hexdigest() == "bfc76f3ee72bf1d70b41a464ef59e7294a5ede89ab651598cfae5f2bd41a4063"
+    current, baseline = json.loads(raw), json.loads(baseline_raw)
+    own, = [row for row in current["flags"] if row["name"] == name]
+    assert own["expected"] is True and own["owning_service"] == "schwab-1m-v2"
+    assert not own.get("also_check_services")
+    assert Settings.model_fields[name].default is False
+    assert len({row["name"] for row in current["flags"]}) == len(current["flags"])
+    numeric = json.loads((root / "ops/health/expected_numeric.json").read_text())["settings"]
+    projected = lambda rows: sum(1 + len(row.get("also_check_services", [])) for row in rows + numeric)
+    assert projected(baseline["flags"]) == 181
+    assert projected(current["flags"]) == 182
