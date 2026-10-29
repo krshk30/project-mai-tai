@@ -212,6 +212,7 @@ def write_shadow(*, mode="OFF", ledger_dir=None, batch_path=None, policy_path=No
                 "produced_batch_sha256": batch_hash if produced else None,
                 "producer_index_sha256": producer_index_sha256,
                 "producer_request_sha256": producer_request_sha256,
+                "calibration": "UNCALIBRATED",
                 "state": decision["next_state"], "records": decision["records"], "digest": decision["digest"],
                 "delivery_action": "NONE", "paging_eligible": False}
             raw_generation = encoded(generation, STATE_BYTES)

@@ -36,7 +36,7 @@ def inputs():
         "status": "APPROVED_SHADOW_OPERANDS", "approval_ref": selected["approval_ref"],
         "calibration_ref": selected["calibration_ref"], "acquisition_ref": "CONTROLLED-acquisition",
         "schedule_ref": "CONTROLLED-schedule", "source_closure_ref": "CONTROLLED-source-closure",
-        "severity_map_sha256": d.fingerprint(selected["severity_map"], d.FRAME_BYTES),
+        "category_map_sha256": d.fingerprint(selected["category_map"], d.FRAME_BYTES),
         "upstream_policy_sha256": {lane: d.fingerprint(value, d.FRAME_BYTES) for lane, value in upstream.items()}}
     for key in ("approval_ref", "calibration_ref", "acquisition_ref", "schedule_ref", "source_closure_ref"):
         evidence[selected["producer_review"][key]] = "c" * 64
@@ -70,7 +70,7 @@ def test_finite_assembly_invokes_both_lanes_preserves_inputs_and_no_phone(monkey
                for row in planned["records"])
 
 
-@pytest.mark.parametrize("fault", ["review", "severity", "upstream_policy", "calendar", "schedule_proof",
+@pytest.mark.parametrize("fault", ["review", "category", "upstream_policy", "calendar", "schedule_proof",
                                    "manifest", "cutoff", "one_lane"])
 def test_review_and_membership_gaps_refuse_before_evaluation(monkeypatch, fault):
     selected, index, frames = inputs()
@@ -79,8 +79,8 @@ def test_review_and_membership_gaps_refuse_before_evaluation(monkeypatch, fault)
     monkeypatch.setattr(p, "_evaluate", forbidden)
     if fault == "review":
         selected.pop("producer_review")
-    elif fault == "severity":
-        selected["severity_map"]["L2"]["A1"]["unprotected"] = 99
+    elif fault == "category":
+        selected["category_map"]["exact"]["L2"]["A1"]["unprotected"] = "DIGEST"
     elif fault == "upstream_policy":
         index["upstream_policies"]["L2"]["mode"] = "REPORT_ONLY"
     elif fault == "calendar":
@@ -217,8 +217,8 @@ def test_composed_real_L2_L3_interfaces_keep_stale_fact_unknown_without_retiming
     index["upstream_policies"] = {"L2": trade_p, "L3": system_p}
     index["as_of"] = index["manifest"]["as_of"] = AS_OF
     selected["upstream_policyversions"] = {"L2": trade_p["policyversion"], "L3": system_p["policyversion"]}
-    selected["severity_map"]["L2"]["A1"]["owned_quantity_unprotected"] = 1  # CONTROLLED only
-    selected["producer_review"]["severity_map_sha256"] = d.fingerprint(selected["severity_map"], d.FRAME_BYTES)
+    selected["category_map"]["exact"]["L2"]["A1"]["owned_quantity_unprotected"] = "PAGE"
+    selected["producer_review"]["category_map_sha256"] = d.fingerprint(selected["category_map"], d.FRAME_BYTES)
     selected["producer_review"]["upstream_policy_sha256"] = {
         lane: d.fingerprint(value, d.FRAME_BYTES) for lane, value in index["upstream_policies"].items()}
     for descriptor, evidence in zip(index["frames"], (trade, system)):

@@ -18,6 +18,7 @@ FRAME_BYTES = 1048576
 STATE_BYTES = 4194304
 MAX_ITEMS = 1000
 MAX_REFS = 64
+L2_TRUE_RULE_SHA256 = "5f2106c3451456d4baab9dd57618c8774aae111a31832a097e19eff9ab7c400a"
 
 
 class Refused(ValueError):
@@ -122,7 +123,8 @@ def policy_binding(policy):
         need(type(binding["source_head"]) is str and re.fullmatch(r"[a-f0-9]{40}", binding["source_head"]) is not None,
              "source_head_unknown")
         hexhash(binding["file_sha256"])
-    need(type(policy.get("severity_map")) is dict, "severity_policy_unknown")
+    need(policy.get("severity_map", {}) == {}, "numeric_ranking_uncalibrated")
+    category_binding(policy)
     versions = policy.get("upstream_policyversions")
     need(type(versions) is dict and set(versions) == {"L2", "L3"}, "upstream_policy_unknown")
     for version in versions.values():
@@ -130,11 +132,54 @@ def policy_binding(policy):
     return fingerprint(policy, FRAME_BYTES)
 
 
+def category_binding(policy):
+    selected = policy.get("category_map")
+    need(type(selected) is dict and set(selected) == {"schema_version", "default", "exact", "source_bound_true"}
+         and selected["schema_version"] == "smartalert1.category.v1"
+         and selected["default"] == "DIGEST", "category_policy_unknown")
+    exact = selected["exact"]
+    need(type(exact) is dict and set(exact) <= {"L2", "L3"}, "category_lane_unknown")
+    for lane, classes in exact.items():
+        need(type(classes) is dict, "category_class_unknown")
+        for cls, reasons in classes.items():
+            code(cls)
+            need(type(reasons) is dict, "category_reason_unknown")
+            for reason, category in reasons.items():
+                code(reason)  # '*' is deliberately not an accepted selector.
+                need(category in ("PAGE", "DIGEST"), "category_value_unknown")
+    dynamic = selected["source_bound_true"]
+    need(type(dynamic) is dict and set(dynamic) <= {"L2"}, "dynamic_category_lane_unknown")
+    rules = dynamic.get("L2", {})
+    need(type(rules) is dict and set(rules) <= {"A3", "A7"}, "dynamic_category_class_unknown")
+    for cls, rule in rules.items():
+        need(type(rule) is dict and set(rule) == {"category", "reason_field", "source_file_sha256"}
+             and rule["category"] == "PAGE"
+             and rule["reason_field"] == ("refusal_code" if cls == "A3" else "block_reason"),
+             "dynamic_category_rule_unknown")
+        need(rule["source_file_sha256"] == L2_TRUE_RULE_SHA256
+             and policy["source_bindings"]["L2"]["file_sha256"] == L2_TRUE_RULE_SHA256,
+             "dynamic_category_source_mismatch")
+        need(cls not in exact.get("L2", {}), "dynamic_and_exact_category_overlap")
+    return selected
+
+
+def shadow_category(lane, finding, policy):
+    if finding["status"] != "TRUE" or finding.get("manual") is not False or finding.get("paper") is not False:
+        return "DIGEST"
+    selected = policy["category_map"]  # validated and sealed by policy_binding
+    exact = selected["exact"].get(lane, {}).get(finding["class"], {})
+    if finding["reason_code"] in exact:
+        return exact[finding["reason_code"]]
+    if lane == "L2" and finding["class"] in selected["source_bound_true"].get("L2", {}):
+        return "PAGE"  # exact qualified L2 bytes preserve all original TRUE guards
+    return "DIGEST"
+
+
 def initial_state(*, campaign_id, ledger_epoch, policy):
     """Explicit provisioning data, never called automatically on missing state."""
     return {"schema_version": SCHEMA, "campaign_id": ref(campaign_id), "ledger_epoch": ref(ledger_epoch),
             "revision": 0, "policy_sha256": policy_binding(policy), "last_as_of": None,
-            "batch_receipts": {}, "incidents": {}, "digests": {}}
+            "batch_receipts": {}, "incidents": {}, "digests": {}, "calibration": "UNCALIBRATED"}
 
 
 def incident_id(lane, finding):
@@ -332,7 +377,7 @@ def _digest(window, state, now, manifest, policy):
     if end != now or window.get("coverage_complete") is not True or not complete:
         return {"status": "UNKNOWN", "reason_code": "digest_cutoff_or_coverage_unproven", "delivery_action": "NONE"}
     counts = {"opened": 0, "escalated": 0, "cleared": 0, "still_open": 0,
-              "unknown": 0, "manual_digest_only": 0, "observations": 0}
+              "unknown": 0, "manual_digest_only": 0, "observations": 0, "digest_only_true": 0}
     for entry in state["incidents"].values():
         kinds = set()
         for event in entry["transitions"]:
@@ -343,9 +388,11 @@ def _digest(window, state, now, manifest, policy):
         counts["still_open"] += int(entry["opened"] and not entry["cleared"])
         counts["unknown"] += int(entry["last_status"] == "UNKNOWN")
         counts["manual_digest_only"] += int(entry["manual"] is True)
+        counts["digest_only_true"] += int(entry["last_status"] == "TRUE" and entry["shadow_category"] == "DIGEST")
         counts["observations"] += entry["observations"]  # Labelled campaign total, not period denominator.
     result = {"status": "SHADOW_DIGEST", "window_id": key, "counts": counts,
-              "observation_scope": "CAMPAIGN_TOTAL", "delivery_action": "NONE", "paging_eligible": False}
+              "observation_scope": "CAMPAIGN_TOTAL", "delivery_action": "NONE", "paging_eligible": False,
+              "calibration": "UNCALIBRATED", "escalation": "DISABLED_PENDING_FORWARD_CALIBRATION"}
     state["digests"][key] = {"window_sha256": fingerprint(window), "digest_sha256": fingerprint(result)}
     return result
 
@@ -420,16 +467,19 @@ def plan_shadow(batch, prior_state, *, as_of, policy, resolution_links=(), diges
             if finding["status"] != "UNKNOWN":
                 entry["last_verified_seen"] = finding["last_seen"]
             entry["observations"] += 1
+            category = shadow_category(item["lane"], finding, policy)
+            # Finding eligibility, never a notification counter: only a
+            # WOULD_OPEN transition represents a new hypothetical page.
+            would_page = category == "PAGE" and finding["status"] == "TRUE"
+            entry.update(shadow_category=category, would_page=would_page, calibration="UNCALIBRATED")
             kind = "OBSERVATION"
             if finding["status"] == "TRUE" and finding.get("manual") is False:
-                ranks = policy["severity_map"].get(item["lane"], {}).get(finding["class"], {})
-                need(type(ranks) is dict and finding["reason_code"] in ranks, "severity_policy_missing")
-                rank = integer(ranks[finding["reason_code"]])
+                # Clearing ends the causal epoch regardless of routing category.
                 need(not entry["cleared"], "recurrence_requires_new_causal_epoch")
+            if would_page:
                 if not entry["opened"]:
-                    kind, entry["opened"], entry["max_rank"] = "WOULD_OPEN", True, rank
-                elif rank > entry["max_rank"]:
-                    kind, entry["max_rank"] = "WOULD_ESCALATE", rank
+                    kind, entry["opened"] = "WOULD_OPEN", True
+                # No relative rank or WOULD_ESCALATE until forward calibration.
             elif finding["status"] == "FALSE" and key in links:
                 need(finding["reason_code"] not in {"stops_shadow_persisted_attachment_evidence_only",
                      "stops_shadow_existing_stop_or_managed"}, "persisted_handle_not_native_recovery_proof")
@@ -453,7 +503,8 @@ def plan_shadow(batch, prior_state, *, as_of, policy, resolution_links=(), diges
                     target["transitions"].append(event)
                     records.append(dict(event, incident_key=target_key, clearing_key=key,
                         evidence_ids=sorted(affirmative), message=four_parts(finding, target["first_seen"]),
-                        delivery_action="NONE", paging_eligible=False))
+                        delivery_action="NONE", paging_eligible=False, shadow_category="DIGEST",
+                        would_page=False, calibration="UNCALIBRATED"))
                 if target_key != key:
                     state["incidents"][target_key] = target
             if kind != "OBSERVATION":
@@ -461,6 +512,7 @@ def plan_shadow(batch, prior_state, *, as_of, policy, resolution_links=(), diges
             records.append({"kind": kind, "incident_key": key, "status": finding["status"],
                 "action_taken": deepcopy(finding["action_taken"]), "qualification": deepcopy(finding["qualification"]),
                 "upstream_shadow": deepcopy(finding.get("shadow")),
+                "shadow_category": category, "would_page": would_page, "calibration": "UNCALIBRATED",
                 "message": four_parts(finding, entry["first_seen"]), "delivery_action": "NONE", "paging_eligible": False})
             state["incidents"][key] = entry
             need(len(state["incidents"]) <= MAX_ITEMS, "incident_resource_overflow")
@@ -470,7 +522,7 @@ def plan_shadow(batch, prior_state, *, as_of, policy, resolution_links=(), diges
         digest = _digest(digest_window, state, now, manifest, policy)
         encoded(state, STATE_BYTES)
         result = {"status": "SHADOW", "next_state": state, "records": records, "digest": digest,
-                  "delivery_action": "NONE", "paging_eligible": False}
+                  "delivery_action": "NONE", "paging_eligible": False, "calibration": "UNCALIBRATED"}
         encoded(result, STATE_BYTES)  # Generation includes state+records, not separate cap loopholes.
         return result
     except Refused as exc:

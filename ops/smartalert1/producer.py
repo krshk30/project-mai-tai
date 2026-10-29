@@ -55,8 +55,8 @@ def producer_review(index, policy, *, as_of):
         need(value in evidence, "producer_review_evidence_missing")
     need(review["approval_ref"] == policy["approval_ref"]
          and review["calibration_ref"] == policy["calibration_ref"], "producer_review_policy_mismatch")
-    need(review.get("severity_map_sha256") == fingerprint(policy["severity_map"], FRAME_BYTES),
-         "reviewed_severity_map_changed")
+    need(review.get("category_map_sha256") == fingerprint(policy["category_map"], FRAME_BYTES),
+         "reviewed_category_map_changed")
     upstream = index.get("upstream_policies")
     need(type(upstream) is dict and set(upstream) == {"L2", "L3"}, "both_upstream_policies_required")
     hashes = review.get("upstream_policy_sha256")

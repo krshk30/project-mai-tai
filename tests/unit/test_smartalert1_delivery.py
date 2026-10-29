@@ -34,8 +34,10 @@ def policy():
         "source_bindings": {"L2": {"source_head": "1" * 40, "file_sha256": "2" * 64},
                             "L3": {"source_head": "3" * 40, "file_sha256": "4" * 64}},
         "upstream_policyversions": {"L2": "CONTROLLED-L2", "L3": "CONTROLLED-L3"},
-        "severity_map": {lane: {cls: {"unprotected": 1, "worsened": 2, "more_worse": 3}}
-                         for lane, cls in (("L2", "A1"), ("L3", "B_guard_STOP"))},
+        "category_map": {"schema_version": "smartalert1.category.v1", "default": "DIGEST",
+            "exact": {lane: {cls: {reason: "PAGE" for reason in ("unprotected", "worsened", "more_worse")}}
+                      for lane, cls in (("L2", "A1"), ("L3", "B_guard_STOP"))},
+            "source_bound_true": {}},
         "required_digest_coverage": ["CONTROLLED-required-scope"],
         "close_calendar": {"schema_version": "smartalert1.close-calendar.v1",
             "calendar_ref": EVIDENCE, "approval_ref": SOURCE, "timezone": "America/New_York",
@@ -102,7 +104,7 @@ def resolution(old_item, clearing):
         "reason_code": clearing["finding"]["reason_code"], "affirmative_refs": [EVIDENCE]}
 
 
-def test_open_dedup_worse_only_preserves_original_clock_and_inputs():
+def test_open_dedup_no_uncalibrated_escalation_preserves_clock_and_inputs():
     p = policy()
     before = state(p)
     original = deepcopy(before)
@@ -111,13 +113,14 @@ def test_open_dedup_worse_only_preserves_original_clock_and_inputs():
     result, _ = run(p, before, [first])
     assert kinds(result) == ["WOULD_OPEN"] and before == original and first == untouched
     prior = result["next_state"]
-    for stamp, reason, expected in ((T1, "unprotected", []), (T2, "worsened", ["WOULD_ESCALATE"]),
+    for stamp, reason, expected in ((T1, "unprotected", []), (T2, "worsened", []),
                                     (T3, "unprotected", [])):
         result, _ = run(p, prior, [item(stamp=stamp, reason=reason)], stamp=stamp)
         assert result["status"] == "SHADOW" and kinds(result) == expected
         prior = result["next_state"]
     incident = next(iter(prior["incidents"].values()))
-    assert incident["first_seen"] == FIRST and incident["max_rank"] == 2 and incident["observations"] == 4
+    assert incident["first_seen"] == FIRST and incident["max_rank"] is None and incident["observations"] == 4
+    assert incident["calibration"] == "UNCALIBRATED"
 
 
 def test_exact_batch_and_all_side_inputs_are_idempotent_not_reinterpreted():
@@ -239,7 +242,7 @@ def test_cross_broker_subject_identity_never_merges_or_cross_clears():
 
 
 @pytest.mark.parametrize("fault", ["policy", "source", "source_hash", "sequence", "duplicate", "first_seen",
-                                   "severity", "live_input", "upstream_policy", "future"])
+                                   "category", "live_input", "upstream_policy", "future"])
 def test_binding_conflicts_never_repair_or_advance(fault):
     p = policy()
     first, _ = run(p, state(p), [item()])
@@ -257,8 +260,8 @@ def test_binding_conflicts_never_repair_or_advance(fault):
         supplied["findings"].append(deepcopy(supplied["findings"][0]))
     elif fault == "first_seen":
         supplied["findings"][0]["finding"]["first_seen"] = T0
-    elif fault == "severity":
-        supplied["findings"][0]["finding"]["reason_code"] = "not_calibrated"
+    elif fault == "category":
+        p["category_map"]["exact"]["L2"]["A1"]["unprotected"] = "NOT_A_CATEGORY"
     elif fault == "live_input":
         supplied["findings"][0]["finding"]["paging_eligible"] = True
     elif fault == "upstream_policy":
@@ -286,7 +289,8 @@ def test_digest_requires_calendar_and_all_bound_coverage_counts_unique_incidents
     assert incomplete["digest"]["status"] == "UNKNOWN"
     result, supplied = run(p, prior, [item(stamp=T3)], stamp=T3, window=window)
     assert result["digest"]["status"] == "SHADOW_DIGEST"
-    assert result["digest"]["counts"]["opened"] == 1 and result["digest"]["counts"]["escalated"] == 1
+    assert result["digest"]["counts"]["opened"] == 1 and result["digest"]["counts"]["escalated"] == 0
+    assert result["digest"]["calibration"] == "UNCALIBRATED"
     assert result["digest"]["counts"]["still_open"] == 1 and result["digest"]["counts"]["observations"] == 4
     repeated = d.plan_shadow(supplied, result["next_state"], as_of=T3, policy=p, digest_window=window)
     assert repeated["status"] == "IDEMPOTENT" and not repeated["records"]
@@ -520,3 +524,114 @@ def test_digest_cannot_reuse_coverage_for_a_shorter_or_different_cutoff():
     result = d.plan_shadow(supplied, before, as_of=T3, policy=p, digest_window=window)
     assert result["status"] == "SHADOW" and result["digest"]["status"] == "UNKNOWN"
     assert not result["next_state"]["digests"]
+
+
+def test_DIGEST_TRUE_is_observed_without_open_or_numeric_zero_alias():
+    p = policy()
+    p["category_map"]["exact"]["L2"]["A1"]["unprotected"] = "DIGEST"
+    result, _ = run(p, state(p), [item()])
+    assert result["status"] == "SHADOW" and kinds(result) == []
+    record, = result["records"]
+    assert record["shadow_category"] == "DIGEST" and record["would_page"] is False
+    assert record["calibration"] == "UNCALIBRATED" and record["paging_eligible"] is False
+    assert not next(iter(result["next_state"]["incidents"].values()))["opened"]
+
+
+def test_PAGE_TRUE_is_labelled_but_dedup_and_ranking_remain_separate():
+    p = policy()
+    result, _ = run(p, state(p), [item()])
+    assert kinds(result) == ["WOULD_OPEN"]
+    assert result["records"][0]["would_page"] is True
+    again, _ = run(p, result["next_state"], [item(stamp=T1, reason="worsened")], stamp=T1)
+    assert kinds(again) == [] and again["records"][0]["would_page"] is True
+    assert again["records"][0]["shadow_category"] == "PAGE"
+    assert again["records"][0]["delivery_action"] == "NONE"
+    assert next(iter(again["next_state"]["incidents"].values()))["max_rank"] is None
+    combined = result["records"] + again["records"]
+    assert [row["kind"] for row in combined] == ["WOULD_OPEN", "OBSERVATION"]
+    assert sum(row["would_page"] for row in combined) == 2
+    assert sum(row["kind"] == "WOULD_OPEN" for row in combined) == 1
+
+
+@pytest.mark.parametrize("new_epoch", [False, True])
+def test_DIGEST_TRUE_after_affirmative_PAGE_clear_still_requires_new_epoch(new_epoch):
+    p = policy()
+    first = item()
+    opened, _ = run(p, state(p), [first])
+    clearing = item(status="FALSE", reason="positive_protection_or_flat", stamp=T1)
+    cleared, _ = run(p, opened["next_state"], [clearing], stamp=T1,
+                     links=[resolution(first, clearing)])
+    assert cleared["status"] == "SHADOW" and kinds(cleared) == ["WOULD_CLEAR"]
+    before = deepcopy(cleared["next_state"])
+    row = item(stamp=T2, reason="controlled_DIGEST_reason",
+               epoch="CONTROLLED-new-risk" if new_epoch else "CONTROLLED-condition-1")
+    result, _ = run(p, before, [row], stamp=T2)
+    assert before == cleared["next_state"]
+    if new_epoch:
+        assert result["status"] == "SHADOW" and kinds(result) == []
+        assert result["records"][0]["shadow_category"] == "DIGEST"
+        assert result["records"][0]["would_page"] is False
+    else:
+        assert result["status"] == "REFUSED"
+        assert result["reason_code"] == "recurrence_requires_new_causal_epoch"
+        assert not result["records"]
+
+
+@pytest.mark.parametrize("status,manual,paper", [("UNKNOWN", False, False), ("FALSE", False, False),
+                                              ("TRUE", True, False), ("TRUE", False, True)])
+def test_routing_overrides_never_page_unknown_false_manual_or_paper(status, manual, paper):
+    p = policy()
+    result, _ = run(p, state(p), [item(status=status, manual=manual, paper=paper)])
+    assert result["status"] == "SHADOW" and kinds(result) == []
+    assert all(not row["would_page"] and row["shadow_category"] == "DIGEST" for row in result["records"])
+
+
+@pytest.mark.parametrize("cls,field", [("A3", "refusal_code"), ("A7", "block_reason")])
+def test_explicit_dynamic_TRUE_class_rule_is_exact_source_bound(cls, field):
+    p = policy()
+    p["source_bindings"]["L2"]["file_sha256"] = d.L2_TRUE_RULE_SHA256
+    p["category_map"]["source_bound_true"] = {"L2": {cls: {
+        "category": "PAGE", "reason_field": field, "source_file_sha256": d.L2_TRUE_RULE_SHA256}}}
+    row = item(reason="controlled_actual_dynamic_code")
+    row["finding"]["class"] = cls
+    identity = json.loads(row["finding"]["incident_key"])
+    identity[1] = cls
+    row["finding"]["incident_key"] = json.dumps(identity, separators=(",", ":"))
+    before = state(p)
+    result, _ = run(p, before, [row])
+    assert kinds(result) == ["WOULD_OPEN"] and result["records"][0]["would_page"] is True
+    assert row["finding"]["reason_code"] == "controlled_actual_dynamic_code"
+    p["source_bindings"]["L2"]["file_sha256"] = "f" * 64
+    refused, _ = run(p, before, [row])
+    assert refused["status"] == "REFUSED" and refused["reason_code"] == "dynamic_category_source_mismatch"
+
+
+@pytest.mark.parametrize("cls,reason", [("B_DB_write_error", "actual_error_count_measured"),
+    ("B_broker_API_error", "actual_error_count_measured"), ("B_checker_blindness", "checker_coverage_measured")])
+def test_C1_explicit_system_extensions_are_PAGE_only_when_TRUE(cls, reason):
+    p = policy()
+    p["category_map"]["exact"]["L3"][cls] = {reason: "PAGE"}
+    row = item(lane="L3", reason=reason)
+    row["finding"]["class"] = cls
+    key = json.loads(row["finding"]["incident_key"])
+    key[1] = cls
+    row["finding"]["incident_key"] = json.dumps(key, separators=(",", ":"))
+    result, _ = run(p, state(p), [row])
+    assert result["records"][0]["shadow_category"] == "PAGE" and kinds(result) == ["WOULD_OPEN"]
+    assert result["records"][0]["calibration"] == "UNCALIBRATED"
+
+
+@pytest.mark.parametrize("fault", ["numeric_rank", "wildcard", "unbound_dynamic_class", "bad_field"])
+def test_no_rank_alias_wildcard_or_unreviewed_dynamic_rule(fault):
+    p = policy()
+    before = state(p)
+    if fault == "numeric_rank":
+        p["severity_map"] = {"L2": {"A1": {"unprotected": 0}}}
+    elif fault == "wildcard":
+        p["category_map"]["exact"]["L2"]["A1"]["*"] = "PAGE"
+    else:
+        p["source_bindings"]["L2"]["file_sha256"] = d.L2_TRUE_RULE_SHA256
+        p["category_map"]["source_bound_true"] = {"L2": {"A4" if fault == "unbound_dynamic_class" else "A3": {
+            "category": "PAGE", "reason_field": "block_reason", "source_file_sha256": d.L2_TRUE_RULE_SHA256}}}
+    result, _ = run(p, before, [item()])
+    assert result["status"] == "REFUSED" and not result["records"]
