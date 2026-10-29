@@ -1648,6 +1648,10 @@ class SchwabV2Strategy:
                                     request.symbol, proof.reason)
                     continue
             if request.purpose in {"retry_exhausted", "false_flip_restore"}:
+                if self._retry_request_fresh_sell_handoff_pending(request):
+                    # A cancel-only receipt cannot erase the request needed by the
+                    # independently proved, off-loop fresh-SELL owner transition.
+                    continue
                 expected_reason = ("false_flip_leftovers_cancelled_owner_kept"
                                    if request.purpose == "false_flip_restore"
                                    else "retry_leftovers_cancelled_owner_kept")
@@ -3316,6 +3320,28 @@ class SchwabV2Strategy:
         state.slotclear_deferred_sell = None
         state.cw_resting_suppressed_segment_id = 0
         state.cw_resting_suppressed_bars = 0
+
+    def _retry_request_fresh_sell_handoff_pending(self, request: RemovedWait) -> bool:
+        """In-memory barrier only; existing fresh-SELL proof/commit gates own release."""
+        if (not getattr(self.settings, "strategy_schwab_1m_v2_retry_request_fresh_sell_handoff_enabled", False)
+                or not self.settings.strategy_schwab_1m_v2_fresh_sell_owner_release_enabled
+                or not self._flip_owned_first_entry_enabled
+                or request.purpose not in {"retry_exhausted", "false_flip_restore"}
+                or self._removed_wait_requests.get(request.symbol) != request):
+            return False
+        state = self._symbol_states.get(request.symbol)
+        if state is None:
+            return False
+        segment = state.fresh_sell_owner_release_segment_ms
+        identity = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+        return bool(
+            identity == request.opportunity_id and identity > 0
+            and state.fanout_segment_id in {0, identity}
+            and segment > max(state.flip_owner_retry_segment_id, state.flip_owner_flip_bar_ts)
+            and state.atr_short_flip_bar_ts == segment
+            and state.bars and int(state.bars[-1].timestamp_ms) >= segment
+            and self._slotclear_live_sell_close_after_watch(
+                state, max(self._boot_ms, state.retry_one_watch_start_ms)))
 
     def _fresh_sell_release_owner(self, state: SymbolState, signal: dict | None) -> bool:
         request = self._removed_wait_requests.get(state.symbol)

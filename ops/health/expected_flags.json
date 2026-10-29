@@ -86,6 +86,13 @@
       "ruling": "Sunday PM operator rule: default ON; exact-head review and deployment remain separate."
     },
     {
+      "name": "strategy_schwab_1m_v2_retry_request_fresh_sell_handoff_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Preserve the exact retry request across a fresh SELL and a later cancel-only receipt; independent flat/cancel proof and atomic owner retirement remain required.",
+      "ruling": "C1 2026-10-29 17:34 operator-approved source/private qualification, default False; C1 installs ON only after exact-source review."
+    },
+    {
       "name": "strategy_schwab_1m_v2_resting_buy_round_up_enabled",
       "expected": true,
       "owning_service": "schwab-1m-v2",

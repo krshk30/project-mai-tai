@@ -1249,6 +1249,8 @@ class SchwabV2BotService:
             for proof in proofs:
                 if not proof.clear and not request_only_retirement(proof):
                     continue
+                if self.strategy._retry_request_fresh_sell_handoff_pending(proof.request):
+                    continue  # Keep durable request until the fresh-SELL owner plan is staged.
                 failure = failures.get(proof.request)
                 if request_only_retirement(proof) and failure and (
                         failure["attempts"] >= 5 or self.strategy._now_ms() < failure["next_ms"]):
@@ -1267,6 +1269,10 @@ class SchwabV2BotService:
                     continue
                 self.strategy.stage_removed_wait_clear(proof, retire_owner=retire)
             for request, plan in tuple(self.strategy.__dict__.get("_removed_wait_pending_clears", {}).items()):
+                if (not plan.retirements
+                        and self.strategy._retry_request_fresh_sell_handoff_pending(request)):
+                    self.strategy._removed_wait_pending_clears.pop(request, None)
+                    continue
                 def valid(plan=plan):
                     return (emit_valid(plan.proof.request.symbol)
                             and self.strategy.removed_wait_clear_valid(plan))

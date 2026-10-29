@@ -5,6 +5,7 @@ These are C7A/KWSTALE1 compatibility checks, not the original 12:38 NCPL race.
 """
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -71,7 +72,16 @@ def test_f1_audit_addition_keeps_exact_preexisting_flag_denominators():
     # Exact installed04cd artifact, including all preexisting values/metadata/
     # whitespace. Only the new audit row may be removed to recover these bytes.
     baseline_raw = b"".join(line for line in lines if line not in added)
-    assert hashlib.sha256(baseline_raw).hexdigest() == "78c3ab65472d7c5760ca4d1f4c2852f7a5583af19dbf9a46dede129783300dc5"
+    # The separately approved handoff flag is additive to that historical anchor.
+    # Remove only its one complete reviewed row when checking the original bytes.
+    handoff = b"strategy_schwab_1m_v2_retry_request_fresh_sell_handoff_enabled"
+    pattern = rb'    \{\n      "name": "' + re.escape(handoff) + rb'",\n.*?\n    \},\n'
+    handoff_rows = re.findall(pattern, baseline_raw, re.DOTALL)
+    assert len(handoff_rows) == 1
+    handoff_row = json.loads(handoff_rows[0].strip().rstrip(b","))
+    assert handoff_row["name"] == handoff.decode() and handoff_row["expected"] is True
+    historical_raw = baseline_raw.replace(handoff_rows[0], b"", 1)
+    assert hashlib.sha256(historical_raw).hexdigest() == "78c3ab65472d7c5760ca4d1f4c2852f7a5583af19dbf9a46dede129783300dc5"
     current, baseline = json.loads(raw), json.loads(baseline_raw)
     own, = [row for row in current["flags"] if row["name"] == name]
     assert own["expected"] is True and own["owning_service"] == "schwab-1m-v2"
@@ -80,5 +90,5 @@ def test_f1_audit_addition_keeps_exact_preexisting_flag_denominators():
     assert len({row["name"] for row in current["flags"]}) == len(current["flags"])
     numeric = json.loads((root / "ops/health/expected_numeric.json").read_text())["settings"]
     projected = lambda rows: sum(1 + len(row.get("also_check_services", [])) for row in rows + numeric)
-    assert projected(baseline["flags"]) == 185  # +WBEXIT2 +LANE-A (oms + v2 each) in pkg-1029
-    assert projected(current["flags"]) == 186
+    assert projected(baseline["flags"]) == 186  # +NCPL handoff, preserving the older hash above.
+    assert projected(current["flags"]) == 187
