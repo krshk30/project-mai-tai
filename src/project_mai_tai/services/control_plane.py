@@ -3839,19 +3839,23 @@ def build_app(
     firstbar_read_port: Any | None = None,
     legacy_simulation_read_port: Any | None = None,
     aggregate_simulation_read_port: Any | None = None,
+    today_simulation_read_port: Any | None = None,
 ) -> FastAPI:
     active_settings = settings or get_settings()
+    from project_mai_tai.atr_simulation.today_file import read_today_file
+
+    active_today_reader = read_today_file if today_simulation_read_port is None else today_simulation_read_port
     active_session_factory = session_factory or build_timed_session_factory(active_settings, service="control", profile="slow")
     from project_mai_tai.atr_simulation.firstbar_ui_reader import FirstBarSeedUIReader
     from project_mai_tai.services.atr_firstbar_routes import (
-        build_firstbar_router, load_firstbar_display,
+        build_firstbar_router,
     )
     from project_mai_tai.atr_simulation.ui_reader import SimulationUIReader
     from project_mai_tai.services.atr_aggregate_routes import (
-        build_aggregate_router, load_aggregate_display,
+        build_aggregate_router,
     )
     from project_mai_tai.services.atr_simulation_legacy_routes import (
-        LegacySimulationReadPort, build_legacy_router, load_legacy_display,
+        LegacySimulationReadPort, build_legacy_router,
     )
 
     owns_firstbar_reader = firstbar_read_port is None
@@ -4592,23 +4596,12 @@ def build_app(
             )
         firstbar_html = ""
         if strategy_code == "schwab_1m_v2":
-            from project_mai_tai.atr_simulation.cp_sim_display import page_scopes, render_page
-            firstbar_selected, aggregate_selected, legacy_selected = page_scopes(
-                active_aggregate_reader, firstbar_scope, aggregate_scope, legacy_scope)
-            aggregate_context = await load_aggregate_display(active_aggregate_reader,
-                **aggregate_selected)
-            context = await load_firstbar_display(active_firstbar_reader, **firstbar_selected)
-            legacy_contexts = [await load_legacy_display(active_legacy_reader,
-                **scope, render_html=None) for scope in legacy_selected]
-            render_options = dict(render_row=_render_completed_position_row,
-                scopes=(firstbar_selected, aggregate_selected, legacy_selected))
-            if (all(scope.get("source_id") is None for scope in
-                    (firstbar_selected, aggregate_selected, *legacy_selected))
-                    and aggregate_context["realized"]["receipt_sha256"] is None):
-                firstbar_html = render_page(context, aggregate_context, legacy_contexts, **render_options)
-            else:
-                firstbar_html = await asyncio.to_thread(render_page, context, aggregate_context,
-                    legacy_contexts, **render_options)
+            from project_mai_tai.atr_simulation.today_display import render_today_page
+
+            # Local immutable snapshot only: no history DB/engine work per page.
+            today_context = await asyncio.to_thread(active_today_reader, now=utcnow())
+            firstbar_html = await asyncio.to_thread(render_today_page, today_context,
+                                                   render_row=_render_completed_position_row)
         rendered = _render_bot_detail_page(
             data,
             strategy_code,

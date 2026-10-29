@@ -167,11 +167,20 @@ def _sim_row(row, render_row):
         opening = cell[1][:-1] + ' data-sim-time="' + field + '" title="' + escape(full, quote=True) + '">'
         replacement = opening + escape(_compact_time(full)) + cell[3]
         rendered = rendered[:cell.start()] + replacement + rendered[cell.end():]
+    if row.get("coverage_note") is not None:
+        note = row["coverage_note"]
+        if not isinstance(note, str) or not 0 < len(note) <= 2048:
+            raise ValueError("bounded_plain_coverage_note_required")
+        summary = list(re.finditer(r'(<td\b[^>]*>)(.*?)(</td>)', rendered, re.S))[8]
+        replacement = (summary[1] + summary[2]
+            + '<br><small class="sim-row-coverage">' + escape(note) + '</small>' + summary[3])
+        rendered = rendered[:summary.start()] + replacement + rendered[summary.end():]
     return rendered
 
 
-def panel(title, rows, *, render_row, tooltip="", marker="", caption=CAPTION, outcomes=None):
-    description = DESCRIPTIONS.get(title, "")
+def panel(title, rows, *, render_row, tooltip="", marker="", caption=CAPTION, outcomes=None,
+          description=None, updated_text=None, warning_text=None):
+    description = DESCRIPTIONS.get(title, "") if description is None else description
     real = marker == REAL_MARKER
     if real and caption == CAPTION:
         caption = REAL_CAPTION
@@ -202,6 +211,8 @@ def panel(title, rows, *, render_row, tooltip="", marker="", caption=CAPTION, ou
         + '><div class="panel-header"><div><h3>' + escape(title) + '</h3>'
         + '<div class="sub" title="' + escape(tooltip, quote=True) + '">' + escape(caption)
         + '</div>' + ('<div class="sim-desc">' + escape(description) + '</div>' if description else '')
+        + ('<div class="sim-updated">' + escape(updated_text) + '</div>' if updated_text is not None else '')
+        + ('<div class="sim-stale" role="status">' + escape(warning_text) + '</div>' if warning_text else '')
         + '</div><span class="count ' + ('green' if real else 'pink') + '" style="font-size:10px">'
         + (REAL_BADGE if real else SIM_BADGE) + '</span>'
         + '</div><div class="table-wrap"><table>' + COLGROUP + '<thead>' + HEADER + '</thead><tbody>'
