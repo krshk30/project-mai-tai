@@ -57,8 +57,83 @@ def flips_by_symbol(conn, anchor):
     out = {}
     for symbol, series in bars.items():
         rows = compute_atr_trail(series)
+        LINES[symbol] = (series, rows)
         out[symbol] = [(series[i], r["flip"]) for i, r in enumerate(rows) if r["flip"]]
     return out
+
+
+LINES = {}
+# Live ATR rules read from the running bot 10-29: resting buy-stop at line + 0.5% (cent ceiling),
+# limit 0.5% above the trigger, repriced every bar while short; exits: OCO target +5% / stop -8%,
+# CONF1 confirmation (bar after the fill's bar must close long), sell flip.
+LIVE_OFFSET, LIVE_BAND, LIVE_TARGET, LIVE_STOP = 0.005, 0.005, 0.05, 0.08
+
+
+def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base):
+    """Same signal, the live bot's own entry and exit rules (simulation, not real fills)."""
+    series, rows = LINES[symbol]
+    fi = next(i for i, b in enumerate(series) if b.ts == flip_bar.ts)
+    si = max((i for i in range(fi) if rows[i]["flip"] == "SELL"), default=None)
+    if si is None:
+        return dict(base, status="SKIPPED", reason="no short segment before this signal")
+    open_from = datetime.combine(day, datetime.min.time(), ET).replace(hour=7)
+    cutoff = datetime.combine(day, datetime.min.time(), ET).replace(hour=15, minute=45)
+    session_end = datetime.combine(day, datetime.min.time(), ET).replace(hour=20)
+    at = lambda i: datetime.fromtimestamp(series[i].ts / 1000, timezone.utc)
+    first = si + 1
+    if first > fi or rows[first - 1]["trail"] is None:
+        return dict(base, status="SKIPPED", reason="no resting bar before the flip")
+    seg_start = max(at(first), open_from)
+    seg_end = min(at(fi) + timedelta(seconds=60), cutoff)
+    if seg_end <= seg_start:
+        return dict(base, status="SKIPPED", reason="outside the 07:00-15:45 entry window")
+    stream = trades(conn, symbol, seg_start, min(session_end, now))
+    fill = None
+    k, triggered = None, False
+    for ts, price in stream:
+        if ts >= seg_end:
+            break
+        bar_k = first + int((ts - at(first)).total_seconds() // 60)
+        if bar_k != k:
+            k, triggered = bar_k, False
+            line = rows[k - 1]["trail"]
+            trigger = ceil_cent(line * (1 + LIVE_OFFSET))
+            limit = ceil_cent(trigger * (1 + LIVE_BAND))
+        if not triggered and price >= trigger:
+            triggered = True
+        if triggered and price <= limit:
+            fill = (ts, price, k, trigger)
+            break
+    if fill is None:
+        return dict(base, status="SKIPPED" if now >= seg_end else "WAITING",
+                    reason="live resting buy never filled" if now >= seg_end else "live resting buy waiting")
+    f_ts, f_px, fk, trig = fill
+    qty = int(NOTIONAL // f_px)
+    target, stop = f_px * (1 + LIVE_TARGET), f_px * (1 - LIVE_STOP)
+    conf_close = at(fk) + timedelta(seconds=120)  # close of the bar after the fill's bar
+    conf_fails = fk + 1 < len(rows) and rows[fk + 1]["state"] != "long" and conf_close <= now
+    exit_ = None
+    last = f_px
+    for ts, price in stream:
+        last = price
+        if sell_close is not None and ts >= sell_close:
+            exit_ = (ts, price, "sell flip")
+        elif conf_fails and ts >= conf_close:
+            exit_ = (ts, price, "confirmation exit (bar after fill not long)")
+        elif ts >= session_end:
+            exit_ = (ts, price, "session end")
+        elif price >= target:
+            exit_ = (ts, target, "target +5%")
+        elif price <= stop:
+            exit_ = (ts, price, "stop -8%")
+        if exit_:
+            break
+    x_px = exit_[1] if exit_ else last
+    return dict(base, trigger=trig, status="CLOSED" if exit_ else "OPEN", quantity=qty,
+                entry_time=f_ts.astimezone(ET).strftime("%H:%M:%S"), entry_price=round(f_px, 4),
+                exit_time=exit_[0].astimezone(ET).strftime("%H:%M:%S") if exit_ else "open",
+                exit_price=round(x_px, 4), reason=exit_[2] if exit_ else "still open (marked at last trade)",
+                pnl=round((x_px - f_px) * qty, 2), pnl_pct=round((x_px / f_px - 1) * 100, 2))
 
 
 def confirmed_windows(conn, day):
@@ -213,7 +288,7 @@ def run(now=None):
     anchor = datetime.combine(day, datetime.min.time(), ET).replace(hour=4)
     url = os.environ["MAI_TAI_DATABASE_URL"]
     engine = create_engine(url, pool_pre_ping=True)
-    tables = {"FIRSTBAR": [], "FIRSTBAR+2min": [], "LIVE (actual)": []}
+    tables = {"FIRSTBAR": [], "FIRSTBAR+2min": [], "LIVE rules SIM": []}
     with engine.connect() as conn:
         conn.execute(text("set statement_timeout = 20000"))
         windows = confirmed_windows(conn, day)
@@ -233,7 +308,7 @@ def run(now=None):
                 a, b = simulate(conn, symbol, bar, sell_close, day, now)
                 tables["FIRSTBAR"].append(a)
                 tables["FIRSTBAR+2min"].append(b)
-                tables["LIVE (actual)"].append(live_row(fills, symbol, bar, sell_close, session_end,
+                tables["LIVE rules SIM"].append(live_rules_sim(conn, symbol, bar, sell_close, day, now,
                     {"symbol": symbol, "signal": a["signal"], "trigger": a["trigger"]}))
     for rows in tables.values():
         rows.sort(key=lambda r: (r.get("entry_time") or "99", r["signal"], r["symbol"]))
