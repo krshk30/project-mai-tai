@@ -118,8 +118,12 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base):
     f_ts, f_px, fk, trig = fill
     qty = int(NOTIONAL // f_px)
     target, stop = f_px * (1 + LIVE_TARGET), f_px * (1 - LIVE_STOP)
-    conf_close = at(fk) + timedelta(seconds=120)  # close of the bar after the fill's bar
-    conf_fails = fk + 1 < len(rows) and rows[fk + 1]["state"] != "long" and conf_close <= now
+    # CONF1 (live confirmation_bar_start_ms): the bar after the bar that CONTAINS the fill.
+    fill_bar_ms = int(f_ts.timestamp() // 60) * 60_000
+    by_ts = {b.ts: i for i, b in enumerate(series)}
+    conf_i = by_ts.get(fill_bar_ms + 60_000)
+    conf_close = datetime.fromtimestamp((fill_bar_ms + 120_000) / 1000, timezone.utc)
+    conf_fails = conf_i is not None and rows[conf_i]["state"] != "long" and conf_close <= now
     exit_ = None
     last = f_px
     for ts, price in stream:
@@ -208,20 +212,21 @@ def live_row(fills, symbol, bar, sell_close, session_end, base):
 
 
 def trades(conn, symbol, start, end):
-    """Eligible trades in [start, end), streamed in pages so a caller can stop early."""
-    cursor = start
+    """Eligible trades in [start, end), streamed in pages keyed on (event_ts, id) so ties never drop."""
+    last_ts, last_id = start, -1
     while True:
         page = conn.execute(text(
-            "select event_ts, price, conditions, size from market_capture_trades where symbol=:s "
-            "and event_ts >= :a and event_ts < :b and size > 0 order by event_ts, id limit :n"),
-            {"s": symbol, "a": cursor, "b": end, "n": PAGE}).all()
-        for ts, price, cond, size in page:
+            "select event_ts, price, conditions, size, id from market_capture_trades where symbol=:s "
+            "and (event_ts, id) > (:t, :i) and event_ts >= :a and event_ts < :b and size > 0 "
+            "order by event_ts, id limit :n"),
+            {"s": symbol, "t": last_ts, "i": last_id, "a": start, "b": end, "n": PAGE}).all()
+        for ts, price, cond, size, _ in page:
             # Same as the old FIRSTBAR execution rule: round lots only (>=100 shares) and no excluded condition.
             if size >= 100 and eligible(cond):
                 yield ts, float(price)
         if len(page) < PAGE:
             return
-        cursor = page[-1][0] + timedelta(microseconds=1)  # noqa: page rows are (ts, price, cond, size)
+        last_ts, last_id = page[-1][0], page[-1][4]
 
 
 def simulate(conn, symbol, bar, sell_close, day, now):
