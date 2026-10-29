@@ -201,11 +201,12 @@ def test_real_pcla_row_controlled_working_status_fails_b2_collector_then_fixed_p
     assert pcla["items"][0]["symbol"] == "PCLA"
     pcla["items"][0]["order_status"] = "WORKING"  # Explicit CONTROLLED change only.
     account = pcla["account_id"]
+    controlled_page = dict(page([pcla]), pageSize=0)  # CONTROLLED: reach the old nonempty guard.
     args = dict(account_id=account, field="orders", page_size=100,
                 cursor_keys=("client_order_id",), order_request_account=account)
     with pytest.raises(ValueError, match="Webull_nonempty_item_model_UNKNOWN"):
-        baseline["webull_pages"](lambda cursor: (200, page([pcla])), **args)
-    pages = webull_pages(lambda cursor: (200, page([pcla])), **args)
+        baseline["webull_pages"](lambda cursor: (200, controlled_page), **args)
+    pages = webull_pages(lambda cursor: (200, controlled_page), **args)
     value = book(pages, native_account=account)
     assert value.complete and value.working == frozenset({"PCLA"})
     assert not decisions(value)["PCLA"].allowed and decisions(value)["OTHER"].allowed
