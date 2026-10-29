@@ -42,3 +42,15 @@ def test_naive_created_at_is_read_as_utc(census):
     _age(attempt(session), stamp)
     session.flush()
     assert local_evidence(session, ACCOUNTS, prior_session_attempts_final=True)[0] == frozenset()
+
+
+def test_prior_session_attempt_whose_order_is_terminal_is_final(census):
+    # NCPL 10-12: the order row exists but cancel/reprice rewrote its payload metadata.
+    session, accounts, strategy = census
+    _age(attempt(session), current_session_anchor() - timedelta(days=16))
+    row = order(session, accounts, strategy, status="cancelled", source=None)
+    row.payload = {"clearwait_dispatch_token": "persisted-attempt", "resting_entry_cancel": "true",
+                   "reason": "reprice"}  # token kept, fanout_segment_id lost
+    session.flush()
+    assert local_evidence(session, ACCOUNTS)[0] == frozenset({"WORX"})
+    assert local_evidence(session, ACCOUNTS, prior_session_attempts_final=True)[0] == frozenset()

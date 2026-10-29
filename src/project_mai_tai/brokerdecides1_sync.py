@@ -220,6 +220,9 @@ def local_nonentry_activity(session, account_ids, terminal):
     return symbols
 
 
+PRIOR_SESSION_TERMINAL = frozenset({"cancelled", "filled", "rejected", "expired", "aborted"})
+
+
 def local_evidence(session, names, *, prior_session_attempts_final=False):
     """Durable OWN uncertainty/fills only. No native-flat claim comes from this DB."""
     from project_mai_tai.cancelack1 import _closed_with_replacements, working_buy_present
@@ -316,8 +319,11 @@ def local_evidence(session, names, *, prior_session_attempts_final=False):
         stamp = attempt_by_token[token].created_at
         if stamp is not None and stamp.tzinfo is None:
             stamp = stamp.replace(tzinfo=UTC)
-        if (prior_session_attempts_final and not own and not changed_receipt
-                and stamp is not None and stamp < anchor):
+        # An own order row is also final when the DB already shows it terminal: cancel/reprice
+        # rewrites drop the token/segment metadata the strict match below needs.
+        if (prior_session_attempts_final and not changed_receipt
+                and stamp is not None and stamp < anchor
+                and all(order.status in PRIOR_SESSION_TERMINAL for order in own)):
             prior_final += 1
             continue
         if (changed_receipt or not own or any(order.symbol != symbol or order.strategy_id != strategy_id
