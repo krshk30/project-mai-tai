@@ -36,7 +36,11 @@ CLASSES = (
     "B_service_down", "B_restart_loop", "B_guard_STOP",
     "B_token_dead_or_near_expiry", "B_scanner_silent", "B_quote_stale",
     "B_OMS_stall", "B_DB_write_error", "B_broker_API_error", "B_checker_blindness",
+    "B_keepwatch_stuck", "B_bot_reading_lag", "B_bar_lag",
 )
+EXPORTED_PROGRESS_CLASSES = frozenset((
+    "B_keepwatch_stuck", "B_bot_reading_lag", "B_bar_lag",
+))
 FRAME_BYTES = 1048576
 OUTPUT_BYTES = 524288
 MAX_FINDINGS = 1000
@@ -199,9 +203,101 @@ def _expectation(evidence, policy, subject, now):
     return expected
 
 
+def _progress_ms(value):
+    delta = _time(value) - datetime(1970, 1, 1, tzinfo=timezone.utc)
+    return delta.days * 86400000 + delta.seconds * 1000 + delta.microseconds // 1000
+
+
+def _exported_progress_reading(class_name, reading, window, now, coverage):
+    """C1 09:26/09:57 explicit SHADOW predicates; no entry/native assumptions."""
+    if not _boolean(reading.get("bar_scope_complete")):
+        raise _Invalid("progress_bar_scope_unknown")
+    now_ms = _progress_ms(now.isoformat())
+    lower, upper = (_progress_ms(value.isoformat()) for value in coverage)
+    if class_name == "B_bar_lag":
+        if _limit(window, "lag_milliseconds") != 240000:
+            raise _Invalid("bar_lag_policy_changed")
+        closed = _progress_ms(reading.get("last_bar_closed_at"))
+        if not lower <= closed <= upper <= now_ms:
+            raise _Invalid("bar_clock_unknown")
+        return now_ms - closed >= 240000, (
+            "bar_lag_4min" if now_ms - closed >= 240000 else "market_bar_progress_measured")
+    if class_name == "B_bot_reading_lag":
+        if _limit(window, "lag_milliseconds") != 180000:
+            raise _Invalid("bot_reading_lag_policy_changed")
+        if not _boolean(reading.get("reading_scope_complete")):
+            raise _Invalid("bot_reading_scope_unknown")
+        last = _progress_ms(reading.get("last_reading_at"))
+        closed = _progress_ms(reading.get("last_bar_closed_at"))
+        if not lower <= last < closed <= upper <= now_ms:
+            raise _Invalid("continuing_bars_unproven")
+        if now_ms - closed >= 240000:
+            raise _Invalid("bars_not_currently_proven_continuing")
+        return now_ms - last >= 180000, (
+            "bot_reading_lag_180s" if now_ms - last >= 180000 else "bot_reading_progress_measured")
+    if _integer(window.get("minimum_closed_minutes")) != 3:
+        raise _Invalid("keepwatch_minute_policy_changed")
+    if not (_boolean(reading.get("gate_history_complete"))
+            and _boolean(reading.get("line_history_complete"))):
+        raise _Invalid("keepwatch_history_unknown")
+    minutes = reading.get("closed_minutes")
+    if not isinstance(minutes, list) or len(minutes) != 3:
+        raise _Invalid("keepwatch_closed_minutes_unknown")
+    minutes = [_integer(value) for value in minutes]
+    if (any(value % 60000 for value in minutes) or minutes[1] != minutes[0] + 60000
+            or minutes[2] != minutes[1] + 60000
+            or not lower <= minutes[0] < minutes[-1] + 60000 <= upper <= now_ms):
+        raise _Invalid("keepwatch_minutes_not_consecutive_closed")
+    published = reading.get("last_line_publish_at")
+    if published is not None:
+        published_ms = _progress_ms(published)
+        if not lower <= published_ms <= upper:
+            raise _Invalid("line_publish_clock_unknown")
+        if published_ms >= minutes[0]:
+            return False, "keepwatch_line_publish_progress"
+    events = reading.get("hold_events")
+    recoveries = reading.get("recovery_event_times")
+    if (not isinstance(events, list) or not 1 <= len(events) <= 64
+            or not isinstance(recoveries, list) or len(recoveries) > 64):
+        raise _Invalid("keepwatch_transition_events_unknown")
+    times = []
+    for event in events:
+        if not isinstance(event, dict):
+            raise _Invalid("keepwatch_hold_event_unknown")
+        unknown = _boolean(event.get("unknown"))
+        entry = event.get("entry_allowed")
+        if entry is not None and type(entry) is not bool:
+            raise _Invalid("keepwatch_entry_flag_unknown")
+        if not unknown and entry is not False:
+            raise _Invalid("keepwatch_hold_not_positive")
+        value = _progress_ms(event.get("event_at"))
+        if not lower <= value <= upper:
+            raise _Invalid("keepwatch_hold_clock_unknown")
+        times.append(value)
+    recovered = [_progress_ms(value) for value in recoveries]
+    if any(not lower <= value <= upper for value in recovered):
+        raise _Invalid("keepwatch_recovery_clock_unknown")
+    mode = reading.get("proof_mode")
+    if mode == "recurring_holds":
+        # A gate log is observed AFTER the corresponding minute closes.
+        # Retain both source clocks; this binds observations, not causation.
+        if not all(any(minute + 60000 <= value < minute + 120000 for value in times)
+                   for minute in minutes):
+            raise _Invalid("keepwatch_recurring_hold_missing")
+    elif mode == "unrecovered_hold":
+        first = min(times)
+        if first > minutes[0] or any(value > first for value in recovered):
+            raise _Invalid("keepwatch_hold_recovered_or_too_new")
+    else:
+        raise _Invalid("keepwatch_proof_mode_unknown")
+    return True, "keepwatch_rehold_or_frozen"
+
+
 def _reading(class_name, reading, expected, window, now, coverage):
     if not isinstance(reading, dict):
         raise _Invalid("reading_unknown")
+    if class_name in EXPORTED_PROGRESS_CLASSES:
+        return _exported_progress_reading(class_name, reading, window, now, coverage)
     if class_name == "B_checker_blindness":
         readable = _boolean(reading.get("source_readable"))
         expired = _boolean(reading.get("proof_expired"))
@@ -384,6 +480,12 @@ def evaluate_system(evidence: dict, policy: dict, *, as_of: str) -> list[dict]:
                     raise _Invalid("condition_transition_unknown")
                 if _time(check.get("first_seen")) > observed:
                     raise _Invalid("condition_history_unknown")
+                if class_name in EXPORTED_PROGRESS_CLASSES:
+                    exported = check.get("reading")
+                    if not isinstance(exported, dict):
+                        raise _Invalid("reading_unknown")
+                    if not set(_refs(exported.get("coverage_refs"))).issubset(refs):
+                        raise _Invalid("progress_coverage_reference_unknown")
                 risk, reason = _reading(class_name, check.get("reading"), expected, window, now, (start, end))
                 if not risk and not set(_refs(check.get("affirmative_refs"))).issubset(refs):
                     raise _Invalid("affirmative_recovery_unknown")

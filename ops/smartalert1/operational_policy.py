@@ -68,6 +68,10 @@ _L2_PAGE = {
     "A6": ("eligible_opportunity_without_order",),
 }
 _L3_PAGE = {
+    # C1 10-29 09:57 / pkg-1029 C6 binding: classification only, SHADOW stays NONE.
+    "B_keepwatch_stuck": ("keepwatch_rehold_or_frozen",),
+    "B_bot_reading_lag": ("bot_reading_lag_180s",),
+    "B_bar_lag": ("bar_lag_4min",),
     "B_DB_write_error": ("actual_error_count_measured",),
     "B_OMS_stall": ("oms_functional_progress_measured",),
     "B_broker_API_error": ("actual_error_count_measured",),
