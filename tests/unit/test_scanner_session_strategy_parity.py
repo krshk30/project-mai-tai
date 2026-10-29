@@ -221,8 +221,13 @@ def run_world(module, *, enabled, start, clock_missing, db_error, retention, mon
     seeds = [candidate("CARRY", "" if clock_missing else carry_time), candidate("FADE", fade_time)]
     state.seed_confirmed_candidates(deepcopy(seeds))
     state.restore_confirmed_runtime_view(deepcopy(seeds))
+    # The real service passes Settings' five-second cadence, not the alert
+    # engine's standalone thirty-second default. Supply its full ten-minute
+    # controlled prefix through the public history API in every world.
+    prefix_cycles = max(1, 600 // settings.market_data_snapshot_interval_seconds)
     state.alert_engine.prefill_history([
-        {"FRESH": (2.0, 100000), "CARRY": (3.2, 1000000), "FADE": (3.2, 1000000)} for _ in range(20)])
+        {"FRESH": (2.0, 100000), "CARRY": (3.2, 1000000), "FADE": (3.2, 1000000)}
+        for _ in range(prefix_cycles)])
     previous_watchlists = {code: set(bot.watchlist) for code, bot in state.bots.items()}
     assert any("FADE" in symbols for symbols in previous_watchlists.values())
     frames = []

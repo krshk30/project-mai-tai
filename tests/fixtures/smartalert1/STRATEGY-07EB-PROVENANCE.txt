@@ -119,3 +119,25 @@ microseconds/offset), fold and recursively represented timezone identity.
 No fields/types omitted, no rounding/defaultstr/repr fallback, no APP/assertion/
 envelope change. No author tests/imports/runtime. Main onlyfailed10 after review;
 original serializer-adverse1PASS remains retained/not selected again.
+
+SECOND ACTUAL MAIN FAILURE / CONTROLLED PREFIX CORRECTION
+Main c9dd842880dc2debfca35f63939050dec720d451 failed only10 at
+21:54:54..56: OLD run_world's unchanged first-frame FRESH newly_confirmed
+assertion. Exact time representation passed; no NEW comparison was reached.
+Preserve40be and both actual failure generations; original adverse1PASS stays.
+
+Static cause: Settings market_data_snapshot_interval_seconds is5 (settings.py
+103), and literal OLD service4062..4065 passes that configured interval to
+MomentumAlertEngine. The standalone engine default30 does not apply here.
+momentum_alerts.py42..48 requires60/120 history entries for5/10-minute windows.
+The former20-entry controlled prefix plus first record_snapshot yields21:
+neither alert window is eligible. No squeeze reaches the real confirmed scanner.
+
+This test-only successor supplies max(1,600//actual_configured_interval)
+controlled history entries using unchanged public prefill_history, identically
+OLD/OFF/ON. Existing values remain FRESH2.0/100000 ->3.2/1000000; CARRY unchanged;
+FADE3.2->2.1. No threshold, cadence, current snapshot, seed confirmation, clock,
+APP, private warmup state, scanner/permission method or assertion changes.
+The prefix is CONTROLLED alert input, not historical or native evidence.
+All complete-state/watchlist/add/remove/FRESH/FADE/capture/fault comparisons stay.
+Main review and only failed10 execution required; no author runtime performed.
