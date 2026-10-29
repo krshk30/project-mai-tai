@@ -99,6 +99,10 @@ async def replay_next_day(make_case, *, scenario="original_terminal"):
     clock[0] = BOOT
     profile(service)
     await runtime(service, broker)
+    # This scenario tests absence of WB2 recovery authority, not the separate
+    # baseline PM/generic HARD_STOP ladder. Keep the real old entry unchanged.
+    observation_bid = Decimal("10.00") if scenario == "no_prior_owner" else Decimal("9.40")
+    assert scenario != "no_prior_owner" or observation_bid == broker.entry_price
     service._rehydrate_managed_v2_symbols()  # Actual existing boot step, not patched/hardcoded ready.
     boot = await wbexit2.hydrate_at_boot(service)  # EXACT proposed service.run hook.
     assert service._wbexit2_boot_complete is True
@@ -109,7 +113,7 @@ async def replay_next_day(make_case, *, scenario="original_terminal"):
         assert boot["owners"] == []
     await service._handle_quote_tick_event(QuoteTickEvent(source_service="CONTROLLED-NEXT-DAY-BOOT",
         produced_at=clock[0], payload=QuoteTickPayload(symbol=broker.symbol,
-            bid_price=Decimal("9.40"), ask_price=Decimal("9.41"))))
+            bid_price=observation_bid, ask_price=observation_bid + Decimal("0.01"))))
     tasks = tuple(service.__dict__.get("_symbol_tick_work", {}).values())
     if tasks:
         await asyncio.gather(*tasks)  # Join admitted work without closing/replacing quote scheduler.
@@ -120,7 +124,7 @@ async def replay_next_day(make_case, *, scenario="original_terminal"):
         clock[0] = OBSERVE + timedelta(seconds=monotonic() - observation_origin)
         await service._handle_quote_tick_event(QuoteTickEvent(source_service="CONTROLLED-NEXT-DAY-BOOT",
             produced_at=clock[0], payload=QuoteTickPayload(symbol=broker.symbol,
-                bid_price=Decimal("9.40"), ask_price=Decimal("9.41"))))
+                bid_price=observation_bid, ask_price=observation_bid + Decimal("0.01"))))
         admitted = tuple(service.__dict__.get("_symbol_tick_work", {}).values())
         if admitted:
             await asyncio.gather(*admitted)
@@ -151,6 +155,8 @@ async def replay_next_day(make_case, *, scenario="original_terminal"):
         await asyncio.sleep(service._WEBULL_CW_EXIT_RETRY_SECONDS + .01)
     broker.lag = False  # Only controlled external read changes, not APP permission/state.
     await quote_observation()
+    if scenario == "no_prior_owner":
+        await close_case(case, "CW_FLIP")  # Actual selected RTH prior-session guard must refuse, no authority forged.
     await service._shutdown_symbol_tick_work()
     if scenario in {"original_terminal", "durable_terminal"}:
         final = saved(case)
