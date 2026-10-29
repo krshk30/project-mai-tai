@@ -1463,6 +1463,13 @@ class SchwabV2BotService:
             format="%(asctime)s %(levelname)s %(name)s | %(message)s",
         )
         logger.info("schwab_1m_v2 bot starting pid=%d (enabled=%s)", os.getpid(), self.enabled)
+        logger.info(
+            "[STARTUP-FLAGS] orb_country_semantic_admission_enabled=%s scanner_confirmed_capture_session_day_enabled=%s keepwatch1=%s brokerdecides1=%s",
+            self.settings.orb_country_semantic_admission_enabled,
+            self.settings.scanner_confirmed_capture_session_day_enabled,
+            self.settings.strategy_schwab_1m_v2_keepwatch1_enabled,
+            self.settings.strategy_schwab_1m_v2_brokerdecides1_enabled,
+        )
 
         if not self.enabled:
             logger.warning(
