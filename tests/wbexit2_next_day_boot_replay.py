@@ -91,7 +91,7 @@ async def replay_next_day(make_case, *, scenario="original_terminal"):
     before_counts = len(broker.requests), len(broker.cancelled), broker.positions_reads
     with factory() as session:
         entry = session.get(BrokerOrder, entry_id)
-        entry_stamps = entry.created_at, entry.submitted_at
+        entry_stamps = entry.submitted_at  # BrokerOrder has no created_at column
     case = restarted(case)  # Fresh actual OMS object, SAME persisted DB and controlled venue book.
     service, _, broker, _, clock = case
     service.__dict__.pop("_v2_eod_handover_ready", None)
@@ -174,7 +174,7 @@ async def replay_next_day(make_case, *, scenario="original_terminal"):
     if scenario != "entry_time_changed":
         with factory() as session:
             entry = session.get(BrokerOrder, entry_id)
-            assert (entry.created_at, entry.submitted_at) == entry_stamps
+            assert entry.submitted_at == entry_stamps
     return {"kind": "CONTROLLED_NEXT_DAY_WBEXIT2_COMPONENT_REPLAY", "scenario": scenario,
         "day1": DAY1.isoformat(), "boot": BOOT.isoformat(), "observe": OBSERVE.isoformat(),
         "inventory": boot, "owner_id": original["owner_id"] if original else None,
