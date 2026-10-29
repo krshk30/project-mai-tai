@@ -2380,7 +2380,7 @@ class SchwabV2Strategy:
             self._flip_owner_counts["release_succeeded"] += 1
             self._flip_owner_counts["unknown_recovery_succeeded"] += 1
             logger.info(
-                "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d pending=%d "
+                "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d cumulative_unresolved_evaluations=%d "
                 "entry_allowed=1 reason=empty_owner_state_cleared",
                 state.symbol,
                 evaluated,
@@ -2410,7 +2410,7 @@ class SchwabV2Strategy:
             if recovered:
                 self._flip_owner_counts["unknown_recovery_succeeded"] += 1
                 logger.info(
-                    "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d pending=%d "
+                    "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d cumulative_unresolved_evaluations=%d "
                     "entry_allowed=1 reason=proven_empty_first_rest_released",
                     state.symbol,
                     evaluated,
@@ -2446,7 +2446,7 @@ class SchwabV2Strategy:
                 return False
             self._flip_owner_counts["unknown_recovery_succeeded"] += 1
             logger.info(
-                "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d pending=%d "
+                "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d cumulative_unresolved_evaluations=%d "
                 "entry_allowed=0 reason=fill_and_position_evidence_reconciled",
                 state.symbol,
                 evaluated,
@@ -2498,7 +2498,7 @@ class SchwabV2Strategy:
             if recovered:
                 self._flip_owner_counts["unknown_recovery_succeeded"] += 1
                 logger.info(
-                    "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d pending=%d "
+                    "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d cumulative_unresolved_evaluations=%d "
                     "entry_allowed=%d reason=%s",
                     state.symbol,
                     evaluated,
@@ -2522,7 +2522,7 @@ class SchwabV2Strategy:
         if last_warning <= 0 or now_ms < last_warning or now_ms - last_warning >= 60_000:
             state.flip_owner_recovery_warning_at_ms = now_ms
             logger.warning(
-                "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d pending=%d "
+                "[V2-FLIP-OWNER-RECOVERY] %s evaluated=%d recovered=%d cumulative_unresolved_evaluations=%d "
                 "entry_allowed=0 reason=insufficient_unambiguous_evidence open=%d filled_accounts=%d "
                 "position_ids=%d age_ms=%d",
                 state.symbol,

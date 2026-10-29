@@ -170,3 +170,30 @@ def test_new_unknown_episode_after_recovery_logs_once_without_changing_cancel_de
     bot._keepwatch_hold_unknown("NCPL", "second_episode")
     assert len(unknown_warnings(caplog)) == 2
     assert bot._keepwatch_cancel_requested == before and bot.strategy._entries_held
+
+
+@pytest.mark.asyncio
+async def test_real_background_failed_reads_warn_once_per_symbol_and_keep_exact_hold_reason(monkeypatch, caplog):
+    bot, clock, _sources = await seeded(monkeypatch)
+    caplog.set_level(logging.INFO)
+
+    def unreadable(*_args):
+        raise ValueError("CONTROLLED_PROVIDER_FAILURE_NOT_NATIVE_EVIDENCE")
+
+    monkeypatch.setattr("project_mai_tai.market_data.keepwatch_history.read_keepwatch_history", unreadable)
+    try:
+        clock[0] = EMPTY_END + 61_000
+        await bot._keepwatch_history_pass()
+        clock[0] += 60_000
+        await bot._keepwatch_history_pass()
+        records = unknown_warnings(caplog)
+        assert len(records) == 2  # NCPL + PCLA, not one repeated warning per failed read.
+        assert all("age_s=" in record.getMessage() and "incomplete_reason=" in record.getMessage()
+                   for record in records)
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("reason=closed_minute_read_error_ValueError" in text for text in messages)
+        assert {"NCPL", "PCLA"} <= bot._keepwatch_unknown
+        assert not bot._keepwatch_native_reads and not bot._keepwatch_history_scopes
+        diagnostics(bot, "failed_reads_stay_held")
+    finally:
+        await bot._stop_keepwatch_bar_owners()

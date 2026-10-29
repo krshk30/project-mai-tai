@@ -450,6 +450,7 @@ class SchwabV2BotService:
         self._keepwatch_enabled = self.settings.strategy_schwab_1m_v2_keepwatch1_enabled
         self._keepwatch = KeepWatchSession()
         self._keepwatch_unknown: set[str] = set()
+        self._keepwatch_unknown_episodes: dict[str, dict] = {}
         self._keepwatch_cancel_requested: set[str] = set()
         self._keepwatch_proven: dict[str, object] = {}
         self._keepwatch_current_recoveries: dict[str, object] = {}
@@ -2025,7 +2026,7 @@ class SchwabV2BotService:
             "last_retry_at": self._keepwatch_boot_retry_clock(), "retry_count": 0,
             "entry_allowed": False, "status": "UNKNOWN"}
         self._keepwatch_boot_deferrals.pop(symbol, None)
-        self._keepwatch_unknown.add(symbol)
+        self._keepwatch_mark_unknown(symbol, "boot_excluded")
         logger.warning("[V2-BOOT-EXCLUDE] symbol=%s reason=%s elapsed_seconds=%.3f "
                        "bound_seconds=%d fleet_excluded=1 entry_allowed=0 status=UNKNOWN",
                        symbol, reason, elapsed, KEEPWATCH_BOOT_DEFERRAL_SECONDS)
@@ -5263,6 +5264,7 @@ class SchwabV2BotService:
                     sym: proof for sym, proof in self._keepwatch_proven.items()
                     if proof.anchor_ms == self._keepwatch.anchor_ms}
                 self._keepwatch_unknown.intersection_update(scanner_selected)
+                self._keepwatch_unknown_episodes.clear()
                 self._keepwatch_cancel_requested.intersection_update(scanner_selected)
                 self._keepwatch_bar_locks = {
                     sym: lock for sym, lock in self._keepwatch_bar_locks.items()
@@ -5762,17 +5764,51 @@ class SchwabV2BotService:
         protected.update(self._fetch_open_positions())
         return protected
 
-    def _keepwatch_hold_unknown(self, symbol: str, reason: str) -> None:
+    def _keepwatch_mark_unknown(self, symbol: str, reason: str, *, emit: bool = True) -> None:
+        """Observe the existing fence only; no retry, cancellation or permission.
+
+        First WARNING per episode; reason changes are INFO with the same age.
+        An older silent set member has UNKNOWN onset, never an invented age.
+        No provider/DB calls; repeated holds of the same reason are silent.
+        """
         was_unknown = symbol in self._keepwatch_unknown
+        now_ms = self.strategy._now_ms()
+        anchor = session_start_ts_ms(now_ms)
+        episode = self._keepwatch_unknown_episodes.get(symbol)
+        if not was_unknown or episode is None or episode["anchor_ms"] != anchor:
+            episode = {"anchor_ms": anchor, "since_ms": None if was_unknown else now_ms,
+                       "warned": False, "reason": None}
+            self._keepwatch_unknown_episodes[symbol] = episode
         self._keepwatch_unknown.add(symbol)
+        if not emit:
+            return
+        since = episode["since_ms"]
+        age = "UNKNOWN" if since is None or now_ms < since else f"{(now_ms - since) / 1000:.3f}"
+        receipt = self._keepwatch_proven.get(symbol)
+        completed = getattr(receipt, "completed_ns", None)
+        proven_age = (f"{(now_ms - completed // 1_000_000) / 1000:.3f}"
+                      if type(completed) is int and 0 < completed <= now_ms * 1_000_000 else "UNKNOWN")
+        ledger = self._line_sessions.get(symbol)
+        incomplete = ledger.incomplete_reason if ledger is not None else "observation_epoch_missing"
+        if not episode["warned"]:
+            episode["warned"] = True
+            logger.warning("[V2-KEEPWATCH1] sym=%s outcome=UNKNOWN reason=%s age_s=%s "
+                           "last_proven_age_s=%s incomplete_reason=%s entry_allowed=0 line_reset=0",
+                           symbol, reason, age, proven_age, incomplete)
+        elif episode["reason"] != reason:
+            logger.info("[V2-KEEPWATCH1-HOLD] sym=%s outcome=UNKNOWN reason=%s age_s=%s "
+                        "last_proven_age_s=%s incomplete_reason=%s entry_allowed=0 line_reset=0",
+                        symbol, reason, age, proven_age, incomplete)
+        episode["reason"] = reason
+
+    def _keepwatch_hold_unknown(self, symbol: str, reason: str) -> None:
+        self._keepwatch_mark_unknown(symbol, reason, emit=False)
         state = self.strategy._symbol_states.get(symbol)
         if (symbol not in self._keepwatch_cancel_requested and state is not None
                 and (state.resting_active or state.webull_resting_active)):
             self.strategy._queue_resting_cancel(state, reason="keepwatch_history_unknown")
             self._keepwatch_cancel_requested.add(symbol)
-        if not was_unknown:
-            logger.warning("[V2-KEEPWATCH1] sym=%s outcome=UNKNOWN reason=%s entry_allowed=0 "
-                           "line_reset=0", symbol, reason)
+        self._keepwatch_mark_unknown(symbol, reason)
 
     def _keepwatch_pins_for(self, symbol: str, anchor: int):
         from project_mai_tai.market_data.keepwatch_producer import SessionProducerPins
@@ -5824,21 +5860,21 @@ class SchwabV2BotService:
                         if ledger._seed_invalidated:
                             self._line_reconcile_pending.add(symbol)
             except ValueError:
-                # No provider I/O/log write on the receiver. Unknown identity is
-                # refused, never guessed from the generic REST transport name.
+                # No provider I/O on the receiver. The first UNKNOWN episode
+                # is visible; identity is never guessed from the transport name.
                 inbox.received += 1
                 inbox.rejected += 1
                 self._keepwatch_bar_quarantine[symbol] = anchor
-                self._keepwatch_unknown.add(symbol)
+                self._keepwatch_mark_unknown(symbol, "bar_ingress_producer_unproven")
                 return
         admitted = inbox.offer(OwnedBar(
             bar, source, anchor, epoch, observed_ms=self.strategy._now_ms()))
         if not admitted:
-            # Receiver work is memory-only. Cancellation/logging belongs to the owner,
-            # not the WebSocket reader. This quarantine cannot be auto-cleared by a
+            # Cancellation belongs to the owner. Only the first episode warning
+            # is added here. This quarantine cannot be auto-cleared by a
             # later successful provider read that did not retain this rejected frame.
             self._keepwatch_bar_quarantine[symbol] = anchor
-            self._keepwatch_unknown.add(symbol)
+            self._keepwatch_mark_unknown(symbol, "bar_inbox_overflow")
         event = self._keepwatch_bar_events.setdefault(symbol, asyncio.Event())
         event.set()
         task = self._keepwatch_bar_tasks.get(symbol)
@@ -5857,7 +5893,7 @@ class SchwabV2BotService:
                     failed = completed.exception() is not None
                 if failed:
                     self._keepwatch_bar_quarantine[symbol] = anchor
-                    self._keepwatch_unknown.add(symbol)
+                    self._keepwatch_mark_unknown(symbol, "bar_owner_stopped_unexpectedly")
                     logger.error("[V2-KEEPWATCH1-BAR-OWNER] sym=%s outcome=UNKNOWN "
                                  "owner_stopped_unexpectedly=1 pending_retained=1", symbol)
             task.add_done_callback(owner_done)
@@ -6276,7 +6312,7 @@ class SchwabV2BotService:
                 or session_start_ts_ms(self.strategy._now_ms()) != work.anchor_ms
                 or self.strategy._symbol_states.get(symbol) is not state
                 or self._line_source_identity.get(symbol) != identity):
-            self._keepwatch_unknown.add(symbol)
+            self._keepwatch_mark_unknown(symbol, "bar_consumption_superseded")
             raise BarConsumptionSuperseded(symbol)
 
     async def _keepwatch_prepare_bar(
@@ -6296,6 +6332,8 @@ class SchwabV2BotService:
         # Historical REST warmup is not a current provider query or permission.
         cutoff_ms = bar.timestamp_ms if history is None else history.through_ms
         if now_ms - cutoff_ms > 180_000:
+            if symbol in self._keepwatch_unknown:
+                self._keepwatch_mark_unknown(symbol, "history_cutoff_stale")
             return False
         if now_ms < bar.timestamp_ms + 60_000:
             self._keepwatch_hold_unknown(symbol, "minute_not_closed")
@@ -6313,7 +6351,7 @@ class SchwabV2BotService:
                 and not ledger._seed_invalidated
                 and previous_ms and previous_ms <= bar.timestamp_ms <= previous_ms + 60_000):
             return True
-        self._keepwatch_unknown.add(symbol)
+        self._keepwatch_mark_unknown(symbol, "bar_history_read_pending")
         epoch = ledger.epoch
         source_identity = self._line_source_identity.get(symbol)
         try:
@@ -6332,6 +6370,7 @@ class SchwabV2BotService:
                     or symbol not in self._subscription_symbols()
                     or self.strategy._now_ms() - history.through_ms > 180_000
                     or self.strategy._symbol_states.get(symbol) is not state):
+                self._keepwatch_mark_unknown(symbol, "bar_history_result_superseded")
                 return False
             pins = self._keepwatch_pins_for(symbol, anchor)
             projected = project_history(history, pins, now_ms=self.strategy._now_ms())
@@ -6411,6 +6450,7 @@ class SchwabV2BotService:
                     or self._line_sessions.get(symbol) is not ledger or ledger.epoch != epoch
                     or session_start_ts_ms(self.strategy._now_ms()) != anchor
                     or symbol not in self._subscription_symbols()):
+                self._keepwatch_mark_unknown(symbol, "bar_prefix_result_superseded")
                 return False
             ledger.observe_closed_live(bar)
             ledger.attest(history_coverage(history, bars, canonical=True))
@@ -6439,6 +6479,7 @@ class SchwabV2BotService:
             self._keepwatch_proven[symbol] = history
             self._keepwatch_record_halt_binding(symbol, ledger, history)
             self._keepwatch_unknown.discard(symbol)
+            self._keepwatch_unknown_episodes.pop(symbol, None)
             self._keepwatch_cancel_requested.discard(symbol)
             self._db_seeded.add(symbol)
             self._line_source_waiting.pop(symbol, None)
@@ -6456,10 +6497,7 @@ class SchwabV2BotService:
                         history.completed_ns, history.massive_sha256, history.schwab_sha256)
             return True
         except Exception as exc:
-            self._keepwatch_hold_unknown(symbol, type(exc).__name__)
-            logger.warning("[V2-KEEPWATCH1] sym=%s outcome=UNKNOWN "
-                           "reason=provider_or_publication_error error_type=%s entry_allowed=0",
-                           symbol, type(exc).__name__)
+            self._keepwatch_hold_unknown(symbol, "provider_or_publication_error_" + type(exc).__name__)
             return False
 
     async def _keepwatch_history_loop(self) -> None:
@@ -6512,7 +6550,7 @@ class SchwabV2BotService:
                     epoch = ledger.epoch
                     source_identity = self._line_source_identity.get(symbol)
                     source_state = self.strategy._symbol_states.get(symbol)
-                    self._keepwatch_unknown.add(symbol)
+                    self._keepwatch_mark_unknown(symbol, "closed_minute_history_pending")
                     operation = object()
                     context_token = self._keepwatch_history_context.set(
                         (operation, (symbol, anchor, epoch)))
@@ -6528,6 +6566,7 @@ class SchwabV2BotService:
                                 or session_start_ts_ms(self.strategy._now_ms()) != anchor
                                 or symbol not in self._subscription_symbols()
                                 or self.strategy._now_ms() - current > 180_000):
+                            self._keepwatch_mark_unknown(symbol, "closed_minute_history_superseded")
                             continue
                         state = self.strategy.watchlist_state(symbol)
                         previous = state.bars[-1].timestamp_ms if state.bars else 0
@@ -6553,6 +6592,8 @@ class SchwabV2BotService:
                                     await self._handle_bar(symbol, bar, observation_phase="replay")
                                     self._try_complete_boot_state_restoration(
                                         self._watchlist, new_symbols=set())
+                            else:
+                                self._keepwatch_mark_unknown(symbol, "closed_minute_prepare_refused")
                         elif not recovered:
                             # No new candle exists. Attest empty intervals without manufacturing
                             # a bar, moving the last-real-bar clock, or resetting the indicator.
@@ -6568,6 +6609,7 @@ class SchwabV2BotService:
                             self._keepwatch_proven[symbol] = history
                             self._keepwatch_record_halt_binding(symbol, ledger, history)
                             self._keepwatch_unknown.discard(symbol)
+                            self._keepwatch_unknown_episodes.pop(symbol, None)
                             self._keepwatch_cancel_requested.discard(symbol)
                             left_ms = state.gap_line_left_bar_ms or previous
                             if (state.gap_hold_active
@@ -6587,10 +6629,7 @@ class SchwabV2BotService:
                                         symbol, current, history.completed_ns, int(state.gap_hold_active),
                                         history.massive_sha256, history.schwab_sha256)
                     except Exception as exc:
-                        self._keepwatch_hold_unknown(symbol, type(exc).__name__)
-                        logger.warning("[V2-KEEPWATCH1] sym=%s outcome=UNKNOWN "
-                                       "reason=closed_minute_read_error error_type=%s",
-                                       symbol, type(exc).__name__)
+                        self._keepwatch_hold_unknown(symbol, "closed_minute_read_error_" + type(exc).__name__)
                     finally:
                         self._keepwatch_history_scopes.pop(operation, None)
                         self._keepwatch_history_context.reset(context_token)
