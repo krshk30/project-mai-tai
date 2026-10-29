@@ -788,7 +788,7 @@ async def main() -> None:
 
     def request_shutdown():
         nonlocal shutdown_requested
-        if not shutdown_requested:
+        if not shutdown_requested and task.cancelling() == 0:
             shutdown_requested = True
             task.cancel(shutdown_token)
 
@@ -800,7 +800,8 @@ async def main() -> None:
     except asyncio.CancelledError as exc:
         # Only our signal request is a clean stop, after run() finishes cleanup.
         # An unrelated cancellation or a replacement cleanup failure stays visible.
-        if not (shutdown_requested and len(exc.args) == 1 and exc.args[0] is shutdown_token):
+        if not (shutdown_requested and task.cancelling() == 1
+                and len(exc.args) == 1 and exc.args[0] is shutdown_token):
             raise
     finally:
         for sig in installed_signals:

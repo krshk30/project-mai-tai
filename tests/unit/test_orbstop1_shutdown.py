@@ -143,6 +143,55 @@ def test_unrelated_cancellation_is_not_swallowed(monkeypatch, signal_first):
     assert_handlers_removed(ports)
 
 
+def test_pending_external_cancel_is_not_replaced_by_signal_token(monkeypatch):
+    ports, counts = {}, []
+
+    async def body(handlers):
+        task = asyncio.current_task()
+        task.cancel("unrelated-first")
+        counts.append(task.cancelling())
+        handlers[signal.SIGTERM]()
+        counts.append(task.cancelling())
+        await asyncio.sleep(0)
+
+    with pytest.raises(asyncio.CancelledError) as failure:
+        invoke_entrypoint(monkeypatch, body, ports)
+    assert counts == [1, 1]
+    assert failure.value.args == ("unrelated-first",)
+    assert_handlers_removed(ports)
+
+
+def test_competing_external_cancel_keeps_failure_even_if_own_token_is_delivered(monkeypatch):
+    ports, counts, delivered = {}, [], []
+
+    async def body(handlers):
+        task = asyncio.current_task()
+        loop = asyncio.get_running_loop()
+
+        def competing_cancel():
+            counts.append(task.cancelling())
+            task.cancel("unrelated-after-signal")
+            counts.append(task.cancelling())
+
+        # Both callbacks run before the cancelled waiter's wakeup. Its first
+        # CancelledError can keep our token despite the second pending request.
+        loop.call_soon(handlers[signal.SIGTERM])
+        loop.call_soon(competing_cancel)
+        try:
+            await loop.create_future()
+        except asyncio.CancelledError as exc:
+            delivered.append(exc.args)
+            raise
+
+    with pytest.raises(asyncio.CancelledError) as failure:
+        invoke_entrypoint(monkeypatch, body, ports)
+    assert counts == [1, 2]
+    assert len(delivered) == 1 and len(delivered[0]) == 1
+    assert not isinstance(delivered[0][0], str)  # own private token, not foreign text
+    assert failure.value.args[0] is delivered[0][0]
+    assert_handlers_removed(ports)
+
+
 class WaitingTape:
     def __init__(self, trace):
         self.trace = trace
