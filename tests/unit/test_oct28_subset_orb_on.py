@@ -304,6 +304,8 @@ def test_subset_webull_cancel_ack_without_terminal_zero_cannot_replace(subset):
         await service.process_trade_intent(event)
         assert len(broker.sent) == 1
         clock[0] = OPEN.replace(minute=30, second=10)
+        add_history(factory, first=40, count=2)
+        assert schwab_completed_bar_macd_gate(factory, "ABC", clock[0])[0] is MacdVerdict.ALLOWED
         reprice = build_orb_schwab_reprice_intent(service.settings, "ABC", Decimal(6), selection=selected)
         broker.readback = AtrBuyReadback("unknown", "controlled_no_terminal_zero",
                                         broker_order_id="parent-1")
@@ -338,6 +340,8 @@ def test_subset_schwab_ack_without_replace_confirmation_retains_unknown_handle(s
         await service.process_trade_intent(event)
         assert len(broker.sent) == 1
         clock[0] = OPEN.replace(minute=30, second=10)
+        add_history(factory, first=40, count=2)
+        assert schwab_completed_bar_macd_gate(factory, "ABC", clock[0])[0] is MacdVerdict.ALLOWED
         reprice = build_orb_schwab_reprice_intent(service.settings, "ABC", Decimal(6), selection=selected)
         await service.process_trade_intent(reprice)
         await service.process_trade_intent(reprice)
