@@ -1,11 +1,13 @@
 """SOURCE/UNRUN. Existing WBATTACH fixture; no replacement runner or native replay.
 
-These controls exercise the durable database reducer, not integrated routing or
-historical ON counterfactuals. All geometry/native responses are CONTROLLED.
+These controls exercise the durable reducer and retained-owner scans. Scan
+setups use the existing shared caller; no historical counterfactual is claimed.
+All geometry/native responses are CONTROLLED.
 """
 
 import asyncio
-from datetime import timedelta
+from copy import deepcopy
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -214,3 +216,118 @@ async def test_nonselected_preparation_keeps_original_await_without_WBEXIT2_bind
     # inspect a nonexistent WBEXIT2 owner or add its physical task wrapper.
     assert await owner.prepare_current(case[0], request, existing_preparation()) == "CONTROLLED-original-result"
     assert entered == ["original"]
+
+
+def scan_messages(service, monkeypatch):
+    """Observe actual logger calls, not caplog (OMS configures its own handler)."""
+    messages = []
+    actual = service.logger.critical
+    def capture(message, *args, **kwargs):
+        if message.startswith("[WBEXIT2-PENDING-SCAN]"):
+            messages.append(message % args)
+        return actual(message, *args, **kwargs)
+    monkeypatch.setattr(service.logger, "critical", capture)
+    return messages
+
+
+@pytest.mark.asyncio
+async def test_terminal_shape_is_one_report_per_original_target_and_stop(make_case):
+    from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
+    from tests.unit.test_wbexit2_route import owner_case
+    case = await owner_case(make_case)
+    broker = case[2]
+    pair, = [r for r in broker.requests if r.metadata.get("webull_exit_only_pair") == "true"]
+    target, stop = [broker.report(WebullBrokerAdapter._combo_leg_coid(pair.client_order_id, leg),
+                                 event="cancelled") for leg in ("T", "S")]
+    before = len(broker.requests), len(broker.cancelled), broker.positions_reads
+    # Shape ONLY, CONTROLLED reports: this does not attest a fresh/account census.
+    assert owner.positive_original_terminal((target, stop), pair.client_order_id,
+        broker.owned, broker.symbol, case[4][0]) == (target, stop)
+    for wrong in ((target,), (target, target), (target, target, stop, stop)):
+        with pytest.raises(ValueError):
+            owner.positive_original_terminal(wrong, pair.client_order_id, broker.owned, broker.symbol, case[4][0])
+    assert before == (len(broker.requests), len(broker.cancelled), broker.positions_reads)
+
+
+@pytest.mark.asyncio
+async def test_RTH_HOLD_names_symbol_and_original_age_on_every_existing_scan(make_case, monkeypatch):
+    from tests.unit.test_wbexit2_route import owner_case, close_case, saved
+    case = await owner_case(make_case)
+    service, _, broker, _, clock = case
+    broker.lag = True
+    await close_case(case)
+    original = saved(case)
+    before = len(broker.requests), len(broker.cancelled), broker.positions_reads, broker.working_reads
+    messages = scan_messages(service, monkeypatch)
+    for seconds in (7, 14, 21):
+        clock[0] = datetime.fromisoformat(original["opened_at"]) + timedelta(seconds=seconds)
+        # Supplied CONTROLLED observation clock, not a physical elapsed-time proof.
+        await owner.refresh_pending(service)
+        assert "symbol=ABC" in messages[-1] and f"age_seconds={seconds:.3f}" in messages[-1]
+        assert "scan_exception=true" in messages[-1] and "native_protection=UNKNOWN" in messages[-1]
+    assert len(messages) == 3, "no dedupe of unresolved HOLD scans"
+    assert before == (len(broker.requests), len(broker.cancelled), broker.positions_reads, broker.working_reads)
+    final = saved(case)
+    assert final["opened_at"] == original["opened_at"] and final["first_cancel_at"] == original["first_cancel_at"]
+    assert final["owner_id"] == original["owner_id"] and final["sell"] is None
+    assert service._wbexit2_refresh_active is False
+
+
+@pytest.mark.asyncio
+async def test_failed_scan_releases_active_latch_and_reports_on_next_scan(make_case, monkeypatch):
+    from tests.unit.test_wbexit2_route import owner_case, close_case, saved
+    case = await owner_case(make_case)
+    service, _, broker, _, _ = case
+    broker.lag = True
+    await close_case(case)
+    original = saved(case)
+    key = broker.account, broker.symbol
+    cached = deepcopy(service._wbexit2_pending[key])
+    messages = scan_messages(service, monkeypatch)
+    before = len(broker.requests), len(broker.cancelled), broker.positions_reads
+    service._wbexit2_pending[key] = {**cached, "owner_id": "CONTROLLED-not-a-UUID"}
+    with pytest.raises(ValueError):
+        await owner.refresh_pending(service)
+    assert service._wbexit2_refresh_active is False
+    service._wbexit2_pending[key] = cached  # Restore only the negative in-memory corruption input.
+    async def read_failed(fn, *, commit=True):
+        raise RuntimeError("CONTROLLED-scan-read-failed")
+    monkeypatch.setattr(service, "_run_db", read_failed)
+    with pytest.raises(RuntimeError, match="CONTROLLED-scan-read-failed"):
+        await owner.refresh_pending(service)
+    assert service._wbexit2_refresh_active is False and len(messages) == 2
+    async def broker_stage_failed(*, account_names=None):
+        raise RuntimeError("CONTROLLED-first-broker-stage-failed")
+    monkeypatch.setattr(service, "sync_broker_orders", broker_stage_failed)
+    # Actual Main-composed pass entry must report BEFORE its first fallible
+    # broker stage, not merely after a successful native positions sync.
+    with pytest.raises(RuntimeError, match="CONTROLLED-first-broker-stage-failed"):
+        await service._sync_broker_state_pass()
+    assert len(messages) == 3 and service._wbexit2_refresh_active is False
+    assert all("symbol=ABC" in message and "age_seconds=" in message for message in messages)
+    assert saved(case) == original and before == (len(broker.requests), len(broker.cancelled), broker.positions_reads)
+
+
+@pytest.mark.asyncio
+async def test_flag_OFF_and_actually_resolved_owner_have_no_pending_scan_line(make_case, monkeypatch):
+    from tests.unit.test_wbexit2_route import owner_case, close_case, saved
+    case = await owner_case(make_case)
+    service, _, broker, _, _ = case
+    broker.lag = True
+    await close_case(case)
+    messages = scan_messages(service, monkeypatch)
+    actual, calls = service._run_db, []
+    async def counted(fn, *, commit=True):
+        calls.append(commit)
+        return await actual(fn, commit=commit)
+    monkeypatch.setattr(service, "_run_db", counted)
+    object.__setattr__(service.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False)
+    await owner.refresh_pending(service)
+    assert calls == [] and messages == []
+    object.__setattr__(service.settings, "strategy_schwab_1m_v2_wbexit2_enabled", True)
+    broker.lag = False
+    await close_case(case)  # Real shared terminal/owned-SELL/ledger path, no phase edit.
+    assert saved(case)["phase"] == "RESOLVED" and not service._wbexit2_pending
+    before = len(broker.requests), len(broker.cancelled), broker.positions_reads
+    await owner.refresh_pending(service)
+    assert messages == [] and before == (len(broker.requests), len(broker.cancelled), broker.positions_reads)

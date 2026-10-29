@@ -337,9 +337,9 @@ async def finish_call(service, call):
     remember(service, call.wb2_state)
     if call.wb2_state["phase"] == "RESOLVED":
         return
-    service.logger.critical("[WBEXIT2-PENDING] account=%s symbol=%s owner=%s remaining=%s phase=%s scan_exception=true original_start=%s",
+    service.logger.critical("[WBEXIT2-PENDING] account=%s symbol=%s owner=%s remaining=%s phase=%s age_seconds=%s scan_exception=true original_start=%s",
         call.account, call.symbol, call.wb2_state["owner_id"], call.wb2_state["remaining"],
-        call.wb2_state["phase"], call.wb2_state["first_cancel_at"])
+        call.wb2_state["phase"], pending_age(call.wb2_state, _now()), call.wb2_state["first_cancel_at"])
     await checkpoint(service, call, "hold", reason="named_close_owner_pending_next_permitted_observation",
                      original_attempt_failed=call.wb2_state["sell"] is None
                          or not getattr(call, "record_only", False) and monotonic() > call.wb2_deadline)
@@ -454,33 +454,70 @@ async def hydrate_at_boot(service):
     return {"status": "INVENTORY_READY_HOLDS_PRESENT" if service._wbexit2_boot_issues else "INVENTORY_READY",
             "owners": [state["owner_id"] for state in states],
             "orphan_nonces": len(service._wbexit2_boot_issues), "native_terminal": "UNKNOWN_NO_BOOT_PROVIDER_READ"}
-async def refresh_pending(service):
-    """Main boot/sync hook. ONE DB-only owner per existing pass, fair cursor.
+
+
+def pending_age(state, now):
+    """Age of the ORIGINAL durable obligation, never a reset retry timestamp."""
+    try:
+        opened = datetime.fromisoformat(state["opened_at"])
+        if opened.tzinfo is not None and opened <= now:
+            return format((now - opened).total_seconds(), ".3f")
+    except (KeyError, TypeError, ValueError, OverflowError):
+        pass
+    return "UNKNOWN"  # Missing/future clock is not a favourably clamped zero.
+
+
+def log_pending_scan(service):
+    """C1 02:15:11: EACH existing RTH sync scan names EVERY unresolved cache row.
+
+    Scan means refresh_pending's existing periodic sync hook, not each quote.
+    Includes nonce/ACK/conflict HOLDs and absent quotes; no new poll/task/IO.
+    The cached obligation is a risk record, NOT proof of a currently working
+    native book or a current owned position. Resolution still requires DB proof.
+    """
+    from project_mai_tai.oms import webull_attach_riskoff as wb
+    if not enabled(service) or not wb._rth(service):
+        return
+    now = _now()
+    for (account, symbol), state in service.__dict__.get("_wbexit2_pending", {}).items():
+        if state.get("phase") == "RESOLVED":
+            continue
+        phase = state.get("phase") if state.get("phase") in OPEN_PHASES else "UNKNOWN"
+        service.logger.critical("[WBEXIT2-PENDING-SCAN] account=%s symbol=%s age_seconds=%s phase=%s scan_exception=true native_protection=UNKNOWN reason=unresolved_close_obligation",
+                                account, symbol, pending_age(state, now), phase)
+
+
+async def refresh_pending(service, *, report_scan=True):
+    """Existing sync hook: report every unresolved owner, reconcile ONE fairly.
 
     No provider call, new timer, process, quote poll or task per episode. Other
     durable rows retain responsibility while awaiting their fair cursor turn.
+    Main's sync entry reports first (even if an earlier broker stage fails),
+    then calls with report_scan=False to avoid a duplicate whole-cache line.
     A cold multi-owner boot is not claimed as a <10s completed recovery.
     """
     if not enabled(service) or service.__dict__.get("_wbexit2_refresh_active", False):
         return
     service._wbexit2_refresh_active = True
-    cursor = service.__dict__.get("_wbexit2_refresh_cursor")
-    cached = [UUID(value["owner_id"]) for value in service.__dict__.get("_wbexit2_pending", {}).values()
-              if value.get("owner_id")]
-    def unit(session):
-        query = select(SystemIncident).where(SystemIncident.service_name == "oms-risk",
-            SystemIncident.payload["source"].as_string() == SOURCE,
-            or_(SystemIncident.status == "open", SystemIncident.id.in_(cached)))
-        row = session.scalar((query.where(SystemIncident.id > cursor) if cursor is not None else query)
-                             .order_by(SystemIncident.id).limit(1))
-        if row is None and cursor is not None:
-            row = session.scalar(query.order_by(SystemIncident.id).limit(1))
-        if row is None:
-            return None
-        state = read(session, row.payload["identity"])
-        return row.id, state
-    context = _RecordOnly("system", "UNKNOWN", {}, {})
     try:
+        if report_scan:
+            log_pending_scan(service)  # Each standalone scan, even if the read then fails.
+        cursor = service.__dict__.get("_wbexit2_refresh_cursor")
+        cached = [UUID(value["owner_id"]) for value in service.__dict__.get("_wbexit2_pending", {}).values()
+                  if value.get("owner_id")]
+        def unit(session):
+            query = select(SystemIncident).where(SystemIncident.service_name == "oms-risk",
+                SystemIncident.payload["source"].as_string() == SOURCE,
+                or_(SystemIncident.status == "open", SystemIncident.id.in_(cached)))
+            row = session.scalar((query.where(SystemIncident.id > cursor) if cursor is not None else query)
+                                 .order_by(SystemIncident.id).limit(1))
+            if row is None and cursor is not None:
+                row = session.scalar(query.order_by(SystemIncident.id).limit(1))
+            if row is None:
+                return None
+            state = read(session, row.payload["identity"])
+            return row.id, state
+        context = _RecordOnly("system", "UNKNOWN", {}, {})
         result = await joined(service, context, service._run_db(unit, commit=False))
         if result is None:
             return  # Absence never clears a cached/live obligation.
@@ -699,8 +736,9 @@ def original_geometry(reports, base, quantity, symbol):
 
 
 def positive_original_terminal(reports, base, quantity, symbol, now):
-    """Positive immutable terminal facts, NEVER confirmed absence or UNKNOWN.
+    """ONE positive terminal report per original target and stop (TWO TOTAL).
 
+    C1 02:15:11: not two per child. Absence/UNKNOWN is NEVER a terminal fact.
     This validator does not call an SDK or claim a saved census is fresh. The
     recording path separately requires the original bounded fresh census.
     """
