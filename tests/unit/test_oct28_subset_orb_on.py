@@ -22,6 +22,7 @@ from project_mai_tai.momentum_live_sec import CountryRecord, CountryRouter, Coun
 from project_mai_tai.oms import service as oms_module
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.orb_country_route import select_orb_country_route
+from project_mai_tai.orb_schwab_atr_entry import schwab_atr_entry_gate
 from project_mai_tai.orb_schwab_macd import MacdVerdict, schwab_completed_bar_macd_gate
 from project_mai_tai.orb_schwab_order_route import (
     build_orb_schwab_open_intent, build_orb_schwab_reprice_intent,
@@ -36,6 +37,7 @@ from tests.unit.test_orbroute1_oms_chain import (
 PROFILE = {
     "orb_country_semantic_admission_enabled": True,
     "scanner_confirmed_capture_session_day_enabled": True,
+    "orb_schwab_atr_entry_gate_enabled": True,
     "strategy_schwab_1m_v2_keepwatch1_enabled": True,
     "strategy_schwab_1m_v2_brokerdecides1_enabled": True,
     "scanner_nuweref1_enabled": False,
@@ -74,6 +76,7 @@ def subset(setup, monkeypatch):
     assert "_get_session_symbol_block_reason" not in service.__dict__
     assert service._get_session_symbol_block_reason.__func__ is OmsRiskService._get_session_symbol_block_reason
     assert oms_module.schwab_completed_bar_macd_gate is schwab_completed_bar_macd_gate
+    assert oms_module.schwab_atr_entry_gate is schwab_atr_entry_gate
     for name, value in PROFILE.items():
         assert getattr(service.settings, name) is value
     clock = [OPEN]
@@ -120,6 +123,8 @@ def plan(subset, *, is_us=True, symbol="ABC", history=True):
         add_history(factory, symbol)
         verdict, reason, value = schwab_completed_bar_macd_gate(factory, symbol, OPEN)
         assert verdict is MacdVerdict.ALLOWED and reason == "nonnegative" and value >= 0
+        atr = schwab_atr_entry_gate(factory, symbol, OPEN)
+        assert atr.verdict == "allowed" and atr.close >= atr.trail
     country(factory, symbol, is_us, OPEN - timedelta(days=1))
     router = CountryRouter(CountryStore(factory))
     router._records = router.store.load()
@@ -137,6 +142,7 @@ def test_subset_code_defaults_remain_off_and_constructed_profile_is_literal(subs
         assert Settings.model_fields[flag].default is False
         assert getattr(service.settings, flag) is True
     assert service.settings.scanner_nuweref1_enabled is False
+    assert Settings.model_fields["orb_schwab_atr_entry_gate_enabled"].default is True
 
 
 @pytest.mark.parametrize("is_us", [True, False])
@@ -167,6 +173,7 @@ def test_subset_stamp_only_open_then_legal_rth_replace_real_guards(subset, is_us
         clock[0] = OPEN.replace(minute=30, second=10)
         add_history(factory, first=40, count=2)  # now-closed09:28 and09:29 only
         assert schwab_completed_bar_macd_gate(factory, "ABC", clock[0])[0] is MacdVerdict.ALLOWED
+        assert schwab_atr_entry_gate(factory, "ABC", clock[0]).verdict == "allowed"
         stamp = clock[0] - timedelta(seconds=30)
         country(factory, "ABC", is_us, stamp)
         refreshed = replace(selected, country=replace(selected.country, as_of=stamp))
@@ -306,6 +313,7 @@ def test_subset_webull_cancel_ack_without_terminal_zero_cannot_replace(subset):
         clock[0] = OPEN.replace(minute=30, second=10)
         add_history(factory, first=40, count=2)
         assert schwab_completed_bar_macd_gate(factory, "ABC", clock[0])[0] is MacdVerdict.ALLOWED
+        assert schwab_atr_entry_gate(factory, "ABC", clock[0]).verdict == "allowed"
         reprice = build_orb_schwab_reprice_intent(service.settings, "ABC", Decimal(6), selection=selected)
         broker.readback = AtrBuyReadback("unknown", "controlled_no_terminal_zero",
                                         broker_order_id="parent-1")
@@ -342,6 +350,7 @@ def test_subset_schwab_ack_without_replace_confirmation_retains_unknown_handle(s
         clock[0] = OPEN.replace(minute=30, second=10)
         add_history(factory, first=40, count=2)
         assert schwab_completed_bar_macd_gate(factory, "ABC", clock[0])[0] is MacdVerdict.ALLOWED
+        assert schwab_atr_entry_gate(factory, "ABC", clock[0]).verdict == "allowed"
         reprice = build_orb_schwab_reprice_intent(service.settings, "ABC", Decimal(6), selection=selected)
         await service.process_trade_intent(reprice)
         await service.process_trade_intent(reprice)
