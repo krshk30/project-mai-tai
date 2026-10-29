@@ -58,11 +58,24 @@ def flips_by_symbol(conn, anchor):
     for symbol, series in bars.items():
         rows = compute_atr_trail(series)
         LINES[symbol] = (series, rows)
+        RANGES.pop(symbol, None)
         out[symbol] = [(series[i], r["flip"]) for i, r in enumerate(rows) if r["flip"]]
     return out
 
 
 LINES = {}
+RANGES = {}
+
+
+def sane(symbol, ts, price):
+    """Drop bad prints: a trade counts only inside its minute's stored bar range (±10%).
+    BIYA 10-07 had a $10.36 print on a ~$3 stock that would fake a fill."""
+    rng = RANGES.get(symbol)
+    if rng is None:
+        series, _ = LINES.get(symbol, ([], None))
+        rng = RANGES[symbol] = {b.ts: (b.low, b.high) for b in series}
+    bar = rng.get(int(ts.timestamp() // 60) * 60_000)
+    return bar is None or bar[0] * 0.9 <= price <= bar[1] * 1.1
 # Live ATR rules read from the running bot 10-29: resting buy-stop at line + 0.5% (cent ceiling),
 # limit 0.5% above the trigger, following the line each minute while short (live log 10-29: PCLA re-placed
 # 13:53/13:56/13:58 UTC as the line fell; NCPL held 1.81 while its line stayed ~1.79); exits: OCO target +5% / stop -8%,
@@ -226,7 +239,7 @@ def trades(conn, symbol, start, end):
             {"s": symbol, "t": last_ts, "i": last_id, "a": start, "b": end, "n": PAGE}).all()
         for ts, price, cond, size, _ in page:
             # Same as the old FIRSTBAR execution rule: round lots only (>=100 shares) and no excluded condition.
-            if size >= 100 and eligible(cond):
+            if size >= 100 and eligible(cond) and sane(symbol, ts, float(price)):
                 yield ts, float(price)
         if len(page) < PAGE:
             return
