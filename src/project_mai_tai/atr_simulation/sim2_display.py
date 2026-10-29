@@ -18,7 +18,7 @@ SNAPSHOT_TYPE = "atr_sim2_day"
 TITLES = ("FIRSTBAR", "FIRSTBAR+2min", "LIVE rules SIM")
 LIVE_TITLE = "LIVE rules SIM"
 LIVE_DESCRIPTION = ("Simulation, not real trades: the same scanner-confirmed signals traded with the live ATR bot's "
-                    "own rules — waiting buy at the line +0.5% (limit +0.5% more), moved every minute while short; "
+                    "own rules — waiting buy placed when the short stretch starts at the line +0.5% (limit +0.5% more) and kept; "
                     "exits: target +5%, stop -8%, confirmation exit if the bar after the fill does not close long, "
                     "sell flip.")
 # Operator 10-29 17:1x: full-width panels, all rows visible, readable columns.
