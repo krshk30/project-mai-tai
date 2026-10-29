@@ -81,6 +81,47 @@ def on_scanner(windows, symbol, at):
     return any(start <= at and (end is None or at < end) for start, end in windows.get(symbol, ()))
 
 
+def live_fills(conn, anchor):
+    """Real ATR-bot fills today (both broker accounts), from the broker fill records."""
+    rows = conn.execute(text(
+        "select f.symbol, f.side, f.quantity, f.price, f.filled_at from fills f "
+        "join broker_orders o on o.id = f.order_id join strategies st on st.id = o.strategy_id "
+        "where st.code = 'schwab_1m_v2' and f.filled_at >= :a order by f.filled_at"), {"a": anchor}).all()
+    fills = {}
+    for symbol, side, qty, price, at in rows:
+        fills.setdefault(symbol, []).append((side, float(qty), float(price), at))
+    return fills
+
+
+def live_row(fills, symbol, bar, sell_close, session_end, base):
+    """What the live bot actually did for this signal: its real buy in the signal's segment and the
+    real sells that closed it. A resting buy can fill inside the flip bar, so the window starts there."""
+    start = datetime.fromtimestamp(bar.ts / 1000, timezone.utc)
+    end = sell_close or session_end
+    buys = [f for f in fills.get(symbol, ()) if f[0] == "buy" and start <= f[3] < end]
+    if not buys:
+        return dict(base, status="NO LIVE TRADE", reason="live bot did not buy this signal")
+    qty = sum(f[1] for f in buys)
+    entry = sum(f[1] * f[2] for f in buys) / qty
+    first = buys[0][3]
+    sells, left = [], qty
+    for f in fills.get(symbol, ()):
+        if f[0] == "sell" and f[3] > first and left > 0:
+            take = min(left, f[1])
+            sells.append((take, f[2], f[3]))
+            left -= take
+    if not sells:
+        return dict(base, status="OPEN", quantity=int(qty), entry_time=first.astimezone(ET).strftime("%H:%M:%S"),
+                    entry_price=round(entry, 4), exit_time="open", exit_price=round(entry, 4),
+                    reason="live position still open", pnl=0.0, pnl_pct=0.0)
+    sold = sum(t for t, _, _ in sells)
+    exit_px = sum(t * p for t, p, _ in sells) / sold
+    return dict(base, status="CLOSED", quantity=int(qty), entry_time=first.astimezone(ET).strftime("%H:%M:%S"),
+                entry_price=round(entry, 4), exit_time=sells[-1][2].astimezone(ET).strftime("%H:%M:%S"),
+                exit_price=round(exit_px, 4), reason="real live trade (broker fills)",
+                pnl=round((exit_px - entry) * sold, 2), pnl_pct=round((exit_px / entry - 1) * 100, 2))
+
+
 def trades(conn, symbol, start, end):
     """Eligible trades in [start, end), streamed in pages so a caller can stop early."""
     cursor = start
@@ -172,10 +213,12 @@ def run(now=None):
     anchor = datetime.combine(day, datetime.min.time(), ET).replace(hour=4)
     url = os.environ["MAI_TAI_DATABASE_URL"]
     engine = create_engine(url, pool_pre_ping=True)
-    tables = {"FIRSTBAR": [], "FIRSTBAR+2min": []}
+    tables = {"FIRSTBAR": [], "FIRSTBAR+2min": [], "LIVE (actual)": []}
     with engine.connect() as conn:
         conn.execute(text("set statement_timeout = 20000"))
         windows = confirmed_windows(conn, day)
+        fills = live_fills(conn, anchor)
+        session_end = datetime.combine(day, datetime.min.time(), ET).replace(hour=20)
         for symbol, flips in flips_by_symbol(conn, anchor).items():
             for i, (bar, flip) in enumerate(flips):
                 if flip != "BUY":
@@ -190,6 +233,8 @@ def run(now=None):
                 a, b = simulate(conn, symbol, bar, sell_close, day, now)
                 tables["FIRSTBAR"].append(a)
                 tables["FIRSTBAR+2min"].append(b)
+                tables["LIVE (actual)"].append(live_row(fills, symbol, bar, sell_close, session_end,
+                    {"symbol": symbol, "signal": a["signal"], "trigger": a["trigger"]}))
     for rows in tables.values():
         rows.sort(key=lambda r: (r.get("entry_time") or "99", r["signal"], r["symbol"]))
     doc = {"schema": "ATRSIM2_DAY_V1", "trading_day": day.isoformat(), "generated_at": now.isoformat(),

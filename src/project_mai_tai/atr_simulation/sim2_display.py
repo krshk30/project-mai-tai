@@ -15,7 +15,10 @@ from .cp_sim_display import panel
 
 ET = ZoneInfo("America/New_York")
 SNAPSHOT_TYPE = "atr_sim2_day"
-TITLES = ("FIRSTBAR", "FIRSTBAR+2min")
+TITLES = ("FIRSTBAR", "FIRSTBAR+2min", "LIVE (actual)")
+LIVE_TITLE = "LIVE (actual)"
+LIVE_DESCRIPTION = ("REAL trades: what the live ATR bot actually did on the same scanner-confirmed signals, "
+                    "from the broker fill records. Every signal is listed; 'no live trade' means the bot did not buy it.")
 # Operator 10-29 17:1x: full-width panels, all rows visible, readable columns.
 STYLE = ('<style>#atr-sim2{grid-column:1/-1;min-width:0;max-width:100%;width:100%}'
          '#atr-sim2 .panel{max-width:100%;width:100%;margin-bottom:16px;box-sizing:border-box}'
@@ -59,6 +62,8 @@ def _display(row):
         "exit_price": row.get("exit_price", "") if traded else "",
         "pnl": pnl,
         "pnl_pct_label": (f"{row['pnl_pct']:+.2f}%" if traded else "no trade"),
+        "pnl_label": (f"${pnl:+.2f}" if traded else "—"),
+        "pnl_label_known": traded,
         "summary": summary,
     }
 
@@ -75,10 +80,12 @@ def render_day(doc, *, render_row, day: str):
         rows = doc["tables"].get(title, [])
         traded = [r for r in rows if r.get("status") in ("CLOSED", "OPEN")]
         skipped = len(rows) - len(traded)
+        shown = rows if title == LIVE_TITLE else traded
         total = sum(r.get("pnl", 0.0) for r in traded)
         updated = (f"{doc['trading_day']} · updated {generated} ET · {len(traded)} trades, {skipped} signals without a trade"
                    f" · total ${total:+.2f} on ${doc.get('notional_usd', 600):.0f} per trade")
-        panels.append(panel(title, [_display(r) for r in traded], render_row=render_row, marker=title,
-                            updated_text=updated))
+        extra = {"description": LIVE_DESCRIPTION} if title == LIVE_TITLE else {}
+        panels.append(panel(title, [_display(r) for r in shown], render_row=render_row, marker=title,
+                            updated_text=updated, **extra))
     return ('<div id="atr-sim2" class="full" data-atrsim2="day" data-firstbar-mount="true" data-atrsim-firstbar="true">'
             + STYLE + "".join(panels) + "</div>")

@@ -61,3 +61,15 @@ def test_scanner_filter_only_counts_signals_inside_confirm_fade_windows():
     assert job.on_scanner(windows, "PCLA", t(18, 0))
     assert not job.on_scanner(windows, "NUWE", t(14, 15))
     assert not job.on_scanner(windows, "JFIN", t(14, 15))
+
+
+def test_live_row_uses_real_fills_in_the_signal_segment_including_inside_the_flip_bar():
+    t = lambda h, m, s=0: datetime(2026, 10, 29, h, m, s, tzinfo=timezone.utc)
+    bar = job.Bar(int(t(15, 33).timestamp() * 1000), 8.3, 8.42, 8.3, 8.4, 1000)
+    fills = {"PCLA": [("buy", 36.0, 8.42, t(15, 33, 10)), ("sell", 36.0, 8.85, t(15, 54, 10))]}
+    base = {"symbol": "PCLA", "signal": "11:34", "trigger": 8.43}
+    row = job.live_row(fills, "PCLA", bar, t(17, 53), t(23, 59), base)
+    assert row["status"] == "CLOSED" and row["entry_price"] == 8.42 and row["exit_price"] == 8.85
+    assert row["pnl"] == 15.48 and row["pnl_pct"] == 5.11
+    later = job.Bar(int(t(18, 14).timestamp() * 1000), 10.5, 10.6, 10.4, 10.55, 1000)
+    assert job.live_row(fills, "PCLA", later, None, t(23, 59), base)["status"] == "NO LIVE TRADE"
