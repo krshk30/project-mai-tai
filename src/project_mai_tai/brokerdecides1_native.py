@@ -190,7 +190,7 @@ def _pages(pages, *, native_account, field, page_size, request_account=None):
 
 def webull_book(*, account, native_account, position_pages, order_pages,
                 wire_started_ms, wire_completed_ms, scope, complete, order_request_account=None,
-                positions_request_account=None):
+                positions_request_account=None, symbol_unknown_observer=None):
     query_only = scope == "webull_list_open_query_only" and complete is False
     if not query_only:
         _scope(scope, complete)
@@ -221,27 +221,33 @@ def webull_book(*, account, native_account, position_pages, order_pages,
     rows = _pages(order_pages, native_account=native_account, field="orders", page_size=100,
                   request_account=order_request_account)
     if order_request_account is not None:
-        unknown, identities = set(), {}
+        unknown, identities, reasons = set(), {}, {}
+        def mark_unknown(affected, reason):
+            unknown.update(affected)
+            for symbol in affected:
+                reasons.setdefault(symbol, set()).add(reason)
         for row in rows:
             if row.unknown_reason:
-                unknown.update(row.symbols)
+                mark_unknown(row.symbols, row.unknown_reason)
             elif row.working:
                 working.update(row.symbols)
             if row.order_id:
                 if row.order_id in identities:
-                    unknown.update(identities[row.order_id])
-                    unknown.update(row.symbols)
+                    mark_unknown(identities[row.order_id] | row.symbols, "duplicate_order_identity")
                 identities.setdefault(row.order_id, set()).update(row.symbols)
         # Keep schema3 readable by the already-running consumers. Unknown is
         # a conservative symbol hold in their existing native-working set.
         working.update(unknown)
         if len(working | held) > MAX_SYMBOLS:
             raise ValueError("Webull_symbol_overflow")
-        return NativeAccountBook(account, "webull", wire_started_ms, wire_completed_ms,
+        book = NativeAccountBook(account, "webull", wire_started_ms, wire_completed_ms,
             frozenset(working), frozenset(held), not query_only,
             "Webull_symbol_scoped_UNKNOWN" if unknown else
             "Webull_retained_manual_GTC_scope_UNKNOWN" if query_only else
             "complete_native_all_working_and_positions")
+        if book.complete and symbol_unknown_observer is not None:
+            symbol_unknown_observer({s: tuple(sorted(v)) for s, v in reasons.items()})
+        return book
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError("Webull_order_UNKNOWN")

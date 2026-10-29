@@ -5,11 +5,12 @@ import json
 import os
 from pathlib import Path
 import runpy
+from types import SimpleNamespace
 
 import pytest
 
 from project_mai_tai.brokerdecides1 import AdmissionSnapshot, NativeAccountBook, assess, decode, encode
-from project_mai_tai.brokerdecides1_collect import webull_pages
+from project_mai_tai.brokerdecides1_collect import _record_symbol_unknown_changes, webull_pages
 from project_mai_tai.brokerdecides1_native import webull_book
 from project_mai_tai.webull_open_orders import open_order_page
 
@@ -229,3 +230,36 @@ def test_page_count_row_cap_and_acquisition_time_are_bounded():
             account_id=ACCOUNT, field="orders", page_size=100,
             cursor_keys=("client_order_id",), order_request_account=ACCOUNT,
             clock=iter([0, 5]).__next__)
+
+
+def test_unknown_diagnostics_emit_once_per_account_symbol_reason_change(caplog):
+    adapter = SimpleNamespace()
+    caplog.set_level("INFO")
+    for state in ({"PCLA": ("status_unknown",)}, {"PCLA": ("status_unknown",)},
+                  {"PCLA": ("order_identity",)}, {}, {}, {"PCLA": ("order_identity",)}):
+        _record_symbol_unknown_changes(adapter, "live:webull", state)
+    events = [r for r in caplog.records if "NATIVE-SYMBOL-STATE" in r.getMessage()]
+    assert len(events) == 4
+    assert [r.args[2] for r in events] == ["UNKNOWN", "UNKNOWN", "DECODED", "UNKNOWN"]
+    _record_symbol_unknown_changes(adapter, "live:other", {"PCLA": ("order_identity",)})
+    assert len([r for r in caplog.records if "NATIVE-SYMBOL-STATE" in r.getMessage()]) == 5
+
+
+def test_observer_receives_complete_unknown_set_and_failure_does_not_clear_it():
+    seen = []
+    bad = row()
+    bad["items"][0]["order_status"] = "UNRECOGNIZED"
+    args = dict(account="live:webull", native_account=ACCOUNT,
+        position_pages=[{"holdings": [], "hasNext": False}], order_pages=[page([bad])],
+        wire_started_ms=1000, wire_completed_ms=1100,
+        scope="all_native_working_including_previous_sessions", complete=True,
+        order_request_account=ACCOUNT, positions_request_account=ACCOUNT,
+        symbol_unknown_observer=seen.append)
+    value = webull_book(**args)
+    assert value.complete and seen == [{"PCLA": ("status_unknown",)}]
+    assert not decisions(value)["PCLA"].allowed
+    seen.clear()
+    args["position_pages"] = [{"holdings": None, "hasNext": False}]
+    with pytest.raises(ValueError):
+        webull_book(**args)
+    assert seen == []  # An incomplete read cannot replace the diagnostic baseline.

@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import sys
+from threading import Lock
 from contextvars import ContextVar
 from functools import wraps
 from urllib.parse import quote, urlencode
@@ -25,6 +26,7 @@ SDK_OPEN_REQUEST_SHA = "51200dd8b295b49d022be94994b43c8a184ce4cefc76ee6b6280f694
 MAX_REQUESTS = 32
 READ_BUDGET_SECONDS = 4.0
 LOGGER = logging.getLogger(__name__)
+SYMBOL_DIAGNOSTIC_LOCK = Lock()
 BACKGROUND_ALLOWED = ContextVar("l12_background_allowed", default=None)
 BACKGROUND_TASKS = ContextVar("l12_background_tasks", default=None)
 BACKGROUND_FOREGROUND_ACTIVE = ContextVar("l12_foreground_active", default=None)
@@ -67,6 +69,29 @@ def _diagnostic_stage(stage, page=0, status=None):
     if state is not None:
         state.update(stage=stage, page=page,
             status=status if type(status) is int and 100 <= status <= 599 else "UNKNOWN")
+
+
+def _record_symbol_unknown_changes(adapter, account, current):
+    """Bounded account-local diagnostic state, updated only after a complete read."""
+    with SYMBOL_DIAGNOSTIC_LOCK:
+        state = getattr(adapter, "_brokerdecides_symbol_unknown", None)
+        if state is None:
+            state = {}
+            adapter._brokerdecides_symbol_unknown = state
+        previous = state.get(account, {})
+        changed = {symbol for symbol in current.keys() | previous.keys()
+                   if current.get(symbol) != previous.get(symbol)}
+        state[account] = dict(current)
+    for symbol in sorted(changed):
+        reasons = current.get(symbol)
+        try:
+            LOGGER.log(logging.WARNING if reasons else logging.INFO,
+                "[BROKERDECIDES1-NATIVE-SYMBOL-STATE] account=%s symbol=%s state=%s reason=%s",
+                account, symbol, "UNKNOWN" if reasons else "DECODED",
+                ",".join(reasons) if reasons else "complete_read_no_row_unknown")
+        except Exception:
+            # A diagnostic cannot remove the conservative native-working hold.
+            pass
 
 
 def _log_native_failure(exc):
@@ -262,7 +287,8 @@ def _webull_blocking(adapter, account):
     return webull_book(account=account, native_account=configured.account_id,
         position_pages=positions, order_pages=orders, wire_started_ms=started,
         wire_completed_ms=stamp(), scope="all_native_working_including_previous_sessions", complete=True,
-        order_request_account=configured.account_id, positions_request_account=configured.account_id)
+        order_request_account=configured.account_id, positions_request_account=configured.account_id,
+        symbol_unknown_observer=lambda current: _record_symbol_unknown_changes(adapter, account, current))
 
 
 @_observe_native("webull")
