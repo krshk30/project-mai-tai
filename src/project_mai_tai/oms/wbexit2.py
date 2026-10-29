@@ -471,7 +471,8 @@ def log_pending_scan(service):
     """C1 02:15:11: EACH existing RTH sync scan names EVERY unresolved cache row.
 
     Scan means refresh_pending's existing periodic sync hook, not each quote.
-    Includes nonce/ACK/conflict HOLDs and absent quotes; no new poll/task/IO.
+    Includes nonce/ACK/conflict HOLDs and absent quotes; no new acquisition/poll
+    or task. Synchronous per-scan logging cost still needs actual qualification.
     The cached obligation is a risk record, NOT proof of a currently working
     native book or a current owned position. Resolution still requires DB proof.
     """
