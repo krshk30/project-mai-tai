@@ -220,7 +220,7 @@ def local_nonentry_activity(session, account_ids, terminal):
     return symbols
 
 
-def local_evidence(session, names):
+def local_evidence(session, names, *, prior_session_attempts_final=False):
     """Durable OWN uncertainty/fills only. No native-flat claim comes from this DB."""
     from project_mai_tai.cancelack1 import _closed_with_replacements, working_buy_present
 
@@ -306,8 +306,20 @@ def local_evidence(session, names):
     terminal_reservations = set()
     unknown_rows, unknown_examples = {}, {}
     observed = now_ms()
+    anchor = current_session_anchor()
+    prior_final = 0
     for symbol, token, account, opportunity, changed_receipt in scoped_attempts:
         own = by_token.get(token, ())
+        # C7B-min: a v2 open is DAY-only (OrderRequest default; no v2 producer sets TIF), so an
+        # attempt from a closed session with no order row cannot still be a working order. Only
+        # entry admission reads this set; current-session lost ACKs stay UNKNOWN.
+        stamp = attempt_by_token[token].created_at
+        if stamp is not None and stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=UTC)
+        if (prior_session_attempts_final and not own and not changed_receipt
+                and stamp is not None and stamp < anchor):
+            prior_final += 1
+            continue
         if (changed_receipt or not own or any(order.symbol != symbol or order.strategy_id != strategy_id
                 or order.broker_account_id != account_id_by_name[account]
                 or order.side != "buy"
@@ -343,6 +355,11 @@ def local_evidence(session, names):
         else:
             fills.add((order.symbol, segment))
     diagnostics = LOCAL_CENSUS_DIAGNOSTICS.get()
+    if prior_final and (diagnostics is None or diagnostics.get("prior_final") != prior_final):
+        logging.getLogger(__name__).info(
+            "[BROKERDECIDES1-PRIOR-SESSION-FINAL] attempts=%d reason=day_tif_session_closed", prior_final)
+        if diagnostics is not None:
+            diagnostics["prior_final"] = prior_final
     if diagnostics is not None:
         logged_rows = diagnostics["logged_rows"]
         next_logged_rows = {}
@@ -461,6 +478,8 @@ async def finish_pass(service, generation, *, sync_succeeded):
                 require_background_priority()
                 token = LOCAL_CENSUS_DIAGNOSTICS.set(census_diagnostics)
                 try:
+                    if getattr(service.settings, "strategy_schwab_1m_v2_brokerdecides1_legacy_resolution_enabled", False):
+                        return local_evidence(session, publisher.accounts, prior_session_attempts_final=True)
                     return local_evidence(session, publisher.accounts)
                 finally:
                     LOCAL_CENSUS_DIAGNOSTICS.reset(token)
