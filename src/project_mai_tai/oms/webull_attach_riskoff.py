@@ -74,6 +74,22 @@ class _AtrCall:
     owner_key: tuple | None = None
     broker_flat: bool = False
     list_proof_at: datetime | None = None
+    wb2: bool = False
+    wb2_state: dict | None = None
+    wb2_binding: dict | None = None
+    wb2_pending: object = None
+    wb2_deadline: float = 0
+    wb2_control: object = None
+    wb2_terminal: dict = field(default_factory=dict)
+    wb2_decision: dict | None = None
+    wb2_prior_cancel_bases: frozenset = frozenset()
+    wb2_cancels_entered: set = field(default_factory=set)
+    wb2_started_at: datetime | None = None
+    wb2_prepared: tuple | None = None
+    wb2_working_at: datetime | None = None
+    wb2_positions: tuple | None = None
+    wb2_sell_started: float | None = None
+    wb2_native_account_id: str | None = None
 
 
 _ATR_CALL = ContextVar("wbattach1_atr_call", default=None)
@@ -84,26 +100,62 @@ def atr_handoff_call(method):
     @wraps(method)
     async def bound(service, *args, **kwargs):
         reason = kwargs.get("reason")
-        if reason != REASON and reason not in SOFTWARE_EXIT_REASONS:
-            return await method(service, *args, **kwargs)
         account = args[0] if args else kwargs.get("acct")
+        from project_mai_tai.oms import wbexit2
+        wb2 = wbexit2.selected(service, reason, account)
+        if reason != REASON and reason not in SOFTWARE_EXIT_REASONS and not wb2:
+            return await method(service, *args, **kwargs)
         symbol = args[1] if len(args) > 1 else kwargs.get("symbol")
         call = _AtrCall(service, asyncio.current_task(), account, symbol,
                         kwargs.get("expected_managed_row_id", ""), str(uuid4()))
         call.reason = reason
+        call.wb2 = wb2
+        if wb2:
+            call.wb2_started_at = datetime.now(UTC)
+            call.wb2_deadline = monotonic() + 6
+            call.wb2_control = deepcopy(getattr(getattr(service, "_bot_control_runtime", None), "states", {}).get("schwab_1m_v2"))
+            call.wb2_decision = {"reference_price": str(kwargs.get("reference_price")),
+                                "confirmation_context": deepcopy(kwargs.get("confirmation_context") or {})}
         token = _ATR_CALL.set(call)
+        primary = None
         try:
+            if wb2:
+                async with asyncio.timeout(6):
+                    return await method(service, *args, **kwargs)
             return await method(service, *args, **kwargs)
+        except BaseException as exc:
+            primary = exc
+            raise
         finally:
             try:
                 if call.entry_coid and call.prepared is None and not call.consumed:
                     await _release_unprepared_software_handoff(service, call)
             finally:
-                call.consumed = True
-                owners = service.__dict__.get("_wbattach_exit_owners", {})
-                if call.owner_key is not None and owners.get(call.owner_key) is call:
-                    owners.pop(call.owner_key)
-                _ATR_CALL.reset(token)
+                try:
+                    if wb2:
+                        finish_primary = None
+                        try:
+                            await wbexit2.finish_call(service, call)
+                        except BaseException as exc:
+                            finish_primary = exc
+                            service.logger.critical("[WBEXIT2-RECORD-UNKNOWN] account=%s symbol=%s failure=%s scan_exception=true",
+                                                    account, symbol, type(exc).__name__)
+                            if primary is None:
+                                raise
+                        finally:
+                            try:
+                                await wbexit2.release_invocation(service, call)
+                            except BaseException as exc:
+                                service.logger.critical("[WBEXIT2-INVOCATION-UNKNOWN] account=%s symbol=%s failure=%s scan_exception=true",
+                                                        account, symbol, type(exc).__name__)
+                                if primary is None and finish_primary is None:
+                                    raise
+                finally:
+                    call.consumed = True
+                    owners = service.__dict__.get("_wbattach_exit_owners", {})
+                    if call.owner_key is not None and owners.get(call.owner_key) is call:
+                        owners.pop(call.owner_key)
+                    _ATR_CALL.reset(token)
     return bound
 
 
@@ -138,6 +190,9 @@ def _current_atr_call(service, managed_id, *, require_rth=True):
     if (call.owner_key is not None
             and service.__dict__.get("_wbattach_exit_owners", {}).get(call.owner_key) is not call):
         raise ValueError("wbattach1_exit_owner_claim_lost")
+    if call.wb2:
+        from project_mai_tai.oms.wbexit2 import check_call
+        check_call(service, call)
     if getattr(service.settings, "bot_control_enabled", False):
         owner = module._CONTROL_MANAGED_EMIT.get()
         key = (call.account, call.symbol.upper(), call.managed_id)
@@ -276,7 +331,13 @@ def _atr(service, session, account_name, symbol, coid, *, allow_closed=False, pr
             or str((entry.payload or {}).get("native_oco_bracket", "")).lower() == "true"
             or str((entry.payload or {}).get("fanout_leg", "")).lower() != "webull"):
         raise ValueError("wbattach1_exact_bare_episode_unknown")
-    require_current_episode(entry, session.get(TradeIntent, entry.intent_id), datetime.now(UTC))
+    call = _ATR_CALL.get()
+    if call is not None and call.wb2 and call.service is service:
+        from project_mai_tai.oms.wbexit2 import require_obligation_episode
+        require_obligation_episode(service, session, entry, row, account, strategy,
+                                   session.get(TradeIntent, entry.intent_id), datetime.now(UTC), call)
+    else:
+        require_current_episode(entry, session.get(TradeIntent, entry.intent_id), datetime.now(UTC))
     fills = session.scalars(select(Fill).where(Fill.order_id == entry.id)).all()
     if not fills or any(f.strategy_id != strategy.id or f.broker_account_id != account.id
             or f.symbol != symbol or f.side != "buy" or not f.broker_fill_id
@@ -481,6 +542,7 @@ async def broker_ceiling(service, account, symbol, quantity, *, after=None, allo
 
 
 async def _atr_state(service, account, symbol, coid, mutate=None, *, allow_closed=False):
+    call = _ATR_CALL.get()
     def unit(session):
         entry, row, acct, strategy, quantity = _atr(service, session, account, symbol, coid, allow_closed=allow_closed)
         payload = entry.payload or {}
@@ -506,7 +568,14 @@ async def _atr_state(service, account, symbol, coid, mutate=None, *, allow_close
             mutate(session, entry, row, acct, strategy, quantity, state)
             entry.payload = {**entry.payload, KEY: state}
         return state, str(row.id), str(entry.id), quantity, row.entry_price
-    return await service._run_db(unit, commit=mutate is not None)
+    work = service._run_db(unit, commit=mutate is not None)
+    if call is not None and call.wb2:
+        from project_mai_tai.oms.wbexit2 import joined
+        result = await joined(service, call, work)
+        if not call.consumed:
+            _current_atr_call(service, call.managed_id)
+        return result
+    return await work
 
 
 async def _atr_rejection_terminal_read(service, account, symbol, coid, base, quantity):
@@ -557,7 +626,7 @@ async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_pr
             state, _, _, owned, proven_price = await _atr_state(service, account, symbol, coid, allow_closed=True)
             if stored_price(entry_price) != stored_price(proven_price):
                 raise ValueError("wbattach1_entry_price_binding_changed")
-            if state.get("exit_phase"):
+            if state.get("exit_phase") or state.get("wbexit2_owner_id"):
                 return False  # An existing owner, not another attach, owns the episode now.
             if state.get("exit_reason") in SOFTWARE_EXIT_REASONS:
                 return False  # A proof-waiting real exit must not re-arm a second native writer.
@@ -586,7 +655,8 @@ async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_pr
             owned = await broker_ceiling(service, account, symbol, min(Decimal(quantity), owned))
             base = f"{strategy_code}-{symbol}-protect-{uuid4().hex[:12]}"
             def prepare(session, entry, row, acct, strategy, current, journal):
-                if current < owned or journal.get("exit_phase") or journal["attempts"] != state["attempts"]:
+                if (current < owned or journal.get("exit_phase") or journal.get("wbexit2_owner_id")
+                        or journal["attempts"] != state["attempts"]):
                     raise ValueError("wbattach1_attach_preimage_changed")
                 event = TradeIntentEvent(source_service="oms-risk", payload=TradeIntentPayload(
                     strategy_code=strategy.code, broker_account_name=acct.name, symbol=symbol,
@@ -1115,10 +1185,13 @@ async def strict_atr_handoff(service, row):
     account, symbol, coid = row.broker_account_name, row.symbol, row.entry_client_order_id
     candidate = _ATR_CALL.get()
     if (candidate is not None and candidate.service is service
-            and candidate.task is asyncio.current_task() and candidate.reason in SOFTWARE_EXIT_REASONS
+            and candidate.task is asyncio.current_task() and (candidate.reason in SOFTWARE_EXIT_REASONS or candidate.wb2)
             and candidate.account == account and candidate.symbol == symbol and not candidate.managed_id):
         candidate.managed_id = str(row.id)  # Exact row read by this existing owner invocation.
     call = _current_atr_call(service, row.id)
+    if call.wb2:
+        from project_mai_tai.oms.wbexit2 import handoff
+        return await handoff(service, row, call)
     if call.account != account or call.symbol != symbol or call.entry_coid:
         raise ValueError("wbattach1_handoff_call_binding_changed")
     if call.reason == REASON and not _rth(service):
@@ -1138,6 +1211,8 @@ async def strict_atr_handoff(service, row):
     if (not state.get("exit_reason") or state.get("exit_phase") or state.get("legacy_base")
             or state.get("history_proven") is not True):
         raise ValueError("wbattach1_original_tree_or_close_unknown")
+    if state.get("wbexit2_owner_id"):
+        raise ValueError("wbexit2_retained_owner_requires_its_own_enabled_route")
     terminal_at = monotonic()
     proof_base = None
     if call.reason in SOFTWARE_EXIT_REASONS and state["attempts"]:
@@ -1285,7 +1360,9 @@ def _request_binding(request):
 
 def atr_software_exit_required(service, session, row, reason):
     try:
-        if reason not in SOFTWARE_EXIT_REASONS or getattr(row, "strategy_code", None) != "schwab_1m_v2":
+        from project_mai_tai.oms import wbexit2
+        if (reason not in SOFTWARE_EXIT_REASONS and not wbexit2.selected(service, reason, getattr(row, "broker_account_name", None))
+                or getattr(row, "strategy_code", None) != "schwab_1m_v2"):
             return False
         provider = getattr(service.settings, "provider_for_account", None)
         if not callable(provider) or provider(getattr(row, "broker_account_name", None)) != "webull":
@@ -1335,6 +1412,9 @@ async def validate_atr_before_wire(service, request, managed_row_id):
     are terminal; neither a new cancel nor a retry/reprice is authorized here.
     """
     call = _current_atr_call(service, managed_row_id, require_rth=False)
+    if call.wb2:
+        from project_mai_tai.oms.wbexit2 import validate_before_wire
+        return await validate_before_wire(service, call, request)
     if (not call.entry_coid or call.quantity is None or call.terminal_at is None
             or request.reason != call.reason or request.strategy_code != "schwab_1m_v2"
             or request.broker_account_name != call.account or request.symbol != call.symbol
@@ -1417,6 +1497,10 @@ async def release_atr_proven_unsent(service, request, managed_row_id, *, abort_e
     BrokerOrderEvent.id. None, HTTP ACKs, phase strings and restored rows do not
     qualify. The caller must never invoke this after entering any broker await.
     """
+    candidate = _ATR_CALL.get()
+    if candidate is not None and candidate.wb2:
+        from project_mai_tai.oms.wbexit2 import release_existing_abort
+        return await release_existing_abort(service, candidate, request, managed_row_id, abort_event_id)
     call = _current_atr_call(service, managed_row_id, require_rth=False)
     if call.prepared is None or call.prepared != _request_binding(request) or abort_event_id is None:
         raise ValueError("wbattach1_unsent_receipt_call_unknown")
