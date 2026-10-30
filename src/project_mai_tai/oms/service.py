@@ -73,6 +73,7 @@ from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.oms.price_binding import stored_price
 from project_mai_tai.oms.webull_attach_riskoff import atr_handoff_call
 from project_mai_tai.oms import wbexit3
+from project_mai_tai.oms import webull_country_deferred
 from project_mai_tai.oms.wbexit3 import obligated_exit
 from project_mai_tai.oms.target_cache import BoundTargetRow, ManagedTargetCache
 from project_mai_tai.oms.target_exit_receipt import target_exit_receipt
@@ -1958,6 +1959,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         if self._rpg_external_retry(event):
             return []
         strategy_code = str(event.payload.strategy_code).strip().lower()
+        webull_country_deferred.observe_intent(self, event)
         orb_admission_event = event
         reserve1_dispatch = self.__dict__.get("_reserve1_hard_stop_dispatch", {}).pop(
             event.event_id, None,
@@ -2997,6 +2999,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     self.store.mark_intent_refused(intent, origin="client_abort", code=str(exc))
                     session.commit()
                     return [self._build_rejected_event(event, intent.id, reason=str(exc))]
+            country_refusal = webull_country_deferred.dispatch(self, session, event, request.client_order_id)
+            if country_refusal:
+                # This call created the pending retry above and has not entered
+                # submit_order. Preserve the existing exact local-abort audit.
+                result = self._rpg_abort_open(session, event, intent, country_refusal, order=pending_order)
+                session.commit()
+                return [result]
             reports = await self.broker_adapter.submit_order(request)
             self._emit_fanout_mirror_lag(event=event, reports=reports)
             published_events = [*pre_submit_events]
@@ -15614,6 +15623,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
     def _claim_webull_mirror_deferred_resubmit(self, event: TradeIntentEvent) -> bool:
         """Admit a queued PA1 retry only while its slot claim is still current."""
 
+        country_claim = webull_country_deferred.claim(self, event)
+        if country_claim is not None:
+            return country_claim
         if self._mirrorhold_new_enabled() or self._mirrorhold_scope(event) or event.payload.metadata.get("mirrorhold_token"):
             return self._mirrorhold_claim(event)
         if not self._is_webull_mirror_deferred_resubmit(event):
@@ -15661,6 +15673,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
     def _finish_webull_mirror_deferred_resubmit(self, event: TradeIntentEvent) -> None:
         """Fail closed if a claimed retry produced no structured terminal observation."""
 
+        if webull_country_deferred.finish(self, event):
+            return
         if self._mirrorhold_new_enabled() or self._mirrorhold_scope(event) or event.payload.metadata.get("mirrorhold_token"):
             self._mirrorhold_finish(event)
             return
@@ -15728,6 +15742,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
 
     def _observe_webull_mirror_deferred_intent(self, event: TradeIntentEvent) -> None:
         """Forget stale PA1 state when v2 changes or cancels a resting slot."""
+        webull_country_deferred.observe_intent(self, event)
         if self._mirrorhold_enabled():
             owned = self._mirrorhold_observe_intent(event)
             if owned or self._mirrorhold_new_enabled():
@@ -15828,6 +15843,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
     def _defer_webull_resting_mirror_before_submit(self, event: TradeIntentEvent, *, session=None) -> bool:
         """Skip a mirror already outside PA1's measured safe zone before touching Webull."""
 
+        if webull_country_deferred.scope(self, event):
+            return webull_country_deferred.precheck(self, event, session)
         if self._mirrorhold_scope(event):
             if session is None:
                 raise RuntimeError("mirrorhold1 precheck requires caller transaction")
@@ -15911,6 +15928,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         session=None,
     ) -> None:
         """Remember only structured PRICE_AGGRESSIVE rejects; terminal evidence forgets."""
+        if webull_country_deferred.observe_reports(self, event, reports, session):
+            return
         if self._mirrorhold_new_enabled() or self._mirrorhold_scope(event):
             if session is None:
                 raise RuntimeError("mirrorhold1 reports require caller transaction")
@@ -16005,6 +16024,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
 
     def _schedule_webull_mirror_tick(self, symbol: str) -> None:
         symbol = symbol.upper()
+        webull_country_deferred.schedule(self, symbol)
         if self._mirrorhold_new_enabled():
             self._mirrorhold_schedule(symbol)
             return
@@ -16015,6 +16035,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
 
     async def _evaluate_webull_mirror_deferred_resubmits(self, symbol: str) -> None:
         """Resubmit each eligible PA1 slot once per market event through the normal pipeline."""
+        await webull_country_deferred.evaluate(self, symbol)
         if self._mirrorhold_enabled():
             await self._mirrorhold_evaluate(symbol)
             if self._mirrorhold_new_enabled():
