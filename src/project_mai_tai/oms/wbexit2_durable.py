@@ -154,7 +154,7 @@ def _reconcile(db, state, now):
                 last_fill = max(last_fill, *(_utc_row_time(f.filled_at) for f in fills))
                 used_orders.add(order.id)
             _require(quantity >= wbexit2.positive_quantity(state['child_fill_highwater'][coid], zero=True))
-            highwater[coid] = str(quantity)
+            highwater[coid] = str(quantity.to_integral_value())
     # No unrelated canonical child or ambiguous attribution can be omitted.
     _require(used_orders == {o.id for o in orders} and set(highwater) == set(state['child_fill_highwater']))
     prior = wbexit2.positive_quantity(state.get('prior_software_filled', '0'), zero=True)
