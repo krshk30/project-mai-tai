@@ -7,7 +7,6 @@ reference; every statement rebuilds all eight current source sets.
 from functools import lru_cache
 
 from sqlalchemy import String, and_, case, cast, func, literal, or_, select, union, union_all
-from sqlalchemy.sql.visitors import cloned_traverse
 
 from project_mai_tai.brokerdecides1_retirement import KINDS, PROOF_VERSION
 from project_mai_tai.db.models import (
@@ -32,16 +31,9 @@ def table_entity_state(kind, table):
     return value
 
 
-def validated_retirement_ids():
-    # Cache construction only. Each caller owns fresh mutable CTE objects and
-    # every execution still checks the current database rows and preimages.
-    return cloned_traverse(_retirement_graph_template(), {}, {})
-
-
 @lru_cache(maxsize=1)
-def _retirement_graph_template():
-    # Keep one Core proof graph per statement. Name CTEs explicitly: prefix_with
-    # copies an anonymous CTE whose original object identity can be recycled.
+def _current_members_template():
+    # CTE-free expression construction only; never rows or a proof result.
     source = BrokerDecidesDispatchRetirement.__table__.alias()
     members = []
     for kind in KINDS:
@@ -77,7 +69,20 @@ def _retirement_graph_template():
         members.append(query.add_columns(source.c.attempt_id.label("attempt_id"),
             literal(kind).label("kind"), model.c.id.label("entity_id"),
             table_entity_state(kind, model).label("state")).distinct())
-    current = union_all(*members).cte("l12_current_members").prefix_with("MATERIALIZED", dialect="postgresql")
+    return union_all(*members)
+
+
+@lru_cache(maxsize=1)
+def _prewire_ids_template():
+    from project_mai_tai.brokerdecides1_prewire_proof import valid_prewire_ids
+
+    return valid_prewire_ids()
+
+
+def validated_retirement_ids():
+    # All five mutable CTEs remain statement-local. Reuse only CTE-free SQL
+    # operands; every execution evaluates current rows, counts and preimages.
+    current = _current_members_template().cte("l12_current_members").prefix_with("MATERIALIZED", dialect="postgresql")
 
     def counts(kind):
         return [func.sum(case((kind == name, 1), else_=0)).label(name) for name in KINDS]
@@ -110,6 +115,4 @@ def _retirement_graph_template():
         .outerjoin(live_counts, live_counts.c.attempt_id == receipt.c.attempt_id)\
         .outerjoin(evidence_counts, evidence_counts.c.attempt_id == receipt.c.attempt_id)\
         .where(*checks).cte("l12_valid_ids").prefix_with("MATERIALIZED", dialect="postgresql")
-    from project_mai_tai.brokerdecides1_prewire_proof import valid_prewire_ids
-
-    return union(select(valid.c.attempt_id), valid_prewire_ids())
+    return union(select(valid.c.attempt_id), _prewire_ids_template())
