@@ -748,12 +748,92 @@ async def submit_current(service, request):
     return await joined(service, call, service.broker_adapter.submit_order(request))
 
 
+def _log_original_geometry_refused(base, quantity, *, known=None, suffix=None,
+                                   report=None, geometry=None, values=(), statuses=()):
+    """Observe an already refused proof; diagnostics cannot change its outcome."""
+    try:
+        import json
+        import logging
+        from project_mai_tai.oms import webull_attach_riskoff as wb
+        details = {}
+        if report is None:
+            predicate = "child_count" if len(known) != 2 else "distinct_broker_ids"
+            details = {"child_count": len(known),
+                       "distinct_broker_ids": len({r.broker_order_id for r in known.values()}),
+                       "children": [{"client_order_id": r.client_order_id,
+                                     "broker_order_id": r.broker_order_id,
+                                     "origin": r.origin, "event_type": r.event_type,
+                                     "quantity": r.quantity, "filled_quantity": r.filled_quantity,
+                                     "geometry": r.metadata.get("wbexit2_geometry")}
+                                    for r in known.values()]}
+        else:
+            if report.origin != "broker":
+                predicate = "origin_broker"
+            elif not report.broker_order_id:
+                predicate = "broker_order_id_present"
+            elif report.event_type != "accepted":
+                predicate = "event_type_accepted"
+            elif report.quantity != quantity:
+                predicate = "quantity_equals_original"
+            elif report.filled_quantity != 0:
+                predicate = "filled_quantity_zero"
+            elif not isinstance(geometry, dict):
+                predicate = "geometry_present"
+            elif not statuses:
+                predicate = "statuses_present"
+            elif set(statuses) != {"WORKING"}:
+                predicate = "status"
+            elif not values:
+                predicate = "price_present"
+            else:
+                predicate = "price_unknown"
+                for value in values:
+                    if not value.is_finite():
+                        predicate = "price_finite"
+                    elif value <= 0:
+                        predicate = "price_positive"
+                    elif value != values[0]:
+                        predicate = "price_aliases_equal"
+                    elif wb.WebullBrokerAdapter._round_to_tick(value) != value:
+                        predicate = "price_tick_rounded"
+                    else:
+                        continue
+                    break
+            details = {"client_order_id": report.client_order_id,
+                       "broker_order_id": report.broker_order_id,
+                       "expected_quantity": quantity, "price_values": list(values)}
+        projected = geometry if isinstance(geometry, dict) else {}
+        suppressed = json.loads(report.metadata.get("wbexit2_geometry_refusal", "null")) if report else None
+        if isinstance(suppressed, dict):
+            details["suppressed_projection"] = suppressed
+        raw_statuses = [projected[k] for k in ("status", "order_status", "orderStatus") if k in projected]
+        price_fields = {k: projected[k] for k in ("limit_price", "limitPrice", "stop_price", "stopPrice") if k in projected}
+        if isinstance(suppressed, dict):
+            parts = {name: suppressed.get(name + "_fields", {}) for name in ("raw", "item")}
+            raw_statuses = [part[k] for part in parts.values() if isinstance(part, dict)
+                            for k in ("status", "order_status", "orderStatus") if k in part]
+            price_fields = {name: {k: part[k] for k in ("limit_price", "limitPrice", "stop_price", "stopPrice") if k in part}
+                            for name, part in parts.items() if isinstance(part, dict)}
+        logging.getLogger(__name__).warning(
+            "[WBEXIT2-GEOMETRY-REFUSED] base=%s suffix=%s predicate=%s origin=%s "
+            "event_type=%s quantity=%s filled_quantity=%s statuses=%s price_fields=%s "
+            "geometry_present=%s details=%s",
+            base, suffix or "PAIR", predicate, getattr(report, "origin", None),
+            getattr(report, "event_type", None), getattr(report, "quantity", None),
+            getattr(report, "filled_quantity", None), json.dumps(raw_statuses, default=str),
+            json.dumps(price_fields, default=str, sort_keys=True), isinstance(geometry, dict),
+            json.dumps(details, default=str, sort_keys=True))
+    except Exception:  # A failed diagnostic must preserve the original proof refusal.
+        pass
+
+
 def original_geometry(reports, base, quantity, symbol):
     """WBEXIT2 proof validator; no dropped feature helper/flag is imported."""
     import json
     from project_mai_tai.oms import webull_attach_riskoff as wb
     known = {r.client_order_id: r for r in wb.validated_child_reads(reports, base, quantity, symbol, _now())}
     if len(known) != 2 or len({r.broker_order_id for r in known.values()}) != 2:
+        _log_original_geometry_refused(base, quantity, known=known)
         raise ValueError("wbexit2_original_native_children_UNKNOWN")
     prices = []
     for suffix, fields in (("T", ("limit_price", "limitPrice")), ("S", ("stop_price", "stopPrice"))):
@@ -767,6 +847,8 @@ def original_geometry(reports, base, quantity, symbol):
                 or not statuses or set(statuses) != {"WORKING"} or not values
                 or any(not v.is_finite() or v <= 0 or v != values[0]
                        or wb.WebullBrokerAdapter._round_to_tick(v) != v for v in values)):
+            _log_original_geometry_refused(base, quantity, suffix=suffix, report=report,
+                                           geometry=geometry, values=values, statuses=statuses)
             raise ValueError("wbexit2_original_WORKING_geometry_UNKNOWN")
         prices.append(values[0])
     return tuple(prices)

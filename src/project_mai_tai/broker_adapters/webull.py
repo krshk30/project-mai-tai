@@ -480,6 +480,18 @@ class WebullBrokerAdapter:
                             geometry[key] = part[key]
                 if coherent:
                     metadata["wbexit2_geometry"] = json.dumps(geometry, sort_keys=True)
+                else:
+                    # Diagnostic transport only: retain suppressed aliases for
+                    # the existing geometry refusal, never restore its proof.
+                    try:
+                        metadata["wbexit2_geometry_refusal"] = json.dumps({
+                            "conflicts": {key: {"raw": raw[key], "item": item[key]}
+                                          for key in fields if key in raw and key in item and raw[key] != item[key]},
+                            "raw_fields": {key: raw[key] for key in fields if key in raw},
+                            "item_fields": {key: item[key] for key in fields if key in item},
+                        }, sort_keys=True)
+                    except Exception:
+                        pass  # Diagnostics cannot change the existing suppressed proof.
             if filled and event in {"cancelled", "rejected"}:
                 metadata["webull_terminal_with_partial_fill"] = event
             reports[coid] = ExecutionReport(event, coid, broker_order_id=native_id,
