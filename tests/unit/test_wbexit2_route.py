@@ -135,7 +135,7 @@ class ControlledOwnerBroker(Broker):
             metadata = dict(report.metadata)
             if working:
                 metadata["wbexit2_geometry"] = json.dumps({native: str(WebullBrokerAdapter._round_to_tick(
-                    Decimal(pair.metadata[key]))), "status": "WORKING"})
+                    Decimal(pair.metadata[key]))), "status": "SUBMITTED"})
             reports.append(replace(report, metadata=metadata))
         return ExitPairReleaseResult(outcome="reserved" if working else "released", reports=tuple(reports))
 

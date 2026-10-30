@@ -1,4 +1,4 @@
-"""CONTROLLED diagnostics; compare unchanged proof outcomes with accepted 9ee."""
+"""CONTROLLED lab status fix; every other proof guard remains bound to accepted 9ee."""
 import ast
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -22,7 +22,7 @@ def reports():
         symbol="CONTROLLED", side="sell", intent_type="close", quantity=QTY,
         filled_quantity=Decimal(0), reported_at=datetime(2026, 10, 30, tzinfo=UTC),
         origin="broker", metadata={"wbexit2_geometry": json.dumps({field: price,
-            "order_status": "WORKING"})})
+            "order_status": "SUBMITTED"})})
         for suffix, field, price in (("T", "limit_price", "10.20"), ("S", "stop_price", "9.50"))]
 
 
@@ -47,7 +47,7 @@ def result(function, rows):
     ("origin", "origin_broker"),
     ("event", "event_type_accepted"), ("quantity", "quantity_equals_original"),
     ("fill", "filled_quantity_zero"), ("missing_status", "statuses_present"),
-    ("submitted", "status"), ("pending", "status"),
+    ("submitted", None), ("pending", None),
     ("conflicting_status", "status"), ("missing_price", "price_present"),
     ("nan_price", "price_finite"), ("zero_price", "price_positive"),
     ("conflicting_price", "price_aliases_equal"), ("subtick_price", "price_tick_rounded"),
@@ -70,7 +70,7 @@ def test_same_outcome_and_one_exact_refusal_receipt(change, predicate, caplog):
     elif change in {"submitted", "pending"}:
         geometry["order_status"] = change.upper()
     elif change == "conflicting_status":
-        geometry["status"] = "SUBMITTED"
+        geometry["status"] = "PENDING"
     elif change == "missing_price":
         geometry.pop("limit_price")
     elif change in {"nan_price", "zero_price", "subtick_price"}:
@@ -83,7 +83,11 @@ def test_same_outcome_and_one_exact_refusal_receipt(change, predicate, caplog):
     expected = result(original(), rows)
     with caplog.at_level(logging.WARNING, logger=wbexit2.__name__):
         actual = result(wbexit2.original_geometry, rows)
-    assert actual == expected
+    if change in {"good", "submitted", "pending"}:
+        assert expected == ("ValueError", "wbexit2_original_WORKING_geometry_UNKNOWN")
+        assert actual == ("RETURN", (Decimal("10.20"), Decimal("9.50")))
+    else:
+        assert actual == expected
     messages = [r.getMessage() for r in caplog.records if "[WBEXIT2-GEOMETRY-REFUSED]" in r.getMessage()]
     assert len(messages) == int(predicate is not None)
     if predicate:
@@ -106,16 +110,24 @@ def test_logging_failure_preserves_original_refusal(monkeypatch):
     monkeypatch.setattr(logging.getLogger(wbexit2.__name__), "warning", fail)
     rows = reports()
     geometry = json.loads(rows[0].metadata["wbexit2_geometry"])
-    geometry["order_status"] = "SUBMITTED"
+    geometry["order_status"] = "UNKNOWN"
     rows[0] = replace(rows[0], metadata={"wbexit2_geometry": json.dumps(geometry)})
     assert result(wbexit2.original_geometry, rows) == result(original(), rows)
 
 
-def test_original_guard_body_unchanged():
+def test_original_guard_body_changes_only_working_status_vocabulary():
     old = ast.parse((Path(__file__).parents[1] / "fixtures/wbexit_geometry_original_9ee.py.txt").read_text())
     new = ast.parse(Path(wbexit2.__file__).read_text())
     function = next(n for n in new.body if isinstance(n, ast.FunctionDef) and n.name == "original_geometry")
     class RemoveDiagnostics(ast.NodeTransformer):
+        def visit_UnaryOp(self, node):
+            if (isinstance(node.op, ast.Not) and isinstance(node.operand, ast.Call)
+                    and isinstance(node.operand.func, ast.Name)
+                    and node.operand.func.id == "_working_geometry_statuses"):
+                return ast.Compare(left=ast.Call(func=ast.Name(id="set", ctx=ast.Load()),
+                    args=[ast.Name(id="statuses", ctx=ast.Load())], keywords=[]),
+                    ops=[ast.NotEq()], comparators=[ast.Set(elts=[ast.Constant(value="WORKING")])])
+            return self.generic_visit(node)
         def visit_Expr(self, node):
             if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
                 if node.value.func.id == "_log_original_geometry_refused":
@@ -138,10 +150,10 @@ async def test_suppressed_geometry_reports_exact_raw_item_conflict_without_autho
         coid = WebullBrokerAdapter._combo_leg_coid(BASE, suffix)
         rows.append({"client_order_id": coid, "order_id": "native-" + coid, "account_id": "ACC1",
             "items": [{"symbol": "AIFA", "side": "SELL", "qty": "10", "filled_qty": "0",
-                       "order_status": "WORKING", field: price}]})
+                       "order_status": "SUBMITTED", field: price}]})
     item = rows[0]["items"][0]
-    item[alias] = "WORKING" if alias in {"status", "order_status", "orderStatus"} else "10.20"
-    rows[0][alias] = "SUBMITTED" if alias in {"status", "order_status", "orderStatus"} else "10.21"
+    item[alias] = "SUBMITTED" if alias in {"status", "order_status", "orderStatus"} else "10.20"
+    rows[0][alias] = "PENDING" if alias in {"status", "order_status", "orderStatus"} else "10.21"
     before = deepcopy(rows)
     client = _FakeClient({"today": {"orders": rows, "has_next": False}})
     adapter = adapter_with(client)

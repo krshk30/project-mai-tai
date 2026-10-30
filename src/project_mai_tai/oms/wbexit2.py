@@ -748,6 +748,12 @@ async def submit_current(service, request):
     return await joined(service, call, service.broker_adapter.submit_order(request))
 
 
+def _working_geometry_statuses(statuses):
+    """Accept the adapter's working vocabulary without accepting conflicting aliases."""
+    from project_mai_tai.broker_adapters.webull import _ACCEPTED_STATUSES
+    return len(set(statuses)) == 1 and set(statuses).issubset(_ACCEPTED_STATUSES)
+
+
 def _log_original_geometry_refused(base, quantity, *, known=None, suffix=None,
                                    report=None, geometry=None, values=(), statuses=()):
     """Observe an already refused proof; diagnostics cannot change its outcome."""
@@ -781,7 +787,7 @@ def _log_original_geometry_refused(base, quantity, *, known=None, suffix=None,
                 predicate = "geometry_present"
             elif not statuses:
                 predicate = "statuses_present"
-            elif set(statuses) != {"WORKING"}:
+            elif not _working_geometry_statuses(statuses):
                 predicate = "status"
             elif not values:
                 predicate = "price_present"
@@ -844,7 +850,7 @@ def original_geometry(reports, base, quantity, symbol):
                     if isinstance(geometry, dict) and k in geometry]
         if (report.origin != "broker" or not report.broker_order_id or report.event_type != "accepted"
                 or report.quantity != quantity or report.filled_quantity != 0
-                or not statuses or set(statuses) != {"WORKING"} or not values
+                or not statuses or not _working_geometry_statuses(statuses) or not values
                 or any(not v.is_finite() or v <= 0 or v != values[0]
                        or wb.WebullBrokerAdapter._round_to_tick(v) != v for v in values)):
             _log_original_geometry_refused(base, quantity, suffix=suffix, report=report,

@@ -57,12 +57,12 @@ class SameDayHistoryBroker(ControlledOwnerBroker):
         for suffix in ("T", "S"):
             coid = WebullBrokerAdapter._combo_leg_coid(pair.client_order_id, suffix)
             native = self.report(coid).broker_order_id
-            original = self.raw_order(coid, native, "sell", "CANCELLED" if self.originals_already_terminal or pair.client_order_id in self.cancelled else "WORKING")
+            original = self.raw_order(coid, native, "sell", "CANCELLED" if self.originals_already_terminal or pair.client_order_id in self.cancelled else "SUBMITTED")
             key, field = (("bracket_target_price", "limit_price") if suffix == "T" else ("bracket_stop_price", "stop_price"))
             original["items"][0][field] = str(WebullBrokerAdapter._round_to_tick(Decimal(pair.metadata[key])))
             rows.append(original)
         if self.history_mode in {"manual_filled", "manual_partial", "working_sell", "missing_client", "missing_fill_time", "manual_between_BUYs", "naive_fill_time"}:
-            event = {"manual_filled": "FILLED", "manual_partial": "PARTIALLY_FILLED", "missing_fill_time": "FILLED", "manual_between_BUYs": "FILLED", "naive_fill_time": "FILLED"}.get(self.history_mode, "WORKING")
+            event = {"manual_filled": "FILLED", "manual_partial": "PARTIALLY_FILLED", "missing_fill_time": "FILLED", "manual_between_BUYs": "FILLED", "naive_fill_time": "FILLED"}.get(self.history_mode, "SUBMITTED")
             amount = str(self.owned) if event == "FILLED" else "1" if event == "PARTIALLY_FILLED" else "0"
             manual = self.raw_order("CONTROLLED-manual-sell", "CONTROLLED-manual-native", "sell", event,
                 amount, filled_at=(self.controlled_buy_at + timedelta(seconds=30)

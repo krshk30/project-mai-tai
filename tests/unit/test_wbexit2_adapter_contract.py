@@ -20,6 +20,8 @@ def adapter_with(client, switch=True):
     adapter = primary(client)
     settings = Settings(_env_file=None)
     object.__setattr__(settings, "strategy_schwab_1m_v2_wbexit2_enabled", switch)
+    # This WB2-specific negative profile must also exclude the WB3 geometry exporter.
+    object.__setattr__(settings, "oms_webull_exit3_enabled", False)
     adapter.settings = settings
     return adapter
 
@@ -73,7 +75,7 @@ async def test_H2_existing_LIST_exports_own_geometry_without_new_request(fake_sd
         coid = WebullBrokerAdapter._combo_leg_coid(base, suffix)
         rows.append({"client_order_id": coid, "order_id": "native-" + coid, "account_id": "ACC1",
             "items": [{"symbol": "AIFA", "side": "SELL", "qty": "10", "filled_qty": "0",
-                       "order_status": "WORKING", field: price}]})
+                       "order_status": "SUBMITTED", field: price}]})
     client = _FakeClient({"today": {"orders": rows, "has_next": False}})
     adapter = adapter_with(client, switch)
     reader = census_module.ExitCensusReader(adapter._query_budget, 2., clock=Clock())
