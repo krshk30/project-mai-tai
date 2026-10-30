@@ -8841,10 +8841,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return detail
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             self.logger.warning(
                 "[OMS-OCO-EXIT-FILL] %s %s exit-fill fetch FAILED (transient, e.g. 429) — will "
-                "retry on the next sync rather than book the trade unpaired", acct, symbol,
+                "retry on the next sync rather than book the trade unpaired exception_class=%s exception_message=%s",
+                acct, symbol, type(exc).__name__, str(exc),
             )
             return _EXIT_FETCH_FAILED
 

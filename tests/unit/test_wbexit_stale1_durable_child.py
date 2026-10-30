@@ -5,8 +5,12 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from uuid import UUID
 
 import pytest
+from sqlalchemy import select
+
+from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, Fill, OmsManagedPosition, SystemIncident, TradeIntent, VirtualPosition
 
 from project_mai_tai.oms import wbexit2
 from tests.unit.wbexit_stale1_episode_port import (
@@ -64,3 +68,158 @@ async def test_original24_keeps_wb2_hold_despite_real_durable_child_copy(retaine
     assert case.service._wbexit2_pending[('live:orb', 'TNMG')]['owner_id'] == str(WB2_ID)
     assert case.attempts == []
     record_property('OLD24_original_copy', 'HOLD_remaining69_exact_expected_checkpoint_only_WB3_economic_rows_unchanged_providerRedis0')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('session_clock', ['captured', 'premarket', 'after_hours'])
+async def test_durable_real_child_copy_resolves_first_existing_scan(retained_episode, monkeypatch, record_property, session_clock):
+    case = retained_episode
+    if session_clock == 'premarket': case.now = datetime(2026, 10, 31, 8, tzinfo=UTC)
+    elif session_clock == 'after_hours': case.now = datetime(2026, 10, 30, 23, tzinfo=UTC)
+    monkeypatch.setattr(wbexit2, '_now', lambda: case.now)
+    before = snapshot(case.factory)
+    await hydrate(case)
+    await wbexit2.refresh_pending(case.service)
+    after = snapshot(case.factory)
+    assert {table for table in before if before[table] != after[table]} == {'system_incidents'}
+    assert after['system_incidents'][str(WB3_ID)] == before['system_incidents'][str(WB3_ID)]
+    old, new = before['system_incidents'][str(WB2_ID)], after['system_incidents'][str(WB2_ID)]
+    assert {key for key in old if old[key] != new[key]} == {'payload', 'status', 'closed_at'}
+    assert new['status'] == 'closed' and new['closed_at'] is not None
+    state = new['payload']
+    assert state['phase'] == 'RESOLVED' and state['remaining'] == '0'
+    assert state['generation'] == old['payload']['generation'] + 1
+    assert {key for key in set(state) | set(old['payload']) if state.get(key) != old['payload'].get(key)} == {
+        'remaining', 'child_fill_highwater', 'generation', 'phase', 'resolved_at',
+        'updated_at', 'durable_accounting_retirement'}
+    assert sorted(state['child_fill_highwater'].values()) == ['0', '69']
+    assert state['original_attempt_outcome'] == 'FAIL'
+    assert state['originals'] == old['payload']['originals']
+    assert state['cancel_bases'] == old['payload']['cancel_bases']
+    receipt = state['durable_accounting_retirement']
+    assert receipt['wire_authority'] is receipt['new_native_observation'] is False
+    assert receipt['fill_ids'] == ['45d583bc-410b-468a-a308-80c22fffcf5e']
+    assert ('live:orb', 'TNMG') not in case.service._wbexit2_pending
+    assert not case.service._wbexit3_pending and case.attempts == []
+    await wbexit2.refresh_pending(case.service)
+    assert snapshot(case.factory) == after
+    record_property('real_episode_copy', 'NEW_first_existing_scan_RESOLVED_no_wire_WB3_economic_rows_unchanged')
+    record_property('clock_scope', session_clock + '_CONTROLLED_not_native13:36_latency')
+
+
+ADVERSE = ('missing_child_fill', 'partial_child_fill', 'foreign_child_fill', 'missing_buy_fill',
+           'wrong_child_coid', 'wrong_child_parent', 'missing_position', 'positive_position',
+           'preclose_position', 'future_position', 'missing_VP', 'positive_VP',
+           'managed_open', 'managed_positive', 'missing_base_binding', 'foreign_native_account',
+           'active_invocation', 'prior_software_without_fill', 'duplicate_child_execution')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case_name', ADVERSE)
+async def test_durable_unknown_or_held_copy_retains_responsibility(retained_episode, monkeypatch, case_name):
+    case = retained_episode
+    monkeypatch.setattr(wbexit2, '_now', lambda: case.now)
+    with case.factory.begin() as db:
+        owner = db.get(SystemIncident, WB2_ID)
+        payload = deepcopy(owner.payload)
+        child_fill = db.scalar(select(Fill).where(Fill.side == 'sell'))
+        child_order = db.get(BrokerOrder, child_fill.order_id)
+        position = db.scalar(select(AccountPosition))
+        vp = db.scalar(select(VirtualPosition))
+        managed = db.scalar(select(OmsManagedPosition))
+        if case_name == 'missing_child_fill': db.delete(child_fill)
+        elif case_name == 'partial_child_fill': child_fill.quantity = Decimal(68)
+        elif case_name == 'foreign_child_fill': child_fill.strategy_id = WB3_ID
+        elif case_name == 'missing_buy_fill': db.delete(db.scalar(select(Fill).where(Fill.side == 'buy')))
+        elif case_name == 'wrong_child_coid': child_order.client_order_id = 'CONTROLLED-foreign'
+        elif case_name == 'wrong_child_parent': child_order.intent_id = UUID('47cf706e-592f-443c-8f37-a1ede53e8148')
+        elif case_name == 'missing_position': db.delete(position)
+        elif case_name == 'positive_position': position.quantity = Decimal(1)
+        elif case_name == 'preclose_position': position.source_updated_at = datetime(2026, 10, 30, 13, 34, tzinfo=UTC)
+        elif case_name == 'future_position': position.source_updated_at = datetime(2026, 10, 30, 16, tzinfo=UTC)
+        elif case_name == 'missing_VP': db.delete(vp)
+        elif case_name == 'positive_VP': vp.quantity = Decimal(1)
+        elif case_name == 'managed_open': managed.status = 'open'
+        elif case_name == 'managed_positive': managed.current_quantity = Decimal(1)
+        elif case_name == 'missing_base_binding':
+            protection = db.get(TradeIntent, UUID('47cf706e-592f-443c-8f37-a1ede53e8148'))
+            changed = deepcopy(protection.payload)
+            changed['metadata'].pop('webull_protect_base_client_order_id')
+            protection.payload = changed
+        elif case_name == 'foreign_native_account': payload['native_account_id'] = 'CONTROLLED-foreign-native'
+        elif case_name == 'active_invocation': payload['invocation'] = 'CONTROLLED-foreign-live'
+        elif case_name == 'prior_software_without_fill': payload['prior_software_filled'] = '1'
+        elif case_name == 'duplicate_child_execution':
+            db.add(Fill(id=UUID('00000000-0000-0000-0000-000000000069'), order_id=child_order.id,
+                strategy_id=child_fill.strategy_id, broker_account_id=child_fill.broker_account_id,
+                symbol=child_fill.symbol, side='sell', quantity=Decimal(69), price=Decimal('4.54'),
+                broker_fill_id=child_order.broker_order_id + ':duplicate', filled_at=child_fill.filled_at,
+                payload=deepcopy(child_fill.payload)))
+        owner.payload = payload
+    before = snapshot(case.factory)
+    await hydrate(case)
+    await wbexit2.refresh_pending(case.service)
+    after = snapshot(case.factory)
+    assert all(after[table] == before[table] for table in before if table != 'system_incidents')
+    assert after['system_incidents'][str(WB3_ID)] == before['system_incidents'][str(WB3_ID)]
+    state = after['system_incidents'][str(WB2_ID)]['payload']
+    assert state['phase'] == 'HOLD' and state['remaining'] == '69'
+    assert state['child_fill_highwater'] == before['system_incidents'][str(WB2_ID)]['payload']['child_fill_highwater']
+    assert state['invocation'] == before['system_incidents'][str(WB2_ID)]['payload']['invocation']
+    assert state['original_attempt_outcome'] == 'FAIL'
+    assert 'durable_accounting_retirement' not in state
+    assert case.service._wbexit2_pending[('live:orb', 'TNMG')]['owner_id'] == str(WB2_ID)
+    assert case.attempts == []
+
+
+@pytest.mark.asyncio
+async def test_oco_fetch_exception_receipt_preserves_failure_and_cancellation(caplog):
+    import asyncio
+    import logging
+    from types import SimpleNamespace
+    from project_mai_tai.oms.service import OmsRiskService, _EXIT_FETCH_FAILED
+    from project_mai_tai.settings import Settings
+    service = OmsRiskService.__new__(OmsRiskService)
+    service.settings = Settings(_env_file=None, oms_record_native_oco_exit_fills_enabled=True)
+    service.logger = logging.getLogger('CONTROLLED-fetch-exception')
+    attempted = []
+    async def refused(*args, **kwargs):
+        attempted.append((args, kwargs))
+        raise RuntimeError('CONTROLLED-retained-read-refusal')
+    service.broker_adapter = SimpleNamespace(fetch_oco_exit_fill=refused)
+    with caplog.at_level(logging.WARNING, logger=service.logger.name):
+        result = await service._fetch_oco_exit_detail('live:orb', 'TNMG', 'CONTROLLED-base')
+    assert result is _EXIT_FETCH_FAILED and len(attempted) == 1
+    assert 'exception_class=RuntimeError' in caplog.text
+    assert 'exception_message=CONTROLLED-retained-read-refusal' in caplog.text
+    async def cancelled(*args, **kwargs): raise asyncio.CancelledError()
+    service.broker_adapter = SimpleNamespace(fetch_oco_exit_fill=cancelled)
+    with pytest.raises(asyncio.CancelledError):
+        await service._fetch_oco_exit_detail('live:orb', 'TNMG', 'CONTROLLED-base')
+
+
+@pytest.mark.asyncio
+async def test_nonrecord_finish_never_enters_accounting_only_path(retained_episode, monkeypatch):
+    from project_mai_tai.oms import wbexit2_durable
+    case = retained_episode
+    monkeypatch.setattr(wbexit2, '_now', lambda: case.now)
+    def forbidden(*args): raise AssertionError('accounting-only helper entered for nonrecord call')
+    monkeypatch.setattr(wbexit2_durable, 'reconcile_closed_originals', forbidden)
+    await hydrate(case)
+    state = deepcopy(case.service._wbexit2_pending[('live:orb', 'TNMG')])
+    call = wbexit2._RecordOnly('live:orb', 'TNMG', state['identity'], state, record_only=False)
+    await wbexit2.finish_call(case.service, call)
+    assert call.wb2_state['phase'] == 'HOLD' and call.wb2_state['remaining'] == '69'
+    assert case.attempts == []
+
+
+@pytest.mark.asyncio
+async def test_foreign_Schwab_binding_cannot_enter_Webull_boot_or_accounting(retained_episode):
+    case = retained_episode
+    with case.factory.begin() as db:
+        db.scalar(select(BrokerAccount)).provider = 'schwab'
+    before = snapshot(case.factory)
+    with pytest.raises(ValueError, match='wbexit2_actual_entry_binding_unknown'):
+        await wbexit2.hydrate_at_boot(case.service)
+    assert case.service._wbexit2_boot_complete is False
+    assert snapshot(case.factory) == before and case.attempts == []

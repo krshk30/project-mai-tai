@@ -326,7 +326,12 @@ async def finish_call(service, call):
                     filled=str(sum((f.quantity for f in fills), Decimal(0))))
         vp = service.store.get_virtual_position(session, strategy_id=entry.strategy_id,
             broker_account_id=entry.broker_account_id, symbol=entry.symbol)
-        if row.status == "closed" and row.current_quantity == 0 and vp is not None and vp.quantity == 0 and Decimal(state["remaining"]) == 0:
+        if (getattr(call, "record_only", False) and token is None
+                and row.status == "closed" and row.current_quantity == 0
+                and vp is not None and vp.quantity == 0 and Decimal(state["remaining"]) > 0):
+            from project_mai_tai.oms.wbexit2_durable import reconcile_closed_originals
+            state = reconcile_closed_originals(session, state, _now())
+        if state["phase"] != "RESOLVED" and row.status == "closed" and row.current_quantity == 0 and vp is not None and vp.quantity == 0 and Decimal(state["remaining"]) == 0:
             state = transition(session, call.wb2_binding, state["generation"], operation="resolve",
                 now=_now(), managed_closed=True, virtual_flat=True, attributed_execution_complete=True)
             from project_mai_tai.oms import webull_attach_riskoff as wb
