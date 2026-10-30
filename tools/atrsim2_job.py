@@ -18,8 +18,10 @@ Trades are read only from each signal to its exit, so the cost does not grow wit
 """
 from __future__ import annotations
 
+import bisect
 import json
 import math
+import statistics
 import os
 import sys
 import time
@@ -77,15 +79,61 @@ def confirmed(symbol, ts):
     return WINDOWS is None or on_scanner(WINDOWS, symbol, ts)
 
 
+def continuous(symbol, t0, t1):
+    """Coach 10-30 (TCRT 10-14): the order exists only if the stock stayed confirmed for the WHOLE stretch
+    t0..t1 — a FADE gap with no print in it still cancels the live order."""
+    return WINDOWS is None or any(start <= t0 and (end is None or t1 < end)
+                                  for start, end in WINDOWS.get(symbol, ()))
+
+
 def sane(symbol, ts, price):
-    """Drop bad prints: a trade counts only inside its minute's stored bar range (±10%).
+    """Drop bad prints, causally (coach 10-30): a trade counts only within ±10% of the CLOSE of the last
+    completed minute bar before it — never the finished bar of its own minute (that is later information).
     BIYA 10-07 had a $10.36 print on a ~$3 stock that would fake a fill."""
-    rng = RANGES.get(symbol)
-    if rng is None:
+    closes = RANGES.get(symbol)
+    if closes is None:
         series, _ = LINES.get(symbol, ([], None))
-        rng = RANGES[symbol] = {b.ts: (b.low, b.high) for b in series}
-    bar = rng.get(int(ts.timestamp() // 60) * 60_000)
-    return bar is None or bar[0] * 0.9 <= price <= bar[1] * 1.1
+        closes = RANGES[symbol] = ([b.ts for b in series], [b.close for b in series])
+    minute = int(ts.timestamp() // 60) * 60_000
+    i = bisect.bisect_left(closes[0], minute) - 1  # last bar that STARTED before this print's minute
+    return i < 0 or closes[1][i] * 0.9 <= price <= closes[1][i] * 1.1
+
+
+def five_minute_return(symbol, at):
+    """Return over the last 5 completed minute bars before `at`, or None (bar missing / older than 180 s)."""
+    series = LINES.get(symbol, ([], None))[0]
+    if not series:
+        return None
+    ts = [b.ts for b in series]
+    minute = int(at.timestamp() // 60) * 60_000
+    k = bisect.bisect_left(ts, minute) - 1
+    if k < 0 or at.timestamp() * 1000 - (ts[k] + 60_000) > 180_000:
+        return None  # last completed bar ended more than 180 s before the decision
+    j = bisect.bisect_left(ts, ts[k] - 5 * 60_000)
+    if j >= k or ts[j] != ts[k] - 5 * 60_000 or not series[j].close:
+        return None
+    return series[k].close / series[j].close - 1
+
+
+def h2_check(symbol, at):
+    """Coach H2 (frozen 10-30 01:24 ET): VETO when the median 5-min return of the OTHER stocks confirmed >=60 s
+    at both window ends is negative and this stock's 5-min return is at or below it. Needs >=3 peers."""
+    start = at - timedelta(minutes=5)
+    target = five_minute_return(symbol, at)
+    if target is None or not continuous(symbol, start, at):
+        return {"verdict": "UNKNOWN", "reason": "target bars or scanner window missing", "target_ret": target}
+    peers = []
+    for other, windows in (WINDOWS or {}).items():
+        if other == symbol or not any(s <= start - timedelta(seconds=60) and (e is None or at < e) for s, e in windows):
+            continue
+        r = five_minute_return(other, at)
+        if r is not None:
+            peers.append(r)
+    if len(peers) < 3:
+        return {"verdict": "UNKNOWN", "reason": f"only {len(peers)} valid peers", "target_ret": target, "peers": len(peers)}
+    med = statistics.median(peers)
+    verdict = "VETO" if med < 0 and target <= med else "KEEP"
+    return {"verdict": verdict, "target_ret": round(target, 4), "peer_median": round(med, 4), "peers": len(peers)}
 # Live ATR rules read from the running bot 10-29: resting buy-stop at line + 0.5% (cent ceiling),
 # limit 0.5% above the trigger, following the line each minute while short (live log 10-29: PCLA re-placed
 # 13:53/13:56/13:58 UTC as the line fell; NCPL held 1.81 while its line stayed ~1.79); exits: OCO target +5% / stop -8%,
@@ -114,11 +162,13 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=F
         return dict(base, status="SKIPPED", reason="outside the 07:00-15:45 entry window")
     stream = trades(conn, symbol, seg_start, min(session_end, now))
     fill = None
-    triggered, k = False, None
+    triggered, k, prev_ts = False, None, None
     index = {series[i].ts: i for i in range(first, fi + 1)}
     for ts, price in stream:
         if ts >= seg_end:
             break
+        if triggered and prev_ts is not None and not continuous(symbol, prev_ts, ts):
+            triggered = False  # a FADE between two prints cancelled the order even with no print in the gap
         minute = int(ts.timestamp() // 60) * 60_000
         if minute > series[fi].ts:
             bar_k = k  # after the flip: the last resting price is kept (no new short line)
@@ -133,6 +183,7 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=F
             k, triggered = bar_k, False
             trigger = ceil_cent(rows[k - 1]["trail"] * (1 + LIVE_OFFSET))
             limit = ceil_cent(trigger * (1 + LIVE_BAND))
+        prev_ts = ts
         if not triggered and price >= trigger:
             triggered = True
         if triggered and price <= limit:
@@ -366,8 +417,14 @@ def run(now=None):
                 tables["FIRSTBAR+2min"].append(b)
                 tables["LIVE rules SIM"].append(live_rules_sim(conn, symbol, bar, sell_close, day, now,
                     {"symbol": symbol, "signal": a["signal"], "trigger": a["trigger"]}))
-                tables["LIVE+2min SIM"].append(live_rules_sim(conn, symbol, bar, sell_close, day, now,
-                    {"symbol": symbol, "signal": a["signal"], "trigger": a["trigger"]}, two_min=True))
+                live2 = live_rules_sim(conn, symbol, bar, sell_close, day, now,
+                    {"symbol": symbol, "signal": a["signal"], "trigger": a["trigger"]}, two_min=True)
+                if live2.get("status") in ("CLOSED", "OPEN"):
+                    # Operator 10-30: record the H2 inputs at every buy decision (here: the simulated fill).
+                    hh, mm, ss = (int(x) for x in live2["entry_time"].split(":"))
+                    fill_at = datetime.combine(day, datetime.min.time(), ET).replace(hour=hh, minute=mm, second=ss)
+                    live2["h2"] = h2_check(symbol, fill_at)
+                tables["LIVE+2min SIM"].append(live2)
     for rows in tables.values():
         rows.sort(key=lambda r: (r.get("entry_time") or "99", r["signal"], r["symbol"]))
     doc = {"schema": "ATRSIM2_DAY_V1", "trading_day": day.isoformat(), "generated_at": now.isoformat(),

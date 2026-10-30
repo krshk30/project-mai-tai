@@ -96,10 +96,53 @@ def render_day(doc, *, render_row, day: str):
         skipped = len(rows) - len(traded)
         shown = traded
         total = sum(r.get("pnl", 0.0) for r in traded)
+        # Operator 10-30: pre-market vs regular hours, every table, every day.
+        pre = [r for r in traded if (r.get("entry_time") or "99") < "09:30:00"]
+        pre_total = sum(r.get("pnl", 0.0) for r in pre)
         updated = (f"{doc['trading_day']} · updated {generated} ET · {len(traded)} trades, {skipped} signals without a trade"
-                   f" · total ${total:+.2f} on ${doc.get('notional_usd', 600):.0f} per trade")
+                   f" · total ${total:+.2f} on ${doc.get('notional_usd', 600):.0f} per trade"
+                   f" · pre-market {len(pre)} trades ${pre_total:+.2f} · regular hours {len(traded) - len(pre)} trades"
+                   f" ${total - pre_total:+.2f}")
         heading, description = SHOWN[title]
         panels.append(panel(heading, [_display(r) for r in shown], render_row=render_row, marker=title,
                             updated_text=updated, description=description))
     return ('<div id="atr-sim2" class="full" data-atrsim2="day" data-firstbar-mount="true" data-atrsim-firstbar="true">'
-            + STYLE + '<p class="sim-desc">' + escape(NOTE) + "</p>" + "".join(panels) + "</div>")
+            + STYLE + '<p class="sim-desc">' + escape(NOTE) + "</p>" + "".join(panels) + h2_panel(doc) + "</div>")
+
+
+def _pct(value):
+    return "—" if value is None else f"{value * 100:+.2f}%"
+
+
+def h2_panel(doc):
+    """Operator 10-30: the H2 inputs recorded at every LIVE+2min buy, so H2 can be checked every day.
+    H2 (coach, frozen 10-30): skip when the other confirmed stocks' median 5-minute move is negative and this
+    stock is doing no better. Shown only — the live bot does not use it."""
+    rows = [r for r in doc["tables"].get("LIVE+2min SIM", []) if r.get("status") in ("CLOSED", "OPEN")]
+    body, kept, vetoed, unknown = "", 0.0, 0.0, 0
+    for r in rows:
+        h2 = r.get("h2") or {"verdict": "UNKNOWN", "reason": "not recorded"}
+        verdict = h2.get("verdict", "UNKNOWN")
+        if verdict == "VETO":
+            vetoed += r.get("pnl", 0.0)
+        elif verdict == "UNKNOWN":
+            unknown += 1
+        if verdict != "VETO":
+            kept += r.get("pnl", 0.0)
+        body += ("<tr><td>" + escape(r.get("symbol", "")) + "</td><td>" + escape(str(r.get("entry_time", "")))
+                 + "</td><td>" + f"${r.get('pnl', 0.0):+.2f}" + "</td><td>" + _pct(h2.get("target_ret"))
+                 + "</td><td>" + _pct(h2.get("peer_median")) + "</td><td>" + escape(str(h2.get("peers", "—")))
+                 + "</td><td>" + escape(verdict) + "</td><td>" + escape(h2.get("reason", "")) + "</td></tr>")
+    if not body:
+        body = '<tr><td colspan="8">No LIVE+2min trades yet today.</td></tr>'
+    summary = (f"{len(rows)} trades · H2 would skip trades worth ${vetoed:+.2f} · trades H2 keeps ${kept:+.2f}"
+               f" · {unknown} could not be checked")
+    return ('<section class="panel full" data-sim-mode="H2 check"><div class="panel-header"><div><h3>'
+            "5 · H2 check on the LIVE bot buy + 2-minute cut trades</h3>"
+            '<div class="sim-desc">Simulation, not real trades. At each buy: this stock\'s last 5 minutes vs the median of'
+            " the other scanner-confirmed stocks (confirmed 60 s or more). H2 would SKIP the buy when the others are"
+            " falling and this stock is doing no better. Recorded every day; not used by the live bot.</div>"
+            '<div class="sim-updated">' + escape(summary) + "</div></div></div>"
+            '<div class="table-wrap"><table><thead><tr><th>Stock</th><th>Buy time</th><th>P&amp;L</th>'
+            "<th>Stock 5-min</th><th>Others 5-min (median)</th><th>Others</th><th>H2</th><th>Note</th></tr></thead>"
+            "<tbody>" + body + "</tbody></table></div></section>")

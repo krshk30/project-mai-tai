@@ -102,3 +102,44 @@ def test_flip_query_is_bounded_to_the_trading_day():
     anchor = datetime(2026, 9, 29, 8, 0, tzinfo=timezone.utc)
     assert job.flips_by_symbol(Conn(), anchor) == {}
     assert "bar_time < :b" in seen["sql"] and (seen["params"]["b"] - anchor).days == 1
+
+
+def test_order_cancelled_by_a_fade_gap_with_no_print_and_causal_print_guard():
+    t = lambda h, m, s=0: datetime(2026, 10, 14, h, m, s, tzinfo=timezone.utc)
+    # TCRT 10-14 shape: confirmed, FADE 13:31:00, reconfirm 13:35:00, no print in the gap.
+    job.WINDOWS = {"TCRT": [(t(13, 0), t(13, 31)), (t(13, 35), None)]}
+    try:
+        assert job.continuous("TCRT", t(13, 30), t(13, 30, 59))
+        assert not job.continuous("TCRT", t(13, 30), t(13, 35, 30))
+    finally:
+        job.WINDOWS = None
+    bars = [job.Bar(int(t(13, 0).timestamp() * 1000), 3.0, 3.1, 2.9, 3.0, 1000),
+            job.Bar(int(t(13, 1).timestamp() * 1000), 3.0, 10.5, 2.9, 10.36, 1000)]
+    job.LINES["BIYA"] = (bars, None)
+    job.RANGES.pop("BIYA", None)
+    try:
+        # A $10.36 print in minute 13:01 is judged against the 13:00 close (3.00), not its own bar's high.
+        assert not job.sane("BIYA", t(13, 1, 30), 10.36)
+        assert job.sane("BIYA", t(13, 1, 30), 3.05)
+    finally:
+        job.LINES.pop("BIYA", None)
+        job.RANGES.pop("BIYA", None)
+
+
+def test_h2_check_veto_keep_and_unknown():
+    t = lambda h, m: datetime(2026, 10, 21, h, m, tzinfo=timezone.utc)
+    def series(start_price, step):
+        return [job.Bar(int(t(15, m).timestamp() * 1000), 0, 0, 0, start_price + step * m, 1000) for m in range(0, 10)]
+    job.LINES.update({"AAA": (series(2.0, -0.02), None), "P1": (series(5.0, -0.01), None),
+                      "P2": (series(4.0, -0.01), None), "P3": (series(3.0, -0.005), None)})
+    job.WINDOWS = {s: [(t(14, 0), None)] for s in ("AAA", "P1", "P2", "P3")}
+    try:
+        assert job.h2_check("AAA", t(15, 9))["verdict"] == "VETO"
+        job.LINES["AAA"] = (series(2.0, 0.02), None)
+        assert job.h2_check("AAA", t(15, 9))["verdict"] == "KEEP"
+        job.WINDOWS = {"AAA": [(t(14, 0), None)], "P1": [(t(14, 0), None)]}
+        assert job.h2_check("AAA", t(15, 9))["verdict"] == "UNKNOWN"
+    finally:
+        job.WINDOWS = None
+        for s in ("AAA", "P1", "P2", "P3"):
+            job.LINES.pop(s, None)
