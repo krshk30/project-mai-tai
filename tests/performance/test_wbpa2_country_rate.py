@@ -106,6 +106,13 @@ async def test_actual_country_deferred_slot_240_quote_callbacks_per_second_for_6
         await drain_ticks(case)
         assert actor is not None and actor.done()
         actor.result()
+        # Preserve actual measurements BEFORE assertions, including failures.
+        measured = {**counters, "actual_seconds": end - begin,
+            "completed_events_per_second": counters["callbacks"] / (end - begin),
+            "max_loop_stall_seconds": monitor.max_stall, **evidence}
+        print("WBPA2_RATE_PREASSERT_EVIDENCE=" + json.dumps(measured, sort_keys=True))
+        for key, value in measured.items():
+            record_property("preassert_" + key, value)
         assert begin <= evidence["serial_start"] <= evidence["serial_end"] <= end
         assert end - begin >= 60 and counters["callbacks"] / (end - begin) >= 200
         assert monitor.max_stall < .050 and counters["callback_max_seconds"] < .050

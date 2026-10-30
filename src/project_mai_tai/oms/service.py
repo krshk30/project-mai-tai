@@ -1628,7 +1628,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             event = TradeIntentEvent.model_validate(payload)
             if self._rpg_external_retry(event):
                 return
-            if not self._claim_webull_mirror_deferred_resubmit(event):
+            if event.payload.metadata.get("webull_country_deferred_resubmit") == "true":
+                if not await webull_country_deferred.claim_in_serial(self, event):
+                    return
+            elif not self._claim_webull_mirror_deferred_resubmit(event):
                 return
             completed = False
             try:

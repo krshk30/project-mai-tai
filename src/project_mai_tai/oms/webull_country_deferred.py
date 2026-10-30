@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from functools import wraps
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 import time
+import threading
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -20,6 +22,25 @@ from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEve
 from project_mai_tai.events import TradeIntentEvent, stream_name
 from project_mai_tai.fanout_segment_store import SNAPSHOT_TYPE as SEGMENT_SNAPSHOT, current_session_anchor
 from project_mai_tai.strategy_core.v2_entry_sizing import resting_buy_limit, resting_buy_stop
+
+
+def _serial_span(stage, event_index):
+    """Observation only: retain the actual synchronous interval/thread on failure."""
+    def decorate(function):
+        @wraps(function)
+        def measured(service, *args, **kwargs):
+            event = args[event_index]
+            if not _retry(event):
+                return function(service, *args, **kwargs)
+            started = time.monotonic()
+            try:
+                return function(service, *args, **kwargs)
+            finally:
+                service.logger.info("[OMS-WEBULL-COUNTRY-SERIAL-SPAN] sym=%s event=%s stage=%s "
+                    "elapsed_ms=%.6f thread=%s", event.payload.symbol, event.event_id, stage,
+                    (time.monotonic() - started) * 1000, threading.get_ident())
+        return measured
+    return decorate
 
 
 @dataclass
@@ -192,6 +213,7 @@ def observe_reports(service, event, reports, session):
     return True
 
 
+@_serial_span("precheck", 0)
 def precheck(service, event, session):
     """Use PA1's existing stamped quote and the same eight-percent bound."""
     if not scope(service, event) or not _rth():
@@ -214,6 +236,7 @@ def precheck(service, event, session):
     return True
 
 
+@_serial_span("no_working_db", 1)
 def no_working_reason(service, session, event, *, ignore_client=""):
     """Positive existing durable terminal audits, never a native-flat inference."""
     session.flush()
@@ -356,6 +379,7 @@ def _unsent_dispatch_gate(service, session, account, event, own_client):
     return None
 
 
+@_serial_span("claim_db", 0)
 def claim(service, event):
     if not _retry(event):
         return None
@@ -368,6 +392,9 @@ def claim(service, event):
     if reason:
         _forget(service, _key(event), reason)
         return False
+    if (_states(service).get(_key(event)) is not state
+            or state.queued_json != event.model_dump_json() or state.claimed):
+        return False  # A report/cancel while the owned DB proof ran cannot reauthorize a stale copy.
     state.claimed = True
     return True
 
@@ -381,6 +408,7 @@ def finish(service, event):
     return True
 
 
+@_serial_span("prewire_dispatch", 1)
 def dispatch(service, session, event, client):
     if not _retry(event):
         return None
@@ -391,6 +419,7 @@ def dispatch(service, session, event, client):
     return no_working_reason(service, session, event, ignore_client=client)
 
 
+@_serial_span("new_unsent_preparation", 1)
 def prepare_new_pending(service, session, event, request, order):
     """The caller has just CREATED this exact retry row, before any submit.
 
@@ -472,3 +501,30 @@ async def evaluate(service, symbol):
         except Exception:
             _forget(service, key, "serial_enqueue_unconfirmed")
             raise
+
+
+async def claim_in_serial(service, event):
+    """Off-loop DB proof owned and physically joined by the serial handler.
+
+    No broker call or permit moves to this thread. Serial dispatch still repeats
+    the proof against the current transaction immediately before submission.
+    """
+    started = time.monotonic()
+    task = asyncio.create_task(asyncio.to_thread(service._claim_webull_mirror_deferred_resubmit, event))
+    cancellation = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            cancellation = cancellation or exc
+    try:
+        admitted = task.result()
+    finally:
+        service.logger.info("[OMS-WEBULL-COUNTRY-SERIAL-SPAN] sym=%s event=%s stage=owned_claim_await "
+            "elapsed_ms=%.6f thread=%s physically_joined=%s", event.payload.symbol, event.event_id,
+            (time.monotonic() - started) * 1000, threading.get_ident(), task.done())
+        if cancellation is not None:
+            service._finish_webull_mirror_deferred_resubmit(event)
+    if cancellation is not None:
+        raise cancellation
+    return admitted
