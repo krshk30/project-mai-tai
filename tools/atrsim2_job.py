@@ -11,7 +11,8 @@ Rules (same as the 10-27 approved FIRSTBAR descriptions):
   exits   = sell flip (first trade after that bar closes) / session end 20:00 ET,
             else target +5% (limit at the target, cent ceiling), else stop -8% (that trade's price)
   filter  = only BUY flips whose bar closes while the stock is CONFIRMED on the momentum scanner
-            (scanner_confirmed_events CONFIRM..FADE), like the live ATR bot (operator 10-29)
+            (scanner_confirmed_events CONFIRM..FADE), like the live ATR bot (operator 10-29); every
+            ENTRY print must also be inside a CONFIRM..FADE window (coach 10-29: no fill before CONFIRM)
   +2min   = also sold at the first trade after 2 minutes if it never traded +1% in those 2 minutes
 Trades are read only from each signal to its exit, so the cost does not grow with the day's tape.
 """
@@ -50,7 +51,9 @@ def flips_by_symbol(conn, anchor):
     rows = conn.execute(text(
         "select symbol, bar_time, open_price, high_price, low_price, close_price, volume "
         "from strategy_bar_history where strategy_code='schwab_1m_v2' and interval_secs=60 "
-        "and bar_time >= :a order by symbol, bar_time"), {"a": anchor}).all()
+        "and bar_time >= :a and bar_time < :b order by symbol, bar_time"),
+        # Coach 10-29: bounded to this trading day — an old day re-run must not read later days' bars.
+        {"a": anchor, "b": anchor + timedelta(days=1)}).all()
     bars = {}
     for s, t, o, h, l, c, v in rows:
         bars.setdefault(s, []).append(Bar(int(t.timestamp() * 1000), float(o), float(h), float(l), float(c), int(v or 0)))
@@ -65,6 +68,13 @@ def flips_by_symbol(conn, anchor):
 
 LINES = {}
 RANGES = {}
+WINDOWS = None  # set by run(): scanner CONFIRM..FADE windows of the day being simulated
+
+
+def confirmed(symbol, ts):
+    """Coach 10-29 (15 LIVE fills before CONFIRM): an order exists only while the stock is confirmed on the
+    momentum scanner — the live bot cancels on a scanner drop — so an entry print must be inside a window."""
+    return WINDOWS is None or on_scanner(WINDOWS, symbol, ts)
 
 
 def sane(symbol, ts, price):
@@ -116,6 +126,9 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=F
             bar_k = index.get(minute)
         if bar_k is None or rows[bar_k - 1]["trail"] is None:
             continue  # minute without a stored bar: the bot had no line to rest on
+        if not confirmed(symbol, ts):
+            triggered = False
+            continue  # not confirmed on the scanner at this print: no order is resting
         if bar_k != k:
             k, triggered = bar_k, False
             trigger = ceil_cent(rows[k - 1]["trail"] * (1 + LIVE_OFFSET))
@@ -271,7 +284,7 @@ def simulate(conn, symbol, bar, sell_close, day, now):
         if entry is None:
             if ts >= entry_end:
                 break
-            if price >= trigger:
+            if price >= trigger and confirmed(symbol, ts):
                 entry = (ts, price)
                 break
     if entry is None:
@@ -331,9 +344,10 @@ def run(now=None):
     url = os.environ["MAI_TAI_DATABASE_URL"]
     engine = create_engine(url, pool_pre_ping=True)
     tables = {"FIRSTBAR": [], "FIRSTBAR+2min": [], "LIVE rules SIM": [], "LIVE+2min SIM": []}
+    global WINDOWS
     with engine.connect() as conn:
         conn.execute(text("set statement_timeout = 20000"))
-        windows = confirmed_windows(conn, day)
+        windows = WINDOWS = confirmed_windows(conn, day)
         fills = live_fills(conn, anchor)
         session_end = datetime.combine(day, datetime.min.time(), ET).replace(hour=20)
         for symbol, flips in flips_by_symbol(conn, anchor).items():

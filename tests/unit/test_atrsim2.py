@@ -73,3 +73,32 @@ def test_live_row_uses_real_fills_in_the_signal_segment_including_inside_the_fli
     assert row["pnl"] == 15.48 and row["pnl_pct"] == 5.11
     later = job.Bar(int(t(18, 14).timestamp() * 1000), 10.5, 10.6, 10.4, 10.55, 1000)
     assert job.live_row(fills, "PCLA", later, None, t(23, 59), base)["status"] == "NO LIVE TRADE"
+
+
+def test_no_entry_print_counts_before_the_scanner_confirms():
+    # Coach 10-29 check h: VEEA 10-01 modeled fill 09:07:21 vs CONFIRM 09:07:30.417 — must not fill.
+    t = lambda h, m, s=0: datetime(2026, 10, 1, h, m, s, tzinfo=timezone.utc)
+    job.WINDOWS = {"VEEA": [(t(13, 7, 30), None)]}
+    try:
+        assert not job.confirmed("VEEA", t(13, 7, 21))
+        assert job.confirmed("VEEA", t(13, 7, 31))
+        assert not job.confirmed("OTHER", t(13, 7, 31))
+    finally:
+        job.WINDOWS = None
+    assert job.confirmed("VEEA", t(13, 7, 21))  # outside a run (no windows loaded) nothing is filtered
+
+
+def test_flip_query_is_bounded_to_the_trading_day():
+    seen = {}
+
+    class Conn:
+        def execute(self, sql, params):
+            seen.update(sql=str(sql), params=params)
+
+            class R:
+                def all(self):
+                    return []
+            return R()
+    anchor = datetime(2026, 9, 29, 8, 0, tzinfo=timezone.utc)
+    assert job.flips_by_symbol(Conn(), anchor) == {}
+    assert "bar_time < :b" in seen["sql"] and (seen["params"]["b"] - anchor).days == 1
