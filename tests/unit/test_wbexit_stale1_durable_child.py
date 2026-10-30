@@ -140,7 +140,7 @@ async def test_durable_unknown_or_held_copy_retains_responsibility(retained_epis
         elif case_name == 'missing_VP': db.delete(vp)
         elif case_name == 'positive_VP': vp.quantity = Decimal(1)
         elif case_name == 'managed_open': managed.status = 'open'
-        elif case_name == 'managed_positive': managed.current_quantity = Decimal(1)
+        elif case_name == 'managed_positive': managed.current_quantity = 1
         elif case_name == 'missing_base_binding':
             protection = db.get(TradeIntent, UUID('47cf706e-592f-443c-8f37-a1ede53e8148'))
             changed = deepcopy(protection.payload)
