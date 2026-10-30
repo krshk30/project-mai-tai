@@ -57,15 +57,26 @@ def armed():
         strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled=True,
         strategy_schwab_1m_v2_eh_resting_stream_cross_enabled=True,
         strategy_schwab_1m_v2_pm_print_ask_confirm_enabled=True)
-    strategy = SchwabV2Strategy(settings)
-    state = strategy.watchlist_state('NCPL')
-    state.atr_trail = state.resting_level = 1.536583
+    restored = settings.strategy_schwab_1m_v2_line_chart_restoration_enabled
+    if restored:
+        from tests.unit.pm_softrest_real_prelude import prepare_real_line_country
+        strategy, state = prepare_real_line_country(settings, symbol='NCPL', at=AT)
+    else:
+        strategy = SchwabV2Strategy(settings)
+        state = strategy.watchlist_state('NCPL')
+    state.resting_level = 1.536583
+    if not restored:
+        state.atr_trail = state.resting_level
     state.resting_trigger = state.resting_schwab_wire_stop = 1.55
     state.resting_wire_cap = state.resting_schwab_wire_limit = 1.56
     state.resting_active = True
     state.resting_is_broker_order = False
-    state.bars.append(OHLCVBar(NOW // 60000 * 60000 - 60000,
-                              1.50, 1.54, 1.49, 1.53, 12000))
+    if not restored:
+        state.bars.append(OHLCVBar(NOW // 60000 * 60000 - 60000,
+                                  1.50, 1.54, 1.49, 1.53, 12000))
+    else:
+        assert strategy.line_buy_ready('NCPL')
+        assert strategy._line_version_reader('NCPL')
     return strategy, state
 
 
