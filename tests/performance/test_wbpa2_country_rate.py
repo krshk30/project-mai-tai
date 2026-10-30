@@ -112,13 +112,17 @@ async def test_actual_country_deferred_slot_240_quote_callbacks_per_second_for_6
         assert counters["wake_lateness_max_seconds"] < .050
         assert counters["evaluations"] >= 12000 and counters["evaluations_with_country_slot"] >= 12000
         assert state(case) is not None  # one controlled reject, bounded residual retry duty
-        assert len(queued(case)) == len(case.provider.requests) == len(case.provider.entries) == 1
+        assert len(queued(case)) == len(case.provider.requests) == 1
+        assert [entry["operation"] for entry in case.provider.entries] == ["submit", "positions"]
+        assert case.provider.entries[1]["result"] == "REFUSED_UNKNOWN_NEVER_FLAT"
         assert case.provider.entries[0]["operation"] == "submit"
         assert not case.provider.entries[0]["market_task"]
         assert not case.provider.live_clients
         evidence.update(counters, actual_seconds=end - begin,
             completed_events_per_second=counters["callbacks"] / (end - begin),
-            max_loop_stall_seconds=monitor.max_stall, provider_reads=0, provider_submits=1,
+            max_loop_stall_seconds=monitor.max_stall, provider_reads=1, provider_submits=1,
+            provider_read_scope="EXISTING_POST_INTENT_SERIAL_RECONCILIATION_REFUSED_UNKNOWN",
+            tick_provider_calls=0,
             serial_wall_seconds=evidence["serial_end"] - evidence["serial_start"],
             scope="REAL_OMS_CALLBACK_AND_SERIAL_WITH_CONTROLLED_ASYNC_PROVIDER_NOT_NATIVE_OR_SDK_THREAD_PROOF",
             rate_ask_body_sha256=authority)

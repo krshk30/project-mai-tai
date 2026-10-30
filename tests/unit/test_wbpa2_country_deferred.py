@@ -68,7 +68,8 @@ async def test_original_CHOW_prefix_OLD_no_retry_NEW_one_earned_serial_retry(tmp
             assert request.quantity == Decimal(48)
             assert request.metadata["stop_price"] == "6.2600"
             assert Decimal(request.metadata["limit_price"]) == Decimal("6.29")
-            assert [entry["operation"] for entry in case.provider.entries] == ["submit"]
+            assert [entry["operation"] for entry in case.provider.entries] == ["submit", "positions"]
+            assert case.provider.entries[1]["result"] == "REFUSED_UNKNOWN_NEVER_FLAT"
             assert all(not entry["market_task"] for entry in case.provider.entries)
     finally:
         await close_case(case)
@@ -94,7 +95,9 @@ async def test_NEW_three_rejected_resubmissions_cap_and_repeated_ticks_never_dup
         await drain_ticks(case)
         assert state(case) is None and len(queued(case)) == 3
         assert len(case.provider.requests) == 3 and not case.provider.live_clients
-        assert [entry["operation"] for entry in case.provider.entries] == ["submit"] * 3
+        assert [entry["operation"] for entry in case.provider.entries] == ["submit", "positions"] * 3
+        assert all(entry["result"] == "REFUSED_UNKNOWN_NEVER_FLAT"
+                   for entry in case.provider.entries if entry["operation"] == "positions")
         observe_original(case)  # late retained reject must not resurrect a capped generation
         await quote(case, BOUNDARY)
         await drain_ticks(case)
@@ -222,9 +225,10 @@ async def test_final_560_slot_CONTROLLED_retry_clock_vs_C1_reported_cross(tmp_pa
         retry, = queued(case)
         await serial(case, retry)
         assert len(case.provider.requests) == 1 and case.provider.requests[0].quantity == Decimal(53)
-        assert len(case.provider.entries) == 1
+        assert len(case.provider.entries) == 2
         assert retry.produced_at == controlled_eligible < reported_cross
-        assert all(entry["operation"] == "submit" for entry in case.provider.entries)
+        assert [entry["operation"] for entry in case.provider.entries] == ["submit", "positions"]
+        assert case.provider.entries[1]["result"] == "REFUSED_UNKNOWN_NEVER_FLAT"
         record_property("comparison_scope", "CONTROLLED_ELIGIBILITY_AND_RETRY_VS_C1_REPORTED_CROSS_NOT_NATIVE_FIRST_TICK")
         record_property("retained_trigger", "5.60")
         record_property("exact_eight_percent_threshold", str(threshold))
@@ -289,7 +293,8 @@ async def test_foreign_generation_cancel_cannot_poison_current_rejection_retry(t
         assert len(queued(case)) == 1
         await serial(case, queued(case)[0])
         assert len(case.provider.requests) == 1
-        assert [entry["operation"] for entry in case.provider.entries] == ["submit"]
+        assert [entry["operation"] for entry in case.provider.entries] == ["submit", "positions"]
+        assert case.provider.entries[1]["result"] == "REFUSED_UNKNOWN_NEVER_FLAT"
         assert state(case) is not None and state(case).attempts == 1
     finally:
         await close_case(case)

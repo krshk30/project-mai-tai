@@ -48,6 +48,7 @@ class ControlledProvider:
                    entered_at=monotonic(), market_task=task in self.market_tasks)
         self.entries.append(row)
         assert not row["market_task"], "provider operation entered on market callback task"
+        assert task is self.serial_task, "provider operation escaped reviewed serial actor"
         return row
 
     async def submit_order(self, request):
@@ -88,7 +89,9 @@ class ControlledProvider:
             reason=reply.reason, metadata=metadata)]
 
     async def list_account_positions(self, account):
-        self._record("positions")
+        row = self._record("positions")
+        assert account == self.account
+        row["result"] = "REFUSED_UNKNOWN_NEVER_FLAT"
         raise AssertionError("UNCONFIGURED provider positions; no flat/empty permission stub")
 
     async def list_working_orders(self, account):
