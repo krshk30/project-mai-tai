@@ -21,6 +21,10 @@ or flips the enable flag.
 from __future__ import annotations
 
 from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+from project_mai_tai.line_entry_receipt import (
+    branch as _entry_branch, capture as _entry_receipt,
+    predicate as _entry_predicate,
+)
 
 import asyncio
 import gc
@@ -3371,33 +3375,34 @@ class SchwabV2BotService:
                 and self._keepwatch_rest_hold.deferring(symbol)):
             # Only an active F1 deferral adds a new-entry fence. Ordinary
             # per-minute UNKNOWN marks retain the current-publication path.
-            return False
+            return _entry_predicate(False, "rest_hold_deferring")
         if symbol in self._keepwatch_boot_excluded_symbols():
-            return False
+            return _entry_predicate(False, "boot_excluded")
         if self._keepwatch_current_publication(symbol) is not None:
-            return (self._keepwatch.anchor_ms == session_start_ts_ms(self.strategy._now_ms())
-                    and self._keepwatch_bar_quarantine.get(symbol) != self._keepwatch.anchor_ms
+            return (_entry_predicate(self._keepwatch.anchor_ms == session_start_ts_ms(self.strategy._now_ms()), "anchor_mismatch")
+                    and _entry_predicate(self._keepwatch_bar_quarantine.get(symbol) != self._keepwatch.anchor_ms, "quarantine")
                     and self._keepwatch.allows_entry(symbol))
         fallback = self._line_pg_poll_fallback_current(symbol)
         if fallback is not None:
             # Current scanner membership for this failed poll only (not _watchlist,
             # which also carries held/in-flight names). Retained-only membership
             # cannot be invented by a database exception.
-            return (symbol not in self.settings.protected_symbol_set
+            return (_entry_predicate(symbol not in self.settings.protected_symbol_set, "protected_symbol")
                     and (symbol in getattr(self, "_entry_watch_symbols", set()) or (
-                        fallback["retained_entry_before"] and self._keepwatch.allows_entry(symbol))))
-        return (self._keepwatch.anchor_ms == session_start_ts_ms(self.strategy._now_ms())
-                and self._keepwatch_bar_quarantine.get(symbol) != self._keepwatch.anchor_ms
-                and symbol not in self._keepwatch_unknown
-                and symbol in self._keepwatch_proven
-                and self._keepwatch_proven[symbol].anchor_ms == self._keepwatch.anchor_ms
+                        _entry_predicate(fallback["retained_entry_before"], "not_retained_entry")
+                        and self._keepwatch.allows_entry(symbol))))
+        return (_entry_predicate(self._keepwatch.anchor_ms == session_start_ts_ms(self.strategy._now_ms()), "anchor_mismatch")
+                and _entry_predicate(self._keepwatch_bar_quarantine.get(symbol) != self._keepwatch.anchor_ms, "quarantine")
+                and _entry_predicate(symbol not in self._keepwatch_unknown, "history_unknown")
+                and _entry_predicate(symbol in self._keepwatch_proven, "history_proof_missing")
+                and _entry_predicate(self._keepwatch_proven[symbol].anchor_ms == self._keepwatch.anchor_ms, "history_anchor_mismatch")
                 and self._keepwatch.allows_entry(symbol))
 
     def _entry_membership_allowed(self, symbol: str) -> bool:
         if not getattr(self, "_keepwatch_enabled", False):
-            return symbol in self._watchlist
-        return (symbol not in self.settings.protected_symbol_set
-                and getattr(self, "_boot_exclusion_sources_readable", False)
+            return _entry_predicate(symbol in self._watchlist, "not_watchlist")
+        return (_entry_predicate(symbol not in self.settings.protected_symbol_set, "protected_symbol")
+                and _entry_predicate(getattr(self, "_boot_exclusion_sources_readable", False), "boot_exclusion_sources_unreadable")
                 and self._keepwatch_entry_allowed(symbol))
 
     def _keepwatch_history_window_open(self, current_ms: int) -> bool:
@@ -8044,25 +8049,32 @@ class SchwabV2BotService:
         )
 
     def _line_buy_ready(self, symbol: str) -> bool:
+        _entry_branch("ordinary")
         self._line_pg_poll_fallback_current(symbol)
         if self._keepwatch_current_publication(symbol) is not None:
+            _entry_branch("current_publication")
             return self._entry_membership_allowed(symbol)
         state = self.strategy._symbol_states.get(symbol)
         if state is not None and state.line_live_fallback:
+            _entry_branch("line_live_fallback")
             ledger = self._line_sessions.get(symbol)
-            return bool(self._entry_membership_allowed(symbol) and state.bars
-                        and ledger is not None and not ledger.has_unrecovered_traded_gap()
-                        and state.bars[-1].timestamp_ms == self.strategy._now_ms() // 60_000 * 60_000 - 60_000
-                        and session_start_ts_ms(state.bars[-1].timestamp_ms)
-                        == session_start_ts_ms(self.strategy._now_ms())
-                        and state.atr_state in {"long", "short"}
-                        and state.atr_trail is not None and math.isfinite(state.atr_trail)
-                        and state.atr_trail > 0 and not self.strategy.gap_hold_active(symbol))
+            return bool(self._entry_membership_allowed(symbol)
+                        and _entry_predicate(bool(state.bars), "bars_missing")
+                        and _entry_predicate(ledger is not None, "ledger_missing")
+                        and _entry_predicate(not ledger.has_unrecovered_traded_gap(), "traded_gap_unrecovered")
+                        and _entry_predicate(state.bars[-1].timestamp_ms == self.strategy._now_ms() // 60_000 * 60_000 - 60_000, "current_bar_stale")
+                        and _entry_predicate(session_start_ts_ms(state.bars[-1].timestamp_ms)
+                            == session_start_ts_ms(self.strategy._now_ms()), "bar_session_mismatch")
+                        and _entry_predicate(state.atr_state in {"long", "short"}, "atr_not_ready")
+                        and _entry_predicate(state.atr_trail is not None, "atr_not_ready")
+                        and _entry_predicate(math.isfinite(state.atr_trail), "atr_not_ready")
+                        and _entry_predicate(state.atr_trail > 0, "atr_not_ready")
+                        and _entry_predicate(not self.strategy.gap_hold_active(symbol), "gap_hold"))
         if symbol in self._line_readd_needs_live:
-            return False
+            return _entry_predicate(False, "readd_needs_live")
         ledger = self._line_sessions.get(symbol)
         if ledger is not None and self._line_source_waiting.get(symbol) == ledger.epoch:
-            return False
+            return _entry_predicate(False, "source_waiting")
         state = self.strategy._symbol_states.get(symbol)
         result = self._line_published.get(symbol)
         clean = True
@@ -8076,11 +8088,15 @@ class SchwabV2BotService:
             live = self._line_live_bars.get(symbol, set())
             clean = all(current - offset * 60_000 in live
                         for offset in range(2 * self.strategy._atr_period))
-        return bool(self._entry_membership_allowed(symbol) and self._line_snapshot_current(symbol)
-                    and ledger.current_bar_ms == self.strategy._now_ms() // 60_000 * 60_000 - 60_000
-                    and state.atr_state in {"long", "short"}
-                    and state.atr_trail is not None and math.isfinite(state.atr_trail)
-                    and state.atr_trail > 0 and clean and not self.strategy.gap_hold_active(symbol))
+        return bool(self._entry_membership_allowed(symbol)
+                    and _entry_predicate(self._line_snapshot_current(symbol), "snapshot_not_current")
+                    and _entry_predicate(ledger.current_bar_ms == self.strategy._now_ms() // 60_000 * 60_000 - 60_000, "current_bar_stale")
+                    and _entry_predicate(state.atr_state in {"long", "short"}, "atr_not_ready")
+                    and _entry_predicate(state.atr_trail is not None, "atr_not_ready")
+                    and _entry_predicate(math.isfinite(state.atr_trail), "atr_not_ready")
+                    and _entry_predicate(state.atr_trail > 0, "atr_not_ready")
+                    and _entry_predicate(clean, "spanning_unclean")
+                    and _entry_predicate(not self.strategy.gap_hold_active(symbol), "gap_hold"))
 
     def _note_line_live_bar(self, symbol: str, bar: ChartBar) -> None:
         if (not getattr(self, "_line_restoration_enabled", False)
@@ -8595,13 +8611,15 @@ class SchwabV2BotService:
                 )
             finally:
                 self.strategy._bar_observation_phase = old_phase
+        entry_receipt = _entry_receipt(self._line_buy_ready, symbol)
         logger.info(
             "[V2-LINE-RESTORE] sym=%s epoch=%d revision=%d current_bar_ms=%d bars=%d "
             "outcome=published live_append=%d entry_allowed=%d spanning_pairs=%d "
-            "clean_live_required=%d",
+            "clean_live_required=%d first_false_predicate=%s branch=%s",
             symbol, ledger.epoch, ledger.revision, ledger.current_bar_ms, len(result.request.bars),
-            int(adjacent_live), int(self._line_buy_ready(symbol)),
+            int(adjacent_live), int(entry_receipt.allowed),
             len(result.request.spanning_pairs), 2 * period if result.request.spanning_pairs else 0,
+            entry_receipt.first_false_predicate, entry_receipt.branch,
         )
         await self._retire_previous_confirmation_entries()
         # Issued evaluations have already left the tracker's one-shot registry.
