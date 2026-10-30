@@ -70,6 +70,7 @@ from project_mai_tai.fanout_identity import carry_fanout_identity, merge_broker_
 from project_mai_tai.log import configure_logging
 from project_mai_tai.services.strategy_engine_app import current_scanner_session_start_utc
 from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.oms.eod_oco_step_log import eod_oco_step as _eod_oco_step
 from project_mai_tai.oms.price_binding import stored_price
 from project_mai_tai.oms.webull_attach_riskoff import atr_handoff_call
 from project_mai_tai.oms import wbexit3
@@ -14125,12 +14126,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 release = await self._release_v2_eod_oco(
                     acct, symbol, expected_row_id=snapshot.managed_row_id
                 )
+                _eod_oco_step(self, "transition_release_result", acct, symbol, "", locals())
                 if release.outcome == "resolved_by_fill":
                     recorded = await self._close_resolved_oco_managed_row(
                         acct, symbol, detail=self._exit_pair_fill_detail(release),
                         expected_row_id=snapshot.managed_row_id,
                     )
                     if not recorded:
+                        _eod_oco_step(self, "transition_fill_recording_refused", acct, symbol, "", locals())
                         release = ExitPairReleaseResult(outcome="unanswerable")
                 if release.outcome == "released":
                     def _current_row_id(session: Session) -> str:
@@ -14144,6 +14147,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                             _current_row_id, commit=False,
                         )
                     except Exception:
+                        _eod_oco_step(self, "transition_current_row_read_error", acct, symbol, "", locals())
                         release = ExitPairReleaseResult(outcome="unanswerable")
                     else:
                         if current_row_id != snapshot.managed_row_id:
@@ -14153,15 +14157,18 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                                 acct, symbol, snapshot.managed_row_id, current_row_id or "-",
                             )
                             continue
+                _eod_oco_step(self, "transition_incident_sync_start", acct, symbol, "", locals())
                 await self._run_db(
                     lambda session: self._sync_v2_eod_release_incident(
                         session, acct, symbol, snapshot.managed_row_id, release
                     ),
                     commit=True,
                 )
+                _eod_oco_step(self, "transition_incident_sync_result", acct, symbol, "", locals())
                 if release.outcome == "resolved_by_fill":
                     continue
                 if release.outcome != "released":
+                    _eod_oco_step(self, "transition_handover_blocked", acct, symbol, "", locals())
                     self.logger.error(
                         "[OMS-V2-EOD-OCO-TRANSITION] %s %s row=%s outcome=%s "
                         "software_sell=BLOCKED incident_route=INC1",
@@ -14257,6 +14264,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         self, session: Session, acct: str, symbol: str, row_id: str,
         release: ExitPairReleaseResult,
     ) -> None:
+        _eod_oco_step(self, "incident_sync_enter", acct, symbol, row_id, locals())
         if release.outcome in {"released", "resolved_by_fill"}:
             incidents = session.scalars(
                 select(SystemIncident).where(
@@ -14282,6 +14290,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             self._sync_exit_release_incident(
                 session, row, release, reason="V2_EOD_OCO_TRANSITION", protective=False
             )
+        _eod_oco_step(self, "incident_sync_done", acct, symbol, row_id, locals())
 
     async def _page_v2_overnight_flatten_blocked(
         self, acct: str, symbol: str, row_id: str
@@ -14336,13 +14345,16 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
     async def _release_v2_eod_oco(
         self, acct: str, symbol: str, *, expected_row_id: str
     ) -> ExitPairReleaseResult:
+        _eod_oco_step(self, "release_enter", acct, symbol, expected_row_id, locals())
         if not self._is_v2_webull_account(acct):
             result = await self._release_native_oco_for_cw_flip(
                 acct, symbol, expected_row_id=expected_row_id
             )
+            _eod_oco_step(self, "non_webull_return", acct, symbol, expected_row_id, locals())
             return ExitPairReleaseResult(outcome=result)
 
         if await self._legacy_webull_partial_handover_refused(acct, symbol):
+            _eod_oco_step(self, "legacy_precheck_refused", acct, symbol, expected_row_id, locals())
             return ExitPairReleaseResult(outcome="unanswerable")
 
         def _base(session: Session) -> tuple[str, str, str]:
@@ -14350,6 +14362,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 session, broker_account_name=acct, symbol=symbol
             )
             if row is None or str(row.id) != expected_row_id:
+                _eod_oco_step(self, "base_row_missing_or_changed", acct, symbol, expected_row_id, locals())
                 return "", "", ""
             entry = self._find_oco_entry_order(session, acct, symbol)
             return self._oco_exit_base_for_entry(
@@ -14357,34 +14370,48 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             ), str(getattr(entry, "broker_order_id", "") or ""), str(getattr(entry, "id", "") or "")
 
         try:
+            _eod_oco_step(self, "base_read_start", acct, symbol, expected_row_id, locals())
             base, entry_oid, entry_identity = await self._run_db(_base, commit=False)
+            _eod_oco_step(self, "base_read_result", acct, symbol, expected_row_id, locals())
             if not base:
+                _eod_oco_step(self, "base_missing", acct, symbol, expected_row_id, locals())
                 return ExitPairReleaseResult(outcome="unanswerable")
+            _eod_oco_step(self, "cancel_release_start", acct, symbol, expected_row_id, locals())
             release = await self.broker_adapter.release_exit_pair_for_close(
                 broker_account_name=acct, symbol=symbol, base_client_order_id=base
             )
+            _eod_oco_step(self, "cancel_release_result", acct, symbol, expected_row_id, locals())
             expected_episode = (expected_row_id, entry_identity, base)
             if await self._legacy_webull_partial_handover_refused(
                 acct, symbol, release=release, expected=expected_episode,
             ):
+                _eod_oco_step(self, "legacy_after_release_refused", acct, symbol, expected_row_id, locals())
                 return replace(release, outcome="unanswerable")
             if release.outcome == "resolved_by_fill":
+                _eod_oco_step(self, "release_resolved_by_fill", acct, symbol, expected_row_id, locals())
                 return replace(release, entry_broker_order_id=entry_oid,
                                exit_base_client_order_id=base)
             confirm = getattr(self.broker_adapter, "confirm_exit_pair_terminal", None)
             if confirm is None:
+                _eod_oco_step(self, "confirm_method_missing", acct, symbol, expected_row_id, locals())
                 return ExitPairReleaseResult(outcome="unanswerable")
+            _eod_oco_step(self, "confirm_start", acct, symbol, expected_row_id, locals())
             confirmed = await confirm(
                 broker_account_name=acct, symbol=symbol, base_client_order_id=base
             )
+            _eod_oco_step(self, "confirm_result", acct, symbol, expected_row_id, locals())
             if await self._legacy_webull_partial_handover_refused(
                 acct, symbol, release=confirmed, expected=expected_episode,
             ):
+                _eod_oco_step(self, "legacy_after_confirm_refused", acct, symbol, expected_row_id, locals())
                 return replace(confirmed, outcome="unanswerable")
+            _eod_oco_step(self, "confirmed_return", acct, symbol, expected_row_id, locals())
             return confirmed
         except asyncio.CancelledError:
+            _eod_oco_step(self, "release_cancelled", acct, symbol, expected_row_id, locals())
             raise
         except Exception:
+            _eod_oco_step(self, "broker_read_or_cancel_error", acct, symbol, expected_row_id, locals())
             self.logger.exception(
                 "[OMS-V2-EOD-OCO-TRANSITION] %s %s row=%s outcome=UNKNOWN "
                 "reason=broker_read_or_cancel_error",
