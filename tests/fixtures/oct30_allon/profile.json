@@ -1,0 +1,42 @@
+{
+  "label": "CONTROLLED_PRIVATE_REAL_SETTINGS_CONSUMERS_NOT_INSTALLATION",
+  "package_base": "ccc94bd2ca352d7ceff2a5f4b106dba61a134ec0",
+  "diagnostics": "f7b533481395734e46a3b6229718185d57d00c9d",
+  "WB3": "7d11f6aa3d44eff7aed0f2034019fc1272446d88",
+  "runner": "a2e26e7a536a5e050079ec870e260da94ccd01fe",
+  "catalog_flags": {
+    "oms_webull_exit3_enabled": true,
+    "strategy_schwab_1m_v2_brokerdecides1_enabled": true,
+    "strategy_schwab_1m_v2_brokerdecides1_legacy_resolution_enabled": true,
+    "strategy_schwab_1m_v2_brokerdecides1_same_day_event_binding_enabled": true,
+    "strategy_schwab_1m_v2_confirmed_window_enabled": true,
+    "strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled": true,
+    "strategy_schwab_1m_v2_cw_v2_enabled": true,
+    "strategy_schwab_1m_v2_cw_v2_resting_entry_enabled": true,
+    "strategy_schwab_1m_v2_eh_resting_stream_cross_enabled": true,
+    "strategy_schwab_1m_v2_flip_print_diagnostic_enabled": true,
+    "strategy_schwab_1m_v2_gap_trade_conditions_filter_enabled": true,
+    "strategy_schwab_1m_v2_keepwatch1_enabled": true,
+    "strategy_schwab_1m_v2_keepwatch_sized_trade_gap_enabled": true,
+    "strategy_schwab_1m_v2_keepwatch_transient_rest_hold_enabled": true,
+    "strategy_schwab_1m_v2_line_chart_restoration_enabled": true,
+    "strategy_schwab_1m_v2_pm_print_ask_confirm_enabled": true,
+    "strategy_schwab_1m_v2_pm_softrest_quote_log_enabled": true,
+    "strategy_schwab_1m_v2_tick_capture_enabled": true,
+    "strategy_schwab_1m_v2_wbexit2_enabled": true
+  },
+  "live_identity": {
+    "orb_webull_account_name": "live:orb",
+    "strategy_schwab_1m_v2_webull_account_name": "live:orb",
+    "strategy_schwab_1m_v2_account_name": "live:schwab_1m_v2",
+    "strategy_schwab_1m_v2_dual_broker_fanout_enabled": true,
+    "oms_v2_exit_management_enabled": true,
+    "bot_control_enabled": true,
+    "orb_country_routing_enabled": true,
+    "orb_country_semantic_admission_enabled": true,
+    "strategy_schwab_1m_v2_country_route_enabled": true,
+    "strategy_schwab_1m_v2_wbexit2_enabled": true
+  },
+  "catalog_sha256": "22991960338907d2031702b1140ed6c58bc9213db18da6e89fedbd992fd28c8c",
+  "scope": "ALL three install flags + literal related WB2/KEEPWATCH/BROKERDECIDES map; other inherited fixture settings are CONTROLLED, not a full live-settings census"
+}
