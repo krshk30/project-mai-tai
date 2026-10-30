@@ -23,6 +23,7 @@ NO imports from: `schwab_native_30s.py`, `bar_builder.py`, `indicators.py`,
 `entry.py`, `exit.py`, `strategy_engine_app.py`, `polygon_30s.py`.
 """
 from __future__ import annotations
+from project_mai_tai.pm_softrest_quote_log import observe as _observe_pm_quote
 
 from project_mai_tai.symbol_case import raw_symbol_is_uppercase
 from project_mai_tai.buy_price_floor import buy_price_allowed
@@ -981,6 +982,9 @@ class SchwabV2Strategy:
         # released silently). `_boot_ms` is the reconstructed-vs-live discriminator reference.
         self._boot_ms = int(datetime.now(UTC).timestamp() * 1000)
         self._entries_held = self._cw_armed_segment_safety_enabled
+        # C1 2026-10-29 21:33: diagnostic only; code default OFF.
+        self._flip_print_enabled = bool(getattr(
+            self.settings, "strategy_schwab_1m_v2_flip_print_diagnostic_enabled", False))
         raw_atr_probe = str(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_probe_symbols", "") or ""
         ).strip()
@@ -990,6 +994,18 @@ class SchwabV2Strategy:
             if self._atr_probe_all or not raw_atr_probe
             else {s.strip().upper() for s in raw_atr_probe.split(",") if s.strip()}
         )
+
+    def _observe_flip_print_trade(self, tick: object, received_ns: int) -> None:
+        # Observability only; called inside the existing accepted-trade branch.
+        try:
+            from project_mai_tai.strategy_core.flip_print_diagnostic import FlipPrintDiagnostic
+            observer = getattr(self, "_flip_print_observer", None)
+            if observer is None:
+                observer = FlipPrintDiagnostic()
+                self._flip_print_observer = observer
+            observer.observe_accepted_tick(tick, received_ns)
+        except Exception:
+            pass  # Diagnostic faults must not alter line/trading/capture outcomes.
 
     def watchlist_state(self, symbol: str) -> SymbolState:
         state = self._symbol_states.get(symbol)
@@ -4773,7 +4789,7 @@ class SchwabV2Strategy:
     def on_stream_trade(
         self, symbol: str, price: float, event_ts_ms: int, *, ask_price: float | None,
         bid_price: float | None = None, print_size: int | None = None,
-        ask_age_ms: int | None = None,
+        ask_age_ms: int | None = None, _pm_observation=None,
     ) -> TradeIntentDraft | None:
         """PRE-MARKET ONLY: offer one STREAMED trade print to the EH soft-rest cross check.
 
@@ -4800,36 +4816,60 @@ class SchwabV2Strategy:
                 fresh = fresh and ask_price is not None and (price < trigger or ask_price >= trigger) and ask_age_ms is not None
                 fresh = fresh and 0 <= ask_age_ms <= self._eh_stream_print_max_age_ms
             if self._falseflip_cross(skip_state, price, confirming=fresh):
+                if _pm_observation is not None:
+                    _observe_pm_quote(_pm_observation, "note", "REFUSED", "falseflip_held")
                 return None
         if not (self._eh_stream_cross_enabled and self._eh_resting_enabled and self._cw_v2_enabled):
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "stream_mode_disabled")
             return None
         state = self._symbol_states.get(str(symbol).upper())
         if state is None or not state.resting_active:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "rest_not_active")
             return None
         if self._gap_hold_enabled and state.gap_hold_active:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "gap_hold")
             return None
         now_ms = self._now_ms()
         et = datetime.fromtimestamp(now_ms / 1000.0, UTC).astimezone(EASTERN_TZ)
         if et.hour * 60 + et.minute >= 9 * 60 + 30:        # pre-market only; RTH/post never
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "not_premarket")
             return None
         try:
             px = float(price)
             print_ms = int(event_ts_ms)
         except (TypeError, ValueError, OverflowError):
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "invalid_print")
             return None
         if px <= 0.0 or print_ms <= 0:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "invalid_print")
             return None
         age_ms = now_ms - print_ms
+        if _pm_observation is not None:
+            _observe_pm_quote(_pm_observation, "values", print_age_ms=age_ms, decision_now_ms=now_ms)
         if age_ms > self._eh_stream_print_max_age_ms or age_ms < -self._eh_stream_print_max_age_ms:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "print_not_fresh")
             return None
         trigger = self._active_resting_trigger(state)
+        if _pm_observation is not None:
+            _observe_pm_quote(_pm_observation, "values", trigger=trigger)
         if trigger <= 0.0 or px < trigger or state.resting_flip_ms:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "trigger_price_or_latch")
             return None
         try:
             ask = float(ask_price) if ask_price is not None else 0.0
         except (TypeError, ValueError, OverflowError):
             ask = 0.0
         if not math.isfinite(ask) or ask <= 0.0:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "no_fresh_ask")
             if self._pm_rest_feature(state, "pm_print_ask_confirm"):
                 self._log_pm_ask_block(state, px, print_size, bid_price, ask,
                                        "stream_ask_cache", ask_age_ms, "no_fresh_ask")
@@ -4843,7 +4883,11 @@ class SchwabV2Strategy:
         cap = trigger * (1.0 + self._resting_band_pct_value() / 100.0)
         if state.resting_wire_cap > 0:
             cap = self._active_resting_cap(state)
+        if _pm_observation is not None:
+            _observe_pm_quote(_pm_observation, "values", cap=cap)
         if ask > cap:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "ask_past_band")
             logger.info(
                 "[V2-RESTING-EH-STREAM-SKIP] %s reason=ask_past_band ask=%.4f cap=%.4f "
                 "trigger=%.4f latch_taken=0",
@@ -4862,11 +4906,14 @@ class SchwabV2Strategy:
         draft = self._eh_resting_cross_check(
             state, quote, ask_source="stream_ask_cache", ask_age_ms=ask_age_ms,
             print_size=print_size,
+            **({} if _pm_observation is None else {"_pm_observation": _pm_observation}),
         )
         if draft is None:
             return None
         draft.metadata["eh_cross_source"] = "stream_trade"
         draft.metadata["eh_cross_print_ts_ms"] = str(print_ms)
+        if _pm_observation is not None:
+            _observe_pm_quote(_pm_observation, "note", "DRAFT_CREATED", "draft_created")
         logger.info(
             "[V2-RESTING-EH-CROSS-STREAM] %s px=%.4f print_ts_ms=%d print_age_ms=%d "
             "-> cross taken from the streamed print (REST poll had not seen it)",
@@ -5715,6 +5762,22 @@ class SchwabV2Strategy:
                                             anchor_ms=anchor)
             except Exception:
                 state.__dict__.pop("_postflip_nochase_log", None)
+
+        if (flip is not None and not state_only and phase == "live"
+                and getattr(self, "_flip_print_enabled", False)):
+            try:
+                from project_mai_tai.strategy_core.flip_print_diagnostic import FlipPrintDiagnostic
+                observer = getattr(self, "_flip_print_observer", None)
+                if observer is None:
+                    observer = FlipPrintDiagnostic()
+                    self._flip_print_observer = observer
+                diagnostic = observer.line(symbol=state.symbol, flip=flip,
+                    bar_ms=int(cur.timestamp_ms), close=cur.close,
+                    phase=phase, state_only=state_only)
+                if diagnostic is not None:
+                    logger.info("%s", diagnostic)
+            except Exception:
+                pass  # Includes logger failure: ATR mutation/result is unchanged.
 
         # Roll prev trail/state to THIS bar's values for the next bar's touch test.
         state.atr_prev_trail = state.atr_trail
@@ -8614,7 +8677,7 @@ class SchwabV2Strategy:
 
     def _eh_resting_cross_check(
         self, state: SymbolState, quote: Quote, *, ask_source: str = "rest_quote",
-        ask_age_ms: int | None = None, print_size: int | None = None,
+        ask_age_ms: int | None = None, print_size: int | None = None, _pm_observation=None,
     ) -> TradeIntentDraft | None:
         """EH software-emulated resting TRIGGER (P-B2). A broker buy-stop-limit can't trigger in extended
         hours (Schwab RTH-only; Webull stops 417), so while software-resting in EH we watch quotes and, on
@@ -8630,32 +8693,52 @@ class SchwabV2Strategy:
         ONCE: it enters the silence-on-fill grace (`resting_flip_ms`) before returning, mirroring the RTH
         broker fill (once triggered, stop re-arming and wait for the position to confirm)."""
         if not self.line_buy_ready(state.symbol):
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "line_not_ready")
             return None
         if not (self._eh_resting_enabled and self._cw_v2_enabled):
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "eh_mode_disabled")
             return None
         if self._entries_held:                        # boot-hold suppresses all entries
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "boot_hold")
             return None
         if not self._resting_session_is_eh():         # RTH -> the broker stop-limit owns the cross
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "not_eh_session")
             return None
         line = float(state.resting_level or 0.0)
         trigger = self._active_resting_trigger(state)
+        if _pm_observation is not None:
+            _observe_pm_quote(_pm_observation, "values", trigger=trigger)
         if not (state.resting_active and line > 0.0 and trigger > 0.0):
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "invalid_rest_level")
             return None
         if (not self._resting_price_allowed(state.symbol, line)
                 or not buy_price_allowed(trigger, bot=STRATEGY_CODE, symbol=state.symbol)
                 or not buy_price_allowed(quote.ask_price, bot=STRATEGY_CODE, symbol=state.symbol)):
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "price_domain_refused")
             return None
         if state.position_qty != 0 or state.resting_flip_ms:   # already filling / in the settle grace
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "position_or_latch")
             return None
         confirm_ask = self._pm_rest_feature(state, "pm_print_ask_confirm")
         if confirm_ask or self._pm_rest_feature(state, "pm_flip_wait"):
             if not self._resting_in_window() or self._entry_window_closed_for_session():
+                if _pm_observation is not None:
+                    _observe_pm_quote(_pm_observation, "note", "REFUSED", "entry_window_refused")
                 return None
         # LIVE-BAR guard (#528 mirror): only emit off a live feed, never a warmup-replayed / stale bar. The
         # arm-time gate in _cw_v2_resting_track already checks freshness at arm; this re-checks at the cross
         # so a stall between arm and cross can't fire on an hours-old bar. RTH never reaches here.
         bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
         if not bar_ms or (self._now_ms() - bar_ms) > self._resting_max_bar_age_ms:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "bar_missing_or_stale")
             return None
         # The up-cross = a live print (fallback mid) reaching the offset trigger.
         px = float(getattr(quote, "last_price", 0.0) or 0.0)
@@ -8664,6 +8747,8 @@ class SchwabV2Strategy:
             ask0 = float(getattr(quote, "ask_price", 0.0) or 0.0)
             px = (bid + ask0) / 2.0 if (bid > 0.0 and ask0 > 0.0) else 0.0
         if px <= 0.0 or px < trigger:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "below_trigger")
             return None
         if ask_source == "rest_quote":
             cap_decimal = Decimal(str(trigger)) * (
@@ -8692,6 +8777,8 @@ class SchwabV2Strategy:
             elif ask < trigger:
                 reason = reason or "ask_below_trigger"
             if reason:
+                if _pm_observation is not None:
+                    _observe_pm_quote(_pm_observation, "note", "REFUSED", "confirming_ask_refused")
                 self._log_pm_ask_block(state, px, print_size, quote.bid_price, ask,
                                        ask_source, ask_age_ms, reason)
                 return None
@@ -8703,12 +8790,16 @@ class SchwabV2Strategy:
         cap = trigger * (1.0 + self._resting_band_pct_value() / 100.0)
         if state.resting_wire_cap > 0:
             cap = self._active_resting_cap(state)
+        if _pm_observation is not None:
+            _observe_pm_quote(_pm_observation, "values", cap=cap)
         sized = self._sized_open(
             state.symbol, leg="schwab",
             price=Decimal(str(ask)) if confirm_ask else Decimal(f"{cap:.4f}"),
             basis="pm_confirming_ask" if confirm_ask else "eh_limit_cap",
         )
         if sized is None:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "REFUSED", "sizing_refused")
             if confirm_ask:
                 self._log_pm_size_refused(state, "schwab", ask)
             return None

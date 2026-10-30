@@ -384,6 +384,8 @@ class Settings(BaseSettings):
     # Flip ONLY attended, after-close (it adds a second service subscription on
     # v2's existing streamer session). Capture is a pure observer — never feeds
     # the strategy. See docs/v2-tick-capture-design.md.
+    # C1 2026-10-29 21:33: non-causal flip print diagnostics; no subscription change.
+    strategy_schwab_1m_v2_flip_print_diagnostic_enabled: bool = False
     strategy_schwab_1m_v2_tick_capture_enabled: bool = False
     # TIMESALE_EQUITY (true trade-by-trade) capture — ADDITIVE to LEVELONE, capture-only
     # (the SchwabV2TickWriter tee; shares nothing with the strategy/bar feed or execution).
@@ -571,6 +573,8 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_brokerdecides1_same_day_event_binding_enabled: bool = False
     # Next package WBEXIT2 only. H2's removed close feature/flag is not restored.
     strategy_schwab_1m_v2_wbexit2_enabled: bool = False
+    # WBEXIT3: code default OFF; C1 after-close install enables explicitly.
+    oms_webull_exit3_enabled: bool = False
     # Claude 14:42:27: measured 4,438 passes, 15s cadence / 1.632s p99
     # duration, explicitly approved 20s maximum wire observation age.
     strategy_schwab_1m_v2_brokerdecides1_max_age_ms: int = 20_000
@@ -692,6 +696,8 @@ class Settings(BaseSettings):
     # every guard unchanged (one-shot, bar freshness, flat, boot/gap hold; the OMS still band-caps off
     # its own ask). Before 09:30 ET only — RTH and post-market never read it. OFF => byte-identical.
     strategy_schwab_1m_v2_eh_resting_stream_cross_enabled: bool = True
+    # PM stream diagnostics only; no quote source, entry permission or new poll.
+    strategy_schwab_1m_v2_pm_softrest_quote_log_enabled: bool = False
     # A streamed print older than this (trade time vs wall clock) is ignored — rejects the snapshot
     # Schwab replays on subscribe and anything that sat in a backlog.
     strategy_schwab_1m_v2_eh_resting_stream_print_max_age_ms: int = 3000

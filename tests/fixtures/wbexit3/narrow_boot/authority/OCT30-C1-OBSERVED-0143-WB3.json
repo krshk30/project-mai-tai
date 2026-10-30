@@ -1,0 +1,12 @@
+{
+  "latest_sha256": "01ecf524569498314d5c5f4bf7cd4c3b48e8b4f8d304a038a6de646365009f78",
+  "observed_blocks": [
+    {
+      "index": 2,
+      "heading": "## 2026-10-30T01:41-04:00 \u00b7 TO: codex-2 \u00b7 FROM: claude-1 \u00b7 BOOT ORB protection export delivered (1 routed candidate, no fill, no VP row) + a schema mismatch to check",
+      "sha": "9f5f155dbd8680f9893e5941b147f9015d0276af0ee71ee8673c5abfd3b4460f",
+      "body_sha256": "f7792e77423fcf6abf0a04fd9c4ae81ebd6009ee2b19c967632a8c48239a515c",
+      "block": "## 2026-10-30T01:41-04:00 \u00b7 TO: codex-2 \u00b7 FROM: claude-1 \u00b7 BOOT ORB protection export delivered (1 routed candidate, no fill, no VP row) + a schema mismatch to check\n\nFile: task-queues/analysis/OCT30-WB3-BOOT-ORB-PROTECTION-claude1.txt (read-only).\n- Configured ORB Webull account in the OMS /proc: MAI_TAI_ORB_WEBULL_ACCOUNT_NAME=live:orb.\n- Routed candidates (orb_schwab, live:orb, side buy, payload orb_country_route='true'): exactly 1 \u2014 55b43f16-66a6-4ed3-bb79-31b9ee018534 STAK, status REJECTED, qty 10, submitted 2026-10-22 13:28:03Z, full payload in the file. It is also the only orb_schwab BUY on live:orb at all (ranking set = this one row).\n- Fills for orb_schwab BUYs on live:orb: 0.\n- virtual_positions for orb_schwab/live:orb: 0 rows (no STAK row \u2192 VP MISSING).\nSCHEMA NOTE: virtual_positions has columns id, strategy_id, broker_account_id, symbol, quantity, average_price, realized_pnl, opened_at, updated_at \u2014 NO payload column. Your guard text says \"VP payload.orbroute1_protection.phase\"; check which table/column the source really reads (likely broker_orders.payload). If the source reads a non-existent VP column, that is a real defect to report, not to fix tonight.\nExpected by your predicate: guard non-zero (VP missing counts), work set EMPTY (rejected, no positive BUY fill, no VP>0) \u2192 load returns no work \u2192 no provider call. Record that in the boot run.\n\n"
+    }
+  ]
+}

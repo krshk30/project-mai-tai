@@ -21,6 +21,8 @@ from sqlalchemy import or_, select, update
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, Fill, OmsManagedPosition, Strategy, SystemIncident, TradeIntent
 from project_mai_tai.oms.bot_control_scope import controlled_live_scope
 
+from project_mai_tai.oms import wbexit3
+
 SOURCE = "wbexit2"
 NAMESPACE = UUID("806dd329-8d11-4b42-95e6-146b0240798c")
 REASONS = frozenset({"oms_v2_managed_exit:" + suffix for suffix in
@@ -30,10 +32,13 @@ BOOT_OWNER_LIMIT = 256  # Inventory safety cap, never permission to silently omi
 
 
 def enabled(service):
-    return getattr(service.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True
+    return (getattr(service.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True
+            or wbexit3.enabled(service))
 
 
 def selected(service, reason, account):
+    if wbexit3.full_close_selected(service, reason, account):
+        return True
     if not enabled(service) or reason not in REASONS:
         return False
     provider = getattr(service.settings, "provider_for_account", None)
@@ -103,7 +108,8 @@ def check_call(service, call):
     from project_mai_tai.oms import webull_attach_riskoff as wb
     control = getattr(service, "_bot_control_runtime", None)
     if (service.__dict__.get("_wbexit2_boot_complete") is not True
-            or not selected(service, call.reason, call.account) or not wb._rth(service)
+            or not selected(service, call.reason, call.account)
+            or not (wb._rth(service) or wbexit3.full_close_selected(service, call.reason, call.account))
             or monotonic() > call.wb2_deadline
             or getattr(service.settings, "bot_control_enabled", False) and control is None
             or control is not None and (control.stop_requested("schwab_1m_v2")
@@ -138,9 +144,13 @@ async def load_for_call(service, call, *, journal_hint):
             intent = session.get(TradeIntent, entry.intent_id)
             from project_mai_tai.oms.route_owner import _utc_row_time
             anchor = _utc_row_time(entry.submitted_at) or _utc_row_time(intent.created_at if intent is not None else None)
+            wb3_inputs = {}
+            if wbexit3.enabled(service):
+                wb3_inputs = {"wbexit3_enabled": True,
+                    "prior_software_filled": wbexit3.prior_software_quantity(session, entry) if originals else Decimal(0)}
             state = begin(session, binding, quantity=original_quantity, originals=originals, reason=call.reason,
                 now=_now(), bare_proven=bare, originals_proven=bare, decision=call.wb2_decision,
-                attempt_started=call.wb2_started_at, entry_anchor=anchor)
+                attempt_started=call.wb2_started_at, entry_anchor=anchor, **wb3_inputs)
             journal = deepcopy(journal)
             journal["wbexit2_owner_id"] = state["owner_id"]
             entry.payload = {**entry.payload, wb.KEY: journal}
@@ -477,7 +487,7 @@ def log_pending_scan(service):
     native book or a current owned position. Resolution still requires DB proof.
     """
     from project_mai_tai.oms import webull_attach_riskoff as wb
-    if not enabled(service) or not wb._rth(service):
+    if not enabled(service) or not (wb._rth(service) or wbexit3.enabled(service)):
         return
     now = _now()
     for (account, symbol), state in service.__dict__.get("_wbexit2_pending", {}).items():
@@ -536,7 +546,7 @@ async def resume_on_quote(service, account, symbol, quote):
     """Use an ALREADY received quote and existing shared pacing, not a new poll."""
     from math import isfinite
     from project_mai_tai.oms import webull_attach_riskoff as wb
-    if not enabled(service) or not wb._rth(service):
+    if not enabled(service) or not (wb._rth(service) or wbexit3.enabled(service)):
         return False
     state = service.__dict__.get("_wbexit2_pending", {}).get((account, symbol))
     if state is None:
@@ -587,11 +597,15 @@ async def prepare_current(service, request, work):
     """Capture ONLY this creator's actual O14 commit; not a restored order."""
     from project_mai_tai.oms import webull_attach_riskoff as wb
     call = wb._ATR_CALL.get()
-    if call is None or not call.wb2:
-        return await work  # PM/AH/Schwab/original owner: SAME existing preparation await.
+    if call is None or not (call.wb2 or getattr(call, "wb3_partial", False)):
+        return await work  # Original uncovered/OFF/Schwab preparation unchanged.
+    prepare_permit = None
     try:
         wb._current_atr_call(service, request.metadata["oms_managed_row_id"]
                              if "oms_managed_row_id" in request.metadata else call.managed_id)
+        if wbexit3.enabled(service):
+            from project_mai_tai.oms.wbexit3_vp_zero import register_prepare_permit
+            prepare_permit = register_prepare_permit(service, call, request, work)
     except BaseException:
         if asyncio.iscoroutine(work):
             work.close()  # Known unscheduled prepare_managed_sell coroutine; no physical IO entered.
@@ -599,7 +613,21 @@ async def prepare_current(service, request, work):
     def committed(intent_id):
         if intent_id is not None:
             call.wb2_prepared = (intent_id, replace(request, metadata=deepcopy(request.metadata)))
-    result = await joined(service, call, work, completed=committed)
+    primary = None
+    try:
+        result = await joined(service, call, work, completed=committed)
+    except BaseException as exc:
+        primary = exc
+        raise
+    finally:
+        if prepare_permit is not None:
+            from project_mai_tai.oms.wbexit3_vp_zero import revoke_prepare_permit
+            try:
+                revoke_prepare_permit(service, call, prepare_permit)
+            except BaseException:
+                if primary is None:
+                    raise
+                service.logger.critical("[WBEXIT3-PREPARE-UNKNOWN] exact_role_retained physical_join_unproven=true")
     wb._current_atr_call(service, call.managed_id)
     return result
 
@@ -699,6 +727,9 @@ async def submit_current(service, request):
     """Main hook wraps ONLY the existing adapter submit, preserving CW receipt code."""
     from project_mai_tai.oms import webull_attach_riskoff as wb
     call = wb._ATR_CALL.get()
+    if call is not None and getattr(call, "wb3_partial", False):
+        from project_mai_tai.oms.wbexit3_partial import submit_current as submit_partial
+        return await submit_partial(service, call, request)
     if call is None or not call.wb2:
         if selected(service, request.reason, request.broker_account_name):
             raise ValueError("wbexit2_covered_wire_requires_actual_durable_owner")
@@ -868,11 +899,20 @@ async def handoff(service, row, call):
         raise ValueError("wbexit2_prior_invocation_physical_quiescence_UNKNOWN")
     if call.wb2_state["reason"] != call.reason or call.wb2_state["sell"] is not None:
         raise ValueError("wbexit2_prior_close_or_unknown_sell_reserved")
+    probe_ledger_zero = False
     def triggered(session, entry, managed, acct, strategy, owned, state):
+        nonlocal probe_ledger_zero
         if state.get("exit_phase") or any(a["phase"] == "submitting" for a in state["attempts"]):
             raise ValueError("wbexit2_prior_attach_or_exit_still_inflight")
         state["exit_reason"] = call.reason
+        probe_ledger_zero = (wbexit3.enabled(service) and owned == 0
+                             and Decimal(managed.current_quantity) > 0)
     journal, _, _, owned, price = await wb._atr_state(service, account, symbol, coid, triggered, allow_closed=True)
+    if probe_ledger_zero:
+        # Diagnostic only, inside the current WB3 attempt and once per invocation.
+        # The same-day recovery is separately proved AFTER exact original IDs bind.
+        await wbexit3.probe_guard(service, "ledger_zero_managed_positive")
+        wb._current_atr_call(service, row.id)
     if journal.get("legacy_base") or journal.get("history_proven") is not True:
         raise ValueError("wbexit2_original_history_UNPROVEN")
     attempts = journal["attempts"]
@@ -913,6 +953,10 @@ async def handoff(service, row, call):
                 and call.wb2_working_at is None):
             terminal_reports = await refresh_original_before_cancel(service, call, attempt, attempts)
         if terminal_reports is None and base not in call.wb2_state["cancel_bases"]:
+            if probe_ledger_zero:
+                from project_mai_tai.oms.wbexit3_vp_zero import admit
+                await admit(service, call)
+                wb._current_atr_call(service, row.id)
             await checkpoint(service, call, "cancel", base=base)
             def cancel_mark(session, entry, managed, acct, strategy, current, state):
                 if current != Decimal(call.wb2_state["remaining"]):
@@ -967,6 +1011,10 @@ async def handoff(service, row, call):
         await wb._atr_state(service, account, symbol, coid, released, allow_closed=True)
     if not attempts:
         await checkpoint(service, call, "terminal", fills={}, all_originals_terminal=True)
+    if probe_ledger_zero:
+        from project_mai_tai.oms.wbexit3_vp_zero import admit
+        await admit(service, call)  # Existing proof is reused; terminal Fill resolution above runs first.
+        wb._current_atr_call(service, row.id)
     _, _, _, owned, _ = await wb._atr_state(service, account, symbol, coid)
     call.terminal_at = monotonic()
     async with asyncio.timeout(2):
@@ -976,6 +1024,8 @@ async def handoff(service, row, call):
         if not isinstance(call.wb2_positions, tuple) or len(call.wb2_positions) != 3:
             raise ValueError("wbexit2_bare_positions_account_UNKNOWN")
         await checkpoint(service, call, "bind_bare_account", native_account_id=call.wb2_positions[2])
+    if owned == 0 and wbexit3.enabled(service):
+        await wbexit3.probe_guard(service, "ledger_zero_managed_positive", receipt=call.wb2_positions)
     quantity = fresh_ceiling(call, owned)
     if quantity == 0:
         call.broker_flat = True
@@ -1009,6 +1059,9 @@ async def validate_before_wire(service, call, request):
         entry, row, account, strategy, owned = wb._atr(service, session, call.account, call.symbol,
                                                      call.entry_coid, prepared=request)
         journal = entry.payload[wb.KEY]
+        if getattr(call, "wb3_riskoff", False):
+            from project_mai_tai.oms.wbexit3_riskoff import validate_current
+            validate_current(service, session, call, request=request)
         if (identity(entry, row, account, strategy) != call.wb2_binding or owned != call.owned_quantity
                 or entry.status not in wb.TERMINAL or journal.get("exit_phase") != "claimed"
                 or journal.get("exit_call_id") != call.call_id or journal.get("history_proven") is not True
@@ -1085,6 +1138,8 @@ def require_obligation_episode(service, session, entry, managed, account, strate
     binding = identity(entry, managed, account, strategy)
     marker = (entry.payload or {}).get(wb.KEY, {}).get("wbexit2_owner_id")
     if not marker:
+        if wbexit3.existing_obligation_episode(service, entry, managed, account, strategy, intent, now):
+            return
         wb.require_current_episode(entry, intent, now)  # FIRST obligation must still be current.
         return
     if (not enabled(service) or call.account != account.name or call.symbol != entry.symbol
@@ -1132,7 +1187,7 @@ def read(session, binding, *, lock=False):
 
 
 def begin(session, binding, *, quantity, originals, reason, now, bare_proven=False, decision=None, attempt_started=None,
-          originals_proven=True, native_account_id=None, entry_anchor=None):
+          originals_proven=True, native_account_id=None, entry_anchor=None, wbexit3_enabled=False, prior_software_filled=Decimal(0)):
     """Commit this result BEFORE the first original-child cancellation.
 
     originals is the exact validated native WORKING proof, including its native
@@ -1142,8 +1197,15 @@ def begin(session, binding, *, quantity, originals, reason, now, bare_proven=Fal
     """
     timestamp(now)
     positive_quantity(str(quantity))
-    if reason not in REASONS:
+    if reason not in REASONS and not (wbexit3_enabled is True and reason in wbexit3.FULL_CLOSE_REASONS):
         raise ValueError("wbexit2_exit_reason_not_covered")
+    if wbexit3_enabled is True:
+        if (not isinstance(prior_software_filled, Decimal) or not prior_software_filled.is_finite()
+                or not 0 <= prior_software_filled <= quantity
+                or prior_software_filled != prior_software_filled.to_integral_value()):
+            raise ValueError("wbexit3_prior_software_execution_quantity_UNKNOWN")
+    elif prior_software_filled != Decimal(0):
+        raise ValueError("wbexit3_prior_software_provenance_requires_enabled_input")
     old = read(session, binding, lock=True)
     if old is not None:
         if old["phase"] == "RESOLVED":
@@ -1195,6 +1257,9 @@ def begin(session, binding, *, quantity, originals, reason, now, bare_proven=Fal
              "original_action_deadline_at": timestamp((attempt_started or now) + timedelta(seconds=6)),
              "invocation": None,
              "hold_reason": None, "scan_exception": False, "updated_at": timestamp(now)}
+    if wbexit3_enabled is True:
+        state["remaining"] = str(quantity - prior_software_filled)
+        state["prior_software_filled"] = str(prior_software_filled)
     session.add(SystemIncident(id=address(binding), service_name="oms-risk", severity="info",
         status="open", title=f"Webull close owner: {binding['symbol']}"[:255], opened_at=now,
         payload=state))
@@ -1320,7 +1385,7 @@ def transition(session, binding, expected_generation, *, operation, now, **evide
             if fill < Decimal(old["child_fill_highwater"][key]):
                 raise ValueError("wbexit2_child_fill_regressed")
             total += fill
-        remaining = positive_quantity(old["original_quantity"]) - total
+        remaining = positive_quantity(old["original_quantity"]) - total - Decimal(old.get("prior_software_filled", "0"))
         if old["sell"] is not None:
             remaining -= Decimal(old["sell"]["filled_highwater"])
         if remaining < 0:
@@ -1357,7 +1422,8 @@ def transition(session, binding, expected_generation, *, operation, now, **evide
             raise ValueError("wbexit2_OUR_sell_fill_regressed_or_excess")
         new["sell"] = {**sell, "filled_highwater": str(filled), "ack": evidence["status"]}
         new["remaining"] = str(Decimal(old["original_quantity"])
-            - sum((Decimal(value) for value in old["child_fill_highwater"].values()), Decimal(0)) - filled)
+            - sum((Decimal(value) for value in old["child_fill_highwater"].values()), Decimal(0))
+            - Decimal(old.get("prior_software_filled", "0")) - filled)
         if Decimal(new["remaining"]) < 0:
             raise ValueError("wbexit2_recorded_executions_exceed_original")
         new["phase"] = "SELL_WORKING"

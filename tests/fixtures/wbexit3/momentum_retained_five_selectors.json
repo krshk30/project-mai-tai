@@ -1,0 +1,180 @@
+{
+  "label": "RETAINED_LOCAL_ORDER_EXPORT_NOT_NATIVE_REPLAY_PASS",
+  "source": "/Users/velkris/.codex/task-queues/analysis/OCT29-MOMLIVE-WEBULL-SELLS-51-claude1.psv",
+  "sha256": "3cf0dac124f34bb798b2fe97adbc679ecd0e93377acb9ec49bb329c5921519c8",
+  "denominator_orders": 51,
+  "denominator_episodes": 20,
+  "C1_fill_evidence": "C12113 existing attributed BUY/SELLs; C1 evidence, no worker/Main native query",
+  "cases": [
+    {
+      "selector": "6c313",
+      "orders": [
+        {
+          "et": "2026-10-19 08:29:45.271588",
+          "symbol": "YMAT",
+          "side": "sell",
+          "order_type": "limit",
+          "quantity": "50.00000000",
+          "status": "cancelled",
+          "client_order_id": "ml1-YMAT-p-6c313663c2775b20b650-1",
+          "broker_order_id": "13HSQTC4V99767R6M646DARB8A",
+          "fills": "1"
+        }
+      ],
+      "OLD_NEW_expected_source": "same existing momentum own path; WB3 v2/STOP changes do not intercept this actor",
+      "actual_actor_replay": "UNRUN",
+      "native_response_chronology": "NOT_RETAINED_IN_EXPORT",
+      "ending": "C1_FULLY_SOLD_FLAT_STATUS_RECORD_DEFECT",
+      "attributed_fills_C1": {
+        "buy_quantity": "50",
+        "buy_price": "2.00",
+        "buy_et": "2026-10-19 08:29:43",
+        "sell_quantity": "50",
+        "sell_price": "2.10",
+        "sell_et": "2026-10-19 08:30:15.9"
+      }
+    },
+    {
+      "selector": "f9e487",
+      "orders": [
+        {
+          "et": "2026-10-20 05:10:44.420347",
+          "symbol": "AIXI",
+          "side": "sell",
+          "order_type": "limit",
+          "quantity": "31.00000000",
+          "status": "cancelled",
+          "client_order_id": "ml1-AIXI-p-f9e48766f9ad581db014-1",
+          "broker_order_id": "4KGOBHF6MNVAD7QGJ3EAHTTRVA",
+          "fills": "1"
+        }
+      ],
+      "OLD_NEW_expected_source": "same existing momentum own path; WB3 v2/STOP changes do not intercept this actor",
+      "actual_actor_replay": "UNRUN",
+      "native_response_chronology": "NOT_RETAINED_IN_EXPORT",
+      "ending": "C1_FULLY_SOLD_FLAT_STATUS_RECORD_DEFECT",
+      "attributed_fills_C1": {
+        "buy_quantity": "31",
+        "buy_price": "3.11",
+        "buy_et": "2026-10-20 05:10:42",
+        "sell_quantity": "31",
+        "sell_price": "3.27",
+        "sell_et": "2026-10-20 05:11:09.6"
+      }
+    },
+    {
+      "selector": "f4556",
+      "orders": [
+        {
+          "et": "2026-10-20 08:32:43.576877",
+          "symbol": "GMEX",
+          "side": "sell",
+          "order_type": "limit",
+          "quantity": "59.00000000",
+          "status": "cancelled",
+          "client_order_id": "ml1-GMEX-p-f4556f70f833546797ee-1",
+          "broker_order_id": "EJI23IBDKCP50A1746ROD8ISUB",
+          "fills": "1"
+        }
+      ],
+      "OLD_NEW_expected_source": "same existing momentum own path; WB3 v2/STOP changes do not intercept this actor",
+      "actual_actor_replay": "UNRUN",
+      "native_response_chronology": "NOT_RETAINED_IN_EXPORT",
+      "ending": "C1_FULLY_SOLD_FLAT_STATUS_RECORD_DEFECT",
+      "attributed_fills_C1": {
+        "buy_quantity": "59",
+        "buy_price": "1.67",
+        "buy_et": "2026-10-20 08:32:41",
+        "sell_quantity": "59",
+        "sell_price": "1.76",
+        "sell_et": "2026-10-20 08:32:49.4"
+      }
+    },
+    {
+      "selector": "be204",
+      "orders": [
+        {
+          "et": "2026-10-23 07:37:14.937213",
+          "symbol": "YMAT",
+          "side": "sell",
+          "order_type": "limit",
+          "quantity": "31.00000000",
+          "status": "cancelled",
+          "client_order_id": "ml1-YMAT-p-be204650a0295adf8d1c-1",
+          "broker_order_id": "UJJMKITKNNO2BGB289KCCNNJP8",
+          "fills": "0"
+        },
+        {
+          "et": "2026-10-23 07:37:27.168548",
+          "symbol": "YMAT",
+          "side": "sell",
+          "order_type": "limit",
+          "quantity": "31.00000000",
+          "status": "aborted",
+          "client_order_id": "ml1-YMAT-x-be204650a0295adf8d1c",
+          "broker_order_id": "",
+          "fills": "0"
+        },
+        {
+          "et": "2026-10-23 07:37:27.670123",
+          "symbol": "YMAT",
+          "side": "sell",
+          "order_type": "limit",
+          "quantity": "31.00000000",
+          "status": "filled",
+          "client_order_id": "ml1-YMAT-x-be204650a0295adf8d1c-2",
+          "broker_order_id": "5OJUQ4M989NG6S0V8UQI775CB8",
+          "fills": "1"
+        }
+      ],
+      "OLD_NEW_expected_source": "same existing momentum own path; WB3 v2/STOP changes do not intercept this actor",
+      "actual_actor_replay": "UNRUN",
+      "native_response_chronology": "NOT_RETAINED_IN_EXPORT",
+      "ending": "C1_EXPORT_ENDS_FILLED_ORDER_EXACT_EXECUTION_QUANTITY_UNKNOWN",
+      "attributed_fills_C1": null
+    },
+    {
+      "selector": "96337",
+      "orders": [
+        {
+          "et": "2026-10-23 08:33:38.157844",
+          "symbol": "FGL",
+          "side": "sell",
+          "order_type": "limit",
+          "quantity": "25.00000000",
+          "status": "cancelled",
+          "client_order_id": "ml1-FGL-p-96337f76acd15231a942-1",
+          "broker_order_id": "U4G2PT08KVVCCGJI8FO5JD3K09",
+          "fills": "0"
+        },
+        {
+          "et": "2026-10-23 08:33:49.384124",
+          "symbol": "FGL",
+          "side": "sell",
+          "order_type": "limit",
+          "quantity": "25.00000000",
+          "status": "cancelled",
+          "client_order_id": "ml1-FGL-x-96337f76acd15231a942",
+          "broker_order_id": "7IGE5GMI5BHFFVD8VALSDQ7GAA",
+          "fills": "0"
+        },
+        {
+          "et": "2026-10-23 08:33:56.242681",
+          "symbol": "FGL",
+          "side": "sell",
+          "order_type": "limit",
+          "quantity": "25.00000000",
+          "status": "filled",
+          "client_order_id": "ml1-FGL-x-96337f76acd15231a942-2",
+          "broker_order_id": "6QJ0I2FGDOPN42CB09V5CGIIOB",
+          "fills": "1"
+        }
+      ],
+      "OLD_NEW_expected_source": "same existing momentum own path; WB3 v2/STOP changes do not intercept this actor",
+      "actual_actor_replay": "UNRUN",
+      "native_response_chronology": "NOT_RETAINED_IN_EXPORT",
+      "ending": "C1_EXPORT_ENDS_FILLED_ORDER_EXACT_EXECUTION_QUANTITY_UNKNOWN",
+      "attributed_fills_C1": null
+    }
+  ]
+}

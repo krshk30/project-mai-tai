@@ -1,5 +1,153 @@
 # Live Market Restart Runbook
 
+## Reviewed five-service package: automatic restart evidence
+
+October 29, 2026 source proposal, for C1's separately authorized installation
+**after the October 30 close**. Source and private guard qualification do not
+prove an installation, native flatness, or a future scheduled preopen PASS.
+The older service-specific procedures below remain historical context. This
+focused package procedure supersedes their manual evidence sequence only when
+C1 approves the exact final package and concrete execution plan. It does not
+change `deploy_main`, `restart_all`, OMS-only, control-only, or C6 installers.
+
+The entrypoint is `ops/install/five_service_install.sh`. Its default or
+`--plan` invocation prints a plan and performs no queries or service actions.
+Execution requires the explicit `--execute TARGET_SHA ROOT600_PLAN.json
+SERVICE [SERVICE...]` form. Only `oms`, `schwab-1m-v2`, `strategy`, `control`,
+and `orb-schwab` are accepted; v2 is mandatory. Include every actual consumer
+of changed source. This is an attended C1 root/Linux operation, never a worker
+or Main market-hours command. All production Git commands run as trader.
+
+### Concrete inputs and staging
+
+Before execution C1 reviews the literal final commit/tree/source/migrations,
+full private qualification, current installed commit and environment SHA,
+selected service list, all new switches, independent expected migration head,
+and the current native/local preflight procedure. No old receipt is fresh
+approval. Stage the reviewed entrypoint, library and proof hook outside the
+mutable checkout in a root-owned0700 directory, files root-owned0600. Verify
+all three file hashes against the approved source before launching the staged
+entrypoint; a checkout cannot replace the executing script halfway through.
+The proof hook's absolute path and SHA are mandatory plan operands.
+
+The root0600 JSON plan has this **exact** schema (replace all explanatory
+values with C1-reviewed literal operands; this example is not executable):
+
+```json
+{
+  "version": 1,
+  "target_sha": "<actual reviewed 40-hex final commit>",
+  "expected_current_sha": "<actual clean installed 40-hex commit>",
+  "expected_env_sha256": "<fresh 64-hex full environment preimage>",
+  "install_date_et": "<actual authorized installation day>",
+  "expected_alembic_head": "<independently reviewed migration identifier>",
+  "evidence_directory": "/home/trader/after-hours/<actual-day>/<new-one-install-namespace>",
+  "updates": {
+    "MOMLIVE_SEC_APPROVED_HEAD": "<same actual final commit>",
+    "MAI_TAI_<REVIEWED_BOOLEAN>_ENABLED": "true"
+  },
+  "remove": ["MAI_TAI_<REVIEWED_RETIRED_BOOLEAN>_ENABLED"],
+  "expect_flags": ["schwab-1m-v2:<ACTUAL_FLAG_SUFFIX>=true"],
+  "clock_override_reason": null,
+  "verification_hook": "/root/<private-staging>/five_service_install_proof.py",
+  "verification_hook_sha256": "<reviewed hook 64-hex SHA>"
+}
+```
+
+Use only current reviewed boolean switch changes plus the exact MOMLIVE pin.
+Preserve every unrelated environment byte. Explicit removals must exist;
+duplicate/case aliases are a refusal. No arbitrary secret or numeric edit is
+accepted. A clock-only reason, if needed, must be C1's contemporaneous literal
+ruling for this execution. No historical Bug2, position, or cannot-see waiver
+transfers. The expected migration head is independently approved; never copy
+an old dated head or echo the observed value as its own expected value.
+
+The checked-out target must already exist locally and the starting checkout
+must be clean at the exact reviewed current commit. There is no fetch,
+migration, daemon reload, timer action, forced trade, STOP clear, automatic
+retry/reset/remediation/rollback, or implicit preopen publication. Storage
+must retain15GiB plus the full checkout copy allowance. The exact safety STOP
+must remain absent. Existing global installer and native preopen execution
+locks are acquired exclusively/nonblocking; an occupied lock refuses.
+
+C1's October29 21:37 pre-stop source contract binds the existing strict OMS
+preflight, then v2 preflight, then the OMS's **already published** native census.
+The publication log has generation/completeness/accounts/reason, but **no
+working-order count**. The proof hook therefore performs one bounded GET of
+that same OMS-owned `PREFIX:brokerdecides1-native-book` packet, using only the
+actual OMS process's selected Redis namespace/account aliases. No provider is
+called. Require schema3, current OMS epoch interval, same generation as the
+latest complete publication, both account books complete, both working and
+position sets empty, no unresolved local in-flight symbol, and original wire
+and publication age under60s at the first-stop boundary. Retain the exact raw
+packet plus its SHA and proof. A manual native exposure also blocks this
+conservative all-account gate. A missing/stale/mismatched/unknown packet stops;
+no retry and no inference from local zero. This is source-bound and still
+requires C1 review and an actual future execution; it is not a fresh native
+receipt from Main.
+
+### Actual evidence and action order
+
+1. Create one new root0700 evidence namespace and retain the reviewed plan,
+   selected service list and staged source hashes. Verify the environment's
+   full preimage before any stop. The proof hook saves all11 actual fleet
+   identities/states and confirms readable startup logs before disruption.
+2. Run the reviewed native/local gates and deployed strict OMS/v2 preflights
+   while all old heartbeat writers are alive. Any failed/UNKNOWN gate stops.
+   Run the **official collector snapshot once**, before the first stop, and
+   require actual exit0. Preserve stdout/stderr and the whole immutable
+   snapshot; seal its SHA and recheck it before every subsequent use.
+3. Recheck clean starting HEAD, environment and snapshot. Stop only selected
+   services in order **orb-schwab → v2 → strategy → OMS → control**, once each.
+   Retain actual entered/completed timestamps and unit state. Require PID0,
+   inactive/dead, successful result. A failed/unknown stop ends the sequence.
+4. Checkout only the reviewed target as trader. Apply the explicit environment
+   changes through backup-first byte CAS, fsynced temporary file, atomic
+   replacement, parent-directory fsync and root0600 exact readback. A changed
+   preimage stops; it never overwrites a concurrent edit.
+5. Start only selected services **OMS → v2 → strategy → control → orb-schwab**,
+   once each. Before each start, seal the stopped process's log offset, inode
+   and device so the new process's entire startup is covered. Require active,
+   running, NR0, new PID and InvocationID. Check each first healthy heartbeat
+   within the original60s SLA (strategy240s), after the selected control/API
+   has started. The SLA is measured from each actual process start, never reset
+   to the check time. A slow full startup that cannot prove it fails; no waiver.
+   After OMS start and before any selected consumer, require its actual fresh
+   `[BROKERDECIDES1-PUBLISH] complete=True accounts=2` startup publication.
+   Symbol UNKNOWN remains held; account completeness does not clear it.
+6. The post-start proof uses the checked-out boolean and numeric catalogs,
+   real selected process flags, saved first-health receipts for the exact new
+   instances, full11 identity comparison, and **one numeric600-second watch**.
+   Retain all selected startup/watch log bytes. ERROR/CRITICAL/Traceback,
+   rotation/truncation/overflow, a new STOP, an instance change, or an unknown
+   proof stops. Unselected service identities/states must equal the original
+   baseline, including intentionally inactive services. No global restart.
+7. Build schema1 installation actions only from the whole schema3 pre-stop
+   snapshot and actual ordered entered/success journal. Classify all9
+   collector services; selected ones restarted, all others deliberately
+   untouched. Missing/duplicate/failed/foreign/out-of-order actions or a
+   journal before its snapshot refuse. Never fabricate an after-fact baseline.
+8. Run **one direct official collector report**, after the last selected start
+   and proofs. Use that snapshot, actual installation record, exact repeated
+   `--restarted` list, current selected `--expect-flag` operands, independent
+   migration head and `--no-schema-change`. Preserve raw exit/findings and
+   report. Do not also invoke the report wrapper in series. Removing an MD
+   restart also removes its per-restart MD flag operand; full catalog audit
+   remains. No quiet/held/upgrade-ACK waiver is added.
+9. Emit matching future scheduled-gate argument JSON as a SOURCE/CAS input
+   only. It does not edit the gate, binding or runtime. C1 separately reviews
+   fresh metadata preimages/backups, reader lock, dependencies, owners/modes,
+   actual epochs and all readbacks before any authorized publication.
+
+Any failed or UNKNOWN operation preserves all raw evidence and the actual
+fleet state, then stops for C1 disposition. A stop/start/report is never
+retried automatically. Rollback requires a separate current C1 ruling,
+fresh safety gates and actual owned process joins; old PIDs cannot be restored.
+The October29 missing collector snapshot remains missing. This future script
+cannot repair or retag tonight's historical report or predict October30 06:20.
+
+## Historical service-specific procedures
+
 Use this runbook during an active trading session.
 
 Current state as of March 29, 2026:

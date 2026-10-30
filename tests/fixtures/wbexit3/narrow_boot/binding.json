@@ -1,0 +1,103 @@
+{
+  "status": "SEALED",
+  "base": "656009b408e5978b4a2ac0b475cd8b3fa80e392f",
+  "raw_export_sha256": "3482af6342ca849ef16045ef57139b99328eefa739a9f6c1b758bd6f223f90c8",
+  "nonterminal_trade_intents_count": 0,
+  "nonterminal_intents_source": "C1 01:32 body89eb4aea6844eb9fb764ee06202f227f11ebe084119bf070270139b843bdac11",
+  "settings": {
+    "orb_webull_account_name": "live:orb",
+    "strategy_schwab_1m_v2_webull_account_name": "live:orb",
+    "strategy_schwab_1m_v2_account_name": "live:schwab_1m_v2",
+    "strategy_schwab_1m_v2_dual_broker_fanout_enabled": true,
+    "oms_v2_exit_management_enabled": true,
+    "bot_control_enabled": true,
+    "orb_country_routing_enabled": true,
+    "orb_country_semantic_admission_enabled": true,
+    "strategy_schwab_1m_v2_country_route_enabled": true,
+    "strategy_schwab_1m_v2_wbexit2_enabled": true
+  },
+  "settings_source": "C1 actual /proc 01:43 body86d80f817866d2feb7f59a871c93b05bb38d281980c1082b0a752b9afffd2b2a + exact long-key correction 01:47 body7d4ea28edfa7baeafff4d67c30ff1b6d87f0a53152f16d07adadc569c740f93e",
+  "orb_protection_work": {
+    "status": "SEALED",
+    "raw_sha256": "37da184935df78110b66f11d2d233639abdf1341f1c8461739c480f9cf184fe8",
+    "source": "C1 01:41 bodyf7792e77423fcf6abf0a04fd9c4ae81ebd6009ee2b19c967632a8c48239a515c",
+    "candidate_count": 1,
+    "all_same_scope_buy_ranking_count": 1,
+    "fill_count": 0,
+    "matching_virtual_position_rows": 0,
+    "expected_work_count": 0,
+    "candidate": {
+      "id": "55b43f16-66a6-4ed3-bb79-31b9ee018534",
+      "symbol": "STAK",
+      "status": "rejected",
+      "quantity": "10.00000000",
+      "submitted_at": "2026-10-22 13:28:03.445132+00",
+      "route": "true",
+      "payload": {
+        "orb_entry": "true",
+        "execution_mode": "fixed_opening_high_resting",
+        "order_type": "STOP_LIMIT",
+        "time_in_force": "day",
+        "stop_price": "1.65",
+        "limit_price": "1.65",
+        "reference_price": "1.65",
+        "orb_exit_anchor": "broker_trigger_not_actual_fill",
+        "orb_buy_cap_pct": "0.5",
+        "orb_target_pct": "5",
+        "orb_stop_pct": "8",
+        "orb_target_price": "1.73",
+        "orb_protect_price": "1.52",
+        "orb_country_route": "true",
+        "orb_country_broker": "webull",
+        "orb_country_reason": "sec_non_us",
+        "orb_country_status": "READY",
+        "orb_country_as_of": "2026-10-17T05:32:46.410100+00:00",
+        "orb_intended_break_level": "1.65",
+        "session": "NORMAL",
+        "extended_hours": "false",
+        "orb_deferred_macd_bar_close": "2026-10-22T13:28:00+00:00",
+        "bot_control_generation": "0",
+        "bot_control_decided_at": "2026-10-22T13:28:02.657305+00:00",
+        "bot_control_permit": "{\"client_order_id\": \"orb_schwab-STAK-open-5a48637d31f9\", \"generation\": 0, \"recorded_at\": \"2026-10-22T13:28:03.436423+00:00\", \"revision\": 1, \"status\": \"MAY_HAVE_SENT\", \"strategy_id\": \"fb750bad-0aa2-4c02-80c6-3c4b89f4ea29\"}",
+        "reject_reason": "LOCAL refusal (no broker request): Webull BUY stop-limit requires raw limit_price > stop_price; got limit=1.65 stop=1.65"
+      }
+    }
+  },
+  "prerequisite_counts": {
+    "status": "UNKNOWN_NOT_RESTORED_BY_NARROW_CUT",
+    "bot_control_states": 3,
+    "bot_control_commands": 0,
+    "bot_control_attempts": 0,
+    "atr_reprice_handoff": 0,
+    "atr_reprice_handoff__archived_20261008": 122,
+    "oms_webull_mirror_retained_hold": 74,
+    "v2_fanout_segment_identity": 1214,
+    "v2_fanout_outcome": 10940,
+    "v2_fanout_outcome_cursor": 6032,
+    "reconciliation_order_reads_v1": 2,
+    "webull_terminal_read_proof": 308
+  },
+  "WB3_flag": "CONTROLLED_PRIVATE_ON_OFF_ONLY; code default remains False",
+  "authority_receipts": [
+    {
+      "file": "authority/OCT30-C1-OBSERVED-0135-WB3.json",
+      "sha256": "0f245f55e469a0c6bbe6542f62169b4a48d3785c19a431d238051594178d1a15"
+    },
+    {
+      "file": "authority/OCT30-C1-OBSERVED-0141-WB3.json",
+      "sha256": "7b2d4f5d68e5f2404a35528365f5ad87919944f8b9dd2b075441b8a3fbfdac9b"
+    },
+    {
+      "file": "authority/OCT30-C1-OBSERVED-0143-WB3.json",
+      "sha256": "ca0c38299bd556c176cccf36c8b7800789186a8f1ecc3ae8d2e4ae126fe2d57e"
+    },
+    {
+      "file": "authority/OCT30-C1-OBSERVED-0148-WB3.json",
+      "sha256": "703287bff3f0eb5a423be5e2383f22a475b7057eab40a562fa99d6be07d39126"
+    },
+    {
+      "file": "authority/OCT30-C1-OBSERVED-0149-WB3.json",
+      "sha256": "b1a7696fdc60a4c37243139cf9190781a112e27702bcb441e5fe39848422aa52"
+    }
+  ]
+}

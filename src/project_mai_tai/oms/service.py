@@ -72,6 +72,8 @@ from project_mai_tai.services.strategy_engine_app import current_scanner_session
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.oms.price_binding import stored_price
 from project_mai_tai.oms.webull_attach_riskoff import atr_handoff_call
+from project_mai_tai.oms import wbexit3
+from project_mai_tai.oms.wbexit3 import obligated_exit
 from project_mai_tai.oms.target_cache import BoundTargetRow, ManagedTargetCache
 from project_mai_tai.oms.target_exit_receipt import target_exit_receipt
 from project_mai_tai.oms import wbquiet_shadow
@@ -1133,10 +1135,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 return result
 
         work = asyncio.to_thread(_unit)
-        if getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True:
+        if (getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True or wbexit3.enabled(self)):
             from project_mai_tai.oms import webull_attach_riskoff as wb, wbexit2
             call = wb._ATR_CALL.get()
-            if call is not None and call.wb2 and call.service is self and call.task is asyncio.current_task():
+            if call is not None and (call.wb2 or getattr(call, "wb3_partial", False)) and call.service is self and call.task is asyncio.current_task():
                 return await wbexit2.joined(self, call, work)
         return await work
 
@@ -1159,12 +1161,17 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         )
         await asyncio.to_thread(self._rpg_retire_disabled_at_boot)
         self._rehydrate_managed_v2_symbols()  # slice-3: re-arm quote eval for open v2 rows
-        if getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True:
+        if (getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True or wbexit3.enabled(self)):
             from project_mai_tai.oms.wbexit2 import hydrate_at_boot
             try:
                 await hydrate_at_boot(self)  # COMPLETE bounded DB inventory before quote actors; no nonce reclaim.
             except Exception:
                 self.logger.critical("[WBEXIT2-BOOT-UNKNOWN] scan_exception=true", exc_info=True)
+        if wbexit3.enabled(self):
+            try:
+                await wbexit3.hydrate_at_boot(self)
+            except Exception:
+                self.logger.critical("[WBEXIT3-BOOT-UNKNOWN] responsibility=RETAINED", exc_info=True)
         self._restore_nfq_holds()
         self._restore_nfq2_holds()
         self._restore_mirrorhold()
@@ -6194,6 +6201,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 symbol, acct, row_id,
             )
 
+    @obligated_exit
     async def _webull_cancel_then_sell(
         self,
         acct: str,
@@ -6297,6 +6305,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     guards=[dict(name="_cw_target_binding_matches", outcome="mismatch", elapsed_ms=None)],
                     blocked_guard="_cw_target_binding_matches")
             return _done("refused_before_release")
+        if wbexit3.selected(self, reason, acct):
+            close_context = dict(close_context or {})
+            await wbexit3.begin_exit(self, snapshot, account=acct, reason=reason, kind=kind,
+                reference_price=reference_bid if reference_price is None else reference_price, context=close_context)
+            await wbexit3.refresh_originals(self)
         c3_action = self._post_exit_stale_held_action(acct, symbol, snapshot)
         if c3_action == "fresh_flat":
             await self._close_post_exit_stale_held_row(acct, symbol)
@@ -6318,7 +6331,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             expected_row_id=expected_row_id,
             expires_at=expires_at,
             decision=decision,
-            **({"wbexit2_reason": reason} if getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True else {}),
+            **({"wbexit2_reason": reason} if (getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True or wbexit3.enabled(self)) else {}),
         )
         if target_prepare_started is not None:
             close_context = {**(close_context or {}),
@@ -7459,7 +7472,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         ):
             self._log_native_oco_note(acct, symbol)
         quote = self._latest_quotes_by_symbol.get(symbol)
-        if getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True:
+        if wbexit3.enabled(self):
+            await wbexit3.resume_on_quote(self, acct, symbol, quote)
+        if (getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True or wbexit3.enabled(self)):
             from project_mai_tai.oms.wbexit2 import resume_on_quote
             if await resume_on_quote(self, acct, symbol, quote):
                 return
@@ -10317,6 +10332,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
 
     @_control_managed_exit_owner
     @atr_handoff_call
+    @obligated_exit
     async def _emit_v2_exit_on_loop_claimed(
         self,
         acct: str,
@@ -10419,8 +10435,16 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         owner["claim"] = (lock, claim)
                     finally:
                         lock.release()
+                if wbexit3.selected(self, reason, acct):
+                    session.commit()
+                    confirmation_context = dict(confirmation_context or {})
+                    await wbexit3.begin_exit(self, row, reason=reason, kind=kind,
+                        reference_price=reference_price, sell_qty=sell_qty, level=level, context=confirmation_context)
+                    await wbexit3.refresh_originals(self)
+                    session.refresh(row)
                 from project_mai_tai.oms.webull_attach_riskoff import atr_software_exit_required
-                software_handoff = kind != "SCALE" and atr_software_exit_required(self, session, row, reason)
+                software_handoff = (kind != "SCALE" and atr_software_exit_required(self, session, row, reason)
+                    or wbexit3.partial_request(self, reason, acct, kind))
                 from project_mai_tai.oms import wbexit2
                 if wbexit2.selected(self, reason, acct) and not software_handoff:
                     from project_mai_tai.oms.webull_attach_riskoff import critical
@@ -10452,7 +10476,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         return "closed"
                     if row.status != "open" or quantity > row.current_quantity:
                         return "refused"
-                    position.quantity = int(quantity)
+                    if wbexit3.partial_request(self, reason, acct, kind):
+                        if quantity == 0:
+                            return "scale_resolved_by_fill"
+                        sell_qty = int(quantity)  # Exact requested remainder; residual Position stays monitored.
+                    else:
+                        position.quantity = int(quantity)
                 if stop_context is not None:
                     events = await self._emit_v2_managed_sell(
                         session, row, intent_type="close", quantity=int(position.quantity),
@@ -10470,10 +10499,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     return "refused"
                 if kind == "SCALE":
                     protective = self._is_protective_v2_exit(reason)
+                    scale_context = ({"confirmation_context": confirmation_context}
+                        if wbexit3.partial_request(self, reason, acct, kind) else {})
                     managed_sell = await self._emit_v2_managed_sell(
                         session, row, intent_type="scale", quantity=int(sell_qty or 0),
                         reference_price=reference_price, reason=reason, bid=bid,
-                        decided_at=decided_at,
+                        decided_at=decided_at, **scale_context,
                     )
                     events = managed_sell
                     if getattr(managed_sell, "ownership_refused", False):
@@ -10856,9 +10887,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         target_context: dict[str, str] | None = None,
         allow_pending_fill_writer: bool = False,
     ) -> int:
+        if wbexit3.enabled(self):
+            from project_mai_tai.oms.wbexit3_vp_zero import require_current_actor
+            require_current_actor(self)  # Actual coroutine/task before dispatch of a recovered-cap read.
         def read(session):
-            from project_mai_tai.oms.managed_sell_prewire import read_managed_sell_quantity
-            return read_managed_sell_quantity(
+            from project_mai_tai.oms.managed_sell_prewire import read_managed_sell_quantity, read_managed_sell_exit_cap
+            cap_reader = read_managed_sell_exit_cap if wbexit3.enabled(self) else read_managed_sell_quantity
+            return cap_reader(
                 self, session, managed_row_id=managed_row_id, strategy_code=strategy_code,
                 broker_account_name=broker_account_name, symbol=symbol,
                 target_context=target_context, allow_pending_fill_writer=allow_pending_fill_writer,
@@ -10867,6 +10902,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # Read after broker awaits, with a fresh off-loop session: the caller's ORM
         # identity map and the quote's hydrated Position can both contain old quantities.
         managed_quantity, ledger_quantity, refusal = await self._run_db(read, commit=False)
+        if managed_quantity > 0 and ledger_quantity == 0:
+            await wbexit3.probe_guard(self, "ledger_zero_managed_positive")
         quantity = max(0, min(int(requested_quantity), managed_quantity))
         if ledger_quantity is not None:
             quantity = max(0, min(quantity, int(ledger_quantity)))
@@ -11209,7 +11246,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         )
         from project_mai_tai.oms.webull_attach_riskoff import _ATR_CALL
         owned_call = _ATR_CALL.get()
-        if strict_handoff and owned_call is not None and owned_call.wb2:
+        if strict_handoff and owned_call is not None and (owned_call.wb2 or getattr(owned_call, "wb3_partial", False)):
             from project_mai_tai.oms.wbexit2 import prepare_current
             intent_id = await prepare_current(self, request, prepare_work)
         else:
@@ -11804,12 +11841,20 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
     async def _sync_broker_state_pass(
         self, *, account_names: list[str] | None = None
     ) -> dict[str, int]:
-        if getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True:
+        if (getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True or wbexit3.enabled(self)):
             from project_mai_tai.oms.wbexit2 import log_pending_scan
             # C1 02:15:11: symbol+original age EACH RTH scan, before fallible
             # broker stages; logging only, no reordered DB/native work.
             log_pending_scan(self)
+        wbexit3.report_pending(self)
         order_summary = await self.sync_broker_orders(account_names=account_names)
+        if wbexit3.enabled(self):
+            try:
+                await wbexit3.refresh_pending(self)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.logger.critical("[WBEXIT3-RECONCILE-UNKNOWN] responsibility=RETAINED", exc_info=True)
         if bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False)):
             try:
                 await self._poll_orb_schwab_child_exits()
@@ -11846,7 +11891,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             raise
         except Exception:
             self.logger.exception("[WBATTACH1-BOOKKEEPING] cached terminal proof unavailable")
-        if getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True:
+        if (getattr(self.settings, "strategy_schwab_1m_v2_wbexit2_enabled", False) is True or wbexit3.enabled(self)):
             from project_mai_tai.oms.wbexit2 import refresh_pending
             try:
                 await refresh_pending(self, report_scan=False)  # Reported at pass entry, not deduped across passes.
@@ -12621,7 +12666,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     # for an exit, the managed row stays open and _evaluate_v2_managed_exit
                     # re-emits a fresh close when the market reopens. Native stop-guard
                     # orders are exempt — they are the resting overnight protection net.
-                    if not self._is_stop_guard_order(order) and not self._market_is_fillable():
+                    if (not self._is_stop_guard_order(order) and not (self._market_is_fillable()
+                            or wbexit3.managed_order_session(self, account.name, order, strategy))):
                         abandon_code = "MARKET_CLOSED"
                         abandon_detail = (
                             "market not in a fillable session "
@@ -12940,7 +12986,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         live_dispatch = self.__dict__.get("_momentum_live_quote_dispatch")
         if live_dispatch is not None:
             live_dispatch.on_quote(symbol)
-        if self._market_is_fillable():
+        if wbexit3.enabled(self):
+            for acct in self._v2_accounts():
+                if ((acct, symbol) in self._managed_v2_symbols
+                        and (self._market_is_fillable() or wbexit3.account_session(self, acct))):
+                    self._capture_cw_target_decision(acct, symbol, self._latest_quotes_by_symbol[symbol])
+        elif self._market_is_fillable():
             for acct in self._v2_accounts():
                 if (acct, symbol) in self._managed_v2_symbols:
                     self._capture_cw_target_decision(acct, symbol, self._latest_quotes_by_symbol[symbol])
@@ -12957,7 +13008,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # emit one — the refresh-loop MARKET_CLOSED abandon (sync_broker_orders) mops
         # up any working exit, keeping v2 quiet when the market is closed instead of
         # churning unfillable exits overnight. Management resumes when it reopens.
-        if not self._market_is_fillable():
+        if not self._market_is_fillable() and not (wbexit3.enabled(self)
+                and any(wbexit3.account_session(self, acct) for acct in self._v2_accounts())):
             return
         accounts = [
             acct for acct in self._v2_accounts()
@@ -12970,7 +13022,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             self._schedule_v2_quote_leg(acct, symbol)
 
     def _schedule_v2_quote_leg(self, acct: str, symbol: str) -> None:
-        if (acct, symbol) not in self._managed_v2_symbols or not self._market_is_fillable():
+        if ((acct, symbol) not in self._managed_v2_symbols
+                or not (self._market_is_fillable() or wbexit3.account_session(self, acct))):
             return
 
         async def _evaluate_leg() -> None:

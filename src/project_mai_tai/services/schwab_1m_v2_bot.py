@@ -31,6 +31,7 @@ import os
 import signal
 import threading
 import time
+from project_mai_tai.pm_softrest_quote_log import make_log as _make_pm_quote_log, observe as _observe_pm_quote
 from collections import deque
 from contextvars import ContextVar, copy_context
 from copy import deepcopy
@@ -649,6 +650,7 @@ class SchwabV2BotService:
         # Use only a recently received streamed ask for the pre-market cross.
         self._eh_stream_ask_by_symbol: dict[str, tuple[float, int]] = {}
         self._eh_stream_ask_max_age_ms = 10_000
+        self._pm_softrest_quote_log = _make_pm_quote_log(self.settings, logger)
         self._gap_hold_detect_seconds = max(
             0.001,
             float(
@@ -5332,6 +5334,8 @@ class SchwabV2BotService:
             departed_symbols |= revoked_retained
         for sym in new_symbols | departed_symbols:
             self._eh_stream_ask_by_symbol.pop(sym, None)
+            if getattr(self, "_pm_softrest_quote_log", None) is not None:
+                _observe_pm_quote(self._pm_softrest_quote_log, "forget", sym)
         # ⭐ Stamp WHEN we started watching each symbol. This is the reference
         # `_cap_reconstructed_segment` uses to decide whether an armed segment was observed LIVE or
         # merely reconstructed from warmup history — see that method for the full rationale.
@@ -9233,39 +9237,66 @@ class SchwabV2BotService:
     async def _handle_stream_tick(self, tick: SchwabTick) -> None:
         if not raw_symbol_is_uppercase(tick.symbol):
             return
-        if tick.kind == "trade" and (not self._line_sized_trade_policy_enabled()
-                or self._line_print_eligibility(size=tick.size,
-                    conditions=tick.raw.get("conditions", tick.raw.get("c")))):
-            self._observe_line_trade(tick.symbol, int(tick.event_ts_ms))
-        if self._eh_stream_cross_enabled and tick.service == "LEVELONE_EQUITIES":
-            raw_ask = tick.raw.get("2")
-            if raw_ask is not None:
-                symbol = str(tick.symbol).upper()
-                try:
-                    ask = float(raw_ask)
-                except (TypeError, ValueError, OverflowError):
-                    self._eh_stream_ask_by_symbol.pop(symbol, None)
-                else:
-                    if math.isfinite(ask) and ask > 0:
-                        self._eh_stream_ask_by_symbol[symbol] = (
-                            ask, self.strategy._now_ms()
-                        )
-                    else:
+        # Sample once at callback entry, ON only; not a socket receipt claim.
+        flip_print_received_ns = None
+        if tick.kind == "trade" and getattr(self.strategy, "_flip_print_enabled", False):
+            try:
+                flip_print_received_ns = time.time_ns()
+            except Exception:
+                pass
+        observation = (self._pm_softrest_quote_observation(tick)
+            if getattr(self, "_pm_softrest_quote_log", None) is not None else None)
+        try:
+            if tick.kind == "trade" and (not self._line_sized_trade_policy_enabled()
+                    or self._line_print_eligibility(size=tick.size,
+                        conditions=tick.raw.get("conditions", tick.raw.get("c")))):
+                self._observe_line_trade(tick.symbol, int(tick.event_ts_ms))
+                if flip_print_received_ns is not None:
+                    try:
+                        self.strategy._observe_flip_print_trade(tick, flip_print_received_ns)
+                    except Exception:
+                        pass  # Diagnostic-only; preserve original downstream work.
+            if self._eh_stream_cross_enabled and tick.service == "LEVELONE_EQUITIES":
+                raw_ask = tick.raw.get("2")
+                if raw_ask is not None:
+                    symbol = str(tick.symbol).upper()
+                    try:
+                        ask = float(raw_ask)
+                    except (TypeError, ValueError, OverflowError):
                         self._eh_stream_ask_by_symbol.pop(symbol, None)
-        if (
-            self._gap_hold_enabled
-            and tick.kind == "trade"
-            and self._halt_observation_time(tick.event_ts_ms) is not None
-        ):
-            normalized = str(tick.symbol).upper()
-            self._gap_last_print_at_ms[normalized] = max(
-                int(tick.event_ts_ms),
-                self._gap_last_print_at_ms.get(normalized, 0),
-            )
-        if self._eh_stream_cross_enabled and tick.kind == "trade" and tick.price:
-            self._offer_stream_trade_to_eh_rest(tick)
-        if self.tick_writer is not None:
-            await self.tick_writer.on_tick(tick)
+                        if observation is not None:
+                            _observe_pm_quote(observation, "ask_invalidated")
+                    else:
+                        if math.isfinite(ask) and ask > 0:
+                            self._eh_stream_ask_by_symbol[symbol] = (
+                                ask, self.strategy._now_ms()
+                            )
+                            if observation is not None:
+                                _observe_pm_quote(observation, "ask_updated", self._eh_stream_ask_by_symbol[symbol][1])
+                        else:
+                            self._eh_stream_ask_by_symbol.pop(symbol, None)
+                            if observation is not None:
+                                _observe_pm_quote(observation, "ask_invalidated")
+            if (
+                self._gap_hold_enabled
+                and tick.kind == "trade"
+                and self._halt_observation_time(tick.event_ts_ms) is not None
+            ):
+                normalized = str(tick.symbol).upper()
+                self._gap_last_print_at_ms[normalized] = max(
+                    int(tick.event_ts_ms),
+                    self._gap_last_print_at_ms.get(normalized, 0),
+                )
+            if self._eh_stream_cross_enabled and tick.kind == "trade" and tick.price:
+                if observation is None:
+                    self._offer_stream_trade_to_eh_rest(tick)
+                else:
+                    self._offer_stream_trade_to_eh_rest(tick, _pm_observation=observation)
+            if self.tick_writer is not None:
+                await self.tick_writer.on_tick(tick)
+        finally:
+            if observation is not None:
+                _observe_pm_quote(observation, "finish")
 
     def _stream_tick_callback(self):  # type: ignore[no-untyped-def]
         """The streamer's per-tick callback. GAPHOLD's print clock and the pre-market stream cross
@@ -9281,8 +9312,29 @@ class SchwabV2BotService:
 
     async def _clear_eh_stream_asks_on_disconnect(self) -> None:
         self._eh_stream_ask_by_symbol.clear()
+        if getattr(self, "_pm_softrest_quote_log", None) is not None:
+            _observe_pm_quote(self._pm_softrest_quote_log, "clear")
 
-    def _offer_stream_trade_to_eh_rest(self, tick: SchwabTick) -> None:
+    def _pm_softrest_quote_observation(self, tick: SchwabTick):
+        book = getattr(self, "_pm_softrest_quote_log", None)
+        if book is None:
+            return None
+        try:
+            state = self.strategy._symbol_states.get(tick.symbol)
+            if state is None or not state.resting_active or state.resting_is_broker_order:
+                _observe_pm_quote(book, "forget", tick.symbol)
+                return None
+            return book.begin(tick.symbol, received_at=datetime.now(UTC),
+                kind=tick.kind, service=tick.service,
+                bid=tick.raw.get("1"), ask=tick.raw.get("2"), last=tick.raw.get("3"),
+                message_ts_ms=getattr(tick, "message_ts_ms", None), trade_ts_ms=tick.raw.get("35"),
+                placed=dict(placed_wire_trigger=state.resting_schwab_wire_stop,
+                    placed_trigger=state.resting_trigger, placed_line=state.resting_level,
+                    placed_wire_cap=state.resting_schwab_wire_limit, placed_legacy_cap=state.resting_wire_cap))
+        except Exception:
+            return None
+
+    def _offer_stream_trade_to_eh_rest(self, tick: SchwabTick, *, _pm_observation=None) -> None:
         """PRE-MARKET ONLY. Hand one streamed print to the strategy's EH soft-rest cross check and
         emit what it returns through the SAME path a REST quote uses (`_maybe_emit`: entry window,
         ATR-only belt, EH routing; then the Webull fan-out legs). A failure here is logged and never
@@ -9296,6 +9348,8 @@ class SchwabV2BotService:
         try:
             trade_ms = int(tick.event_ts_ms)
             if trade_ms <= 0 or int(tick.raw.get("35") or 0) != trade_ms:
+                if _pm_observation is not None:
+                    _observe_pm_quote(_pm_observation, "note", "REFUSED", "native_trade_time_missing_or_mismatch")
                 return
             ask_entry = self._eh_stream_ask_by_symbol.get(str(tick.symbol).upper())
             now_ms = self.strategy._now_ms()
@@ -9304,17 +9358,26 @@ class SchwabV2BotService:
                 if ask_entry is not None and 0 <= now_ms - ask_entry[1] <= self._eh_stream_ask_max_age_ms
                 else None
             )
+            ask_age_ms = now_ms - ask_entry[1] if ask_entry is not None else None
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "values", effective_ask=ask,
+                                  ask_age_ms=ask_age_ms, decision_now_ms=now_ms)
+            options = {} if _pm_observation is None else {"_pm_observation": _pm_observation}
             draft = self.strategy.on_stream_trade(
                 str(tick.symbol).upper(), float(tick.price or 0.0), trade_ms,
                 ask_price=ask,
                 bid_price=tick.raw.get("1"), print_size=tick.raw.get("9"),
-                ask_age_ms=now_ms - ask_entry[1] if ask_entry is not None else None,
+                ask_age_ms=ask_age_ms, **options,
             )
         except Exception:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "ERROR", "strategy_error")
             del queued_legs[queued_before:]
             logger.exception("schwab_1m_v2 on_stream_trade failed for %s", tick.symbol)
             return
         if draft is None:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "none_if_unset")
             return
         # Only this cross's suffix is moved. Other callbacks may already have queued a leg
         # before yielding on their own emit; do not steal it from the shared strategy queue.
@@ -9323,8 +9386,12 @@ class SchwabV2BotService:
         try:
             task = asyncio.create_task(self._emit_eh_stream_draft(draft, legs))
         except Exception:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "ERROR", "schedule_error")
             logger.exception("schwab_1m_v2 stream-cross scheduling failed for %s", tick.symbol)
             return
+        if _pm_observation is not None:
+            _observe_pm_quote(_pm_observation, "note", "SCHEDULED", "draft_scheduled")
         self._eh_stream_emit_tasks.add(task)
         task.add_done_callback(self._eh_stream_emit_tasks.discard)
 

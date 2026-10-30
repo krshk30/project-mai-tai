@@ -1,0 +1,113 @@
+{
+  "label": "LOG-RECONSTRUCTED_NOT_NATIVE_PASS",
+  "selector": "AIOK-1023-1504 CW_TARGET ledger0/managed27",
+  "retained_log_projection": {
+    "path": "/Users/velkris/.codex/task-queues/analysis/OCT28-ELPW-C10953-SIX-FILE-SWEEP-FIRST/stdout.json",
+    "sha256": "571da68f02a462e97c9922eb062ac9ace8051d91fec2fe21e748774176ecddad",
+    "records": [
+      {
+        "fields": {
+          "acct": "live:orb",
+          "base": "schwab_1m_v2-AIOK-protect-fc06690fcc50",
+          "confirmed": "2",
+          "inline_seconds": "2.508",
+          "requested": "2",
+          "sym": "AIOK"
+        },
+        "file": 0,
+        "issues": [],
+        "line": 36307,
+        "raw_sha256": "307adb1003cb79ad87a1a2dd2f4077c29a7cc2302b40050ebe0e3beb08965d3b",
+        "tags": [
+          "[OMS-V2-CONFIRMATION-EXIT-WEBULL-RELEASED]"
+        ],
+        "utc": "2026-10-23 18:48:05,837"
+      },
+      {
+        "fields": {
+          "account": "live:orb",
+          "entry": "b2e22e2e-be7c-4c0c-be9a-ce55ac5ece2f",
+          "reason": "software_exit_child_proof_required:wbattach1_positions_wire_receipt_unknown_or_stale",
+          "sell": "0",
+          "symbol": "AIOK"
+        },
+        "file": 0,
+        "issues": [],
+        "line": 36396,
+        "raw_sha256": "a6f43728e2a2ea9557028db21c5f3fdf3d1d3ec523c2dcf79ef8bf1fb64a0092",
+        "tags": [
+          "[WBATTACH1-BLOCKED]"
+        ],
+        "utc": "2026-10-23 18:48:06,305"
+      },
+      {
+        "fields": {
+          "acct": "live:orb",
+          "base": "schwab_1m_v2-AIOK-protect-fc06690fcc50",
+          "confirmed": "2",
+          "decision": "already_released",
+          "inline_seconds": "0.020",
+          "requested": "0",
+          "sym": "AIOK"
+        },
+        "file": 0,
+        "issues": [],
+        "line": 36917,
+        "raw_sha256": "5e0351423e583916dfb3c65e6612a5395b6d1567d74a4a9f45729fa24714ed6d",
+        "tags": [
+          "[OMS-V2-CONFIRMATION-EXIT-WEBULL-RELEASED]"
+        ],
+        "utc": "2026-10-23 19:04:19,105"
+      },
+      {
+        "fields": {
+          "acct": "live:orb",
+          "exit": "CW_TARGET",
+          "outcome": "sell_refused_recovering",
+          "protection": "released",
+          "row": "c7ad4a8d-14ba-4eea-a038-9aec301779cf",
+          "seconds": "0.094",
+          "sym": "AIOK"
+        },
+        "file": 0,
+        "issues": [],
+        "line": 36920,
+        "raw_sha256": "36a43eaddedcc800d2f2ee6dfdad0ecef80b4b3bc8cb70c495dde56e88505adc",
+        "tags": [
+          "[OMS-WEBULL-CANCEL-THEN-SELL]"
+        ],
+        "utc": "2026-10-23 19:04:19,165"
+      }
+    ]
+  },
+  "retained_C1_table_operands": [
+    "requested=27 managed=27 ledger=0E-8 sell=0 reason=own_quantity_cap",
+    "RECONCILE-READ FLAT_INFERRED (n=0)",
+    "CW_TARGET x128"
+  ],
+  "same_day_BUY_date_source": "C1 actual2026-10-29 23:56 bodyb05833051598b7ff60a678ae7547ce22eeee54b206777f69e672a79ae4267521; C1 evidence, not this worker native query",
+  "missing_native_operands": [
+    "original actual BUY Fill timestamp/IDs",
+    "complete native account today orders/all origins",
+    "actual native no-SELL history",
+    "individual original target/stop native identity/status/geometry",
+    "actual request-start/completion receipts"
+  ],
+  "controlled_operands": {
+    "entry_fill_quantity": "27",
+    "entry_price": "10.91",
+    "BUY_fill_timestamp": "2026-10-23T18:40:00+00:00 CONTROLLED before earliest retained RELEASED18:48:05; exact original BUY clock UNKNOWN",
+    "exit_clock": "2026-10-23T19:04:00+00:00",
+    "fresh_executable_bid": "entry*1.20 = 13.092 CONTROLLED; exact historical executable bid UNKNOWN",
+    "account": "live:orb",
+    "strategy": "schwab_1m_v2",
+    "native_originals": "individual CANCELLED/zeroFill IDs CONTROLLED to represent retained RELEASED2/already_released chronology",
+    "positive_history": "CONTROLLED full account today census with exact BUY+two original children and no other SELL; not observed original empty history",
+    "native_positions": "CONTROLLED full account census1027 = bot BUY27 + fixture manual1000 before exit; controlled native/account book1000 after SELL27; exact original native account quantity UNKNOWN. Cap remains bot BUY27, never account1027.",
+    "protection_setup_timestamp": "2026-10-23T18:41:00+00:00 CONTROLLED after BUY and before earliest retained release; exact original protection/native event time UNKNOWN",
+    "native_terminal_receipt": "Fresh typed terminal READ at CONTROLLED19:04, not a retagged native cancellation event time; original terminal event time UNKNOWN"
+  },
+  "expected_controlled_NEW_end": "only if ALL real guards pass: SELL27 through actual cap/prewire/prepare/final route; otherwise UNKNOWN/PAGE OPEN",
+  "overnight_carry": "NOT COVERED; prior-day BUY has no inclusive today history; named duty retries/PAGE OPEN",
+  "live_original_control": "separate routed positive case uses exact working original children, unchanged cancel_mark+terminal proof; no claim this was original historical AIOK preimage"
+}

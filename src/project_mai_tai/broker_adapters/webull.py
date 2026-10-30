@@ -465,7 +465,8 @@ class WebullBrokerAdapter:
                 continue
             metadata = {"cancel_outcome": "confirmed" if event in {"cancelled", "rejected", "filled"} else "not_confirmed",
                         "wbattach1_list_census": json.dumps({**proof, "base": child_base}, sort_keys=True)}
-            if getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_wbexit2_enabled", False) is True:
+            if (getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_wbexit2_enabled", False) is True
+                    or getattr(getattr(self, "settings", None), "oms_webull_exit3_enabled", False) is True):
                 # Export existing LIST fields only. No new endpoint/read and no
                 # favorable overwrite of contradictory envelope/item aliases.
                 fields = ("limit_price", "limitPrice", "stop_price", "stopPrice",
@@ -861,6 +862,34 @@ class WebullBrokerAdapter:
 
         return await read_webull(self, broker_account_name)
 
+    async def read_wbexit3_day_history(self, broker_account_name: str, *, after):
+        """Full EXISTING today-list census; prior-day coverage is never inferred."""
+        if getattr(getattr(self, "settings", None), "oms_webull_exit3_enabled", False) is not True:
+            raise ValueError("wbexit3_day_history_disabled")
+        account = self.accounts_by_name.get(broker_account_name)
+        if account is None:
+            raise ValueError("wbexit3_day_history_account_UNKNOWN")
+        return await self._foreground_query(self._wbexit3_day_history_blocking,
+            account, broker_account_name, after)
+
+    def _wbexit3_day_history_blocking(self, account, account_name, after):
+        from project_mai_tai.broker_adapters.webull_exit_census import shared_exit_census
+        from project_mai_tai.oms.wbexit3_vp_zero import normalize_history
+        reader = shared_exit_census(self.host, self.app_key, self._query_budget, self._today_reader.cycle_seconds)
+        # Same endpoint, request builder, query budget, pagination and bounded cadence.
+        def page(cursor):
+            try:
+                status, body = self._today_page(account, cursor)
+            except Exception as exc:
+                if self._is_rate_limited(exc):
+                    self._query_budget.defer("list-today", 30.)
+                raise
+            if status == 429:
+                self._query_budget.defer("list-today", 30.)
+            return status, body
+        census = reader.read(account.account_id, page, after=after)
+        return normalize_history(self, account_name, account.account_id, census, after=after)
+
     async def read_wbexit2_positions(self, broker_account_name: str, *, after: float):
         """ONE fresh request-start-bound census after the original terminal proof.
 
@@ -870,7 +899,8 @@ class WebullBrokerAdapter:
         Caller must physically join this operation on cancellation.
         """
         from math import isfinite
-        if getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_wbexit2_enabled", False) is not True:
+        if (getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_wbexit2_enabled", False) is not True
+                and getattr(getattr(self, "settings", None), "oms_webull_exit3_enabled", False) is not True):
             raise WebullPositionsUnavailable("wbexit2_fresh_positions_disabled")
         account = self.accounts_by_name.get(broker_account_name)
         if account is None or type(after) not in (int, float) or not isfinite(after) or after > time.monotonic():
