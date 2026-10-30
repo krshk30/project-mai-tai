@@ -4,7 +4,10 @@ No cache/write/clock/filtering shortcut. Scalar single-ID proof remains the
 reference; every statement rebuilds all eight current source sets.
 """
 
+from functools import lru_cache
+
 from sqlalchemy import String, and_, case, cast, func, literal, or_, select, union, union_all
+from sqlalchemy.sql.visitors import cloned_traverse
 
 from project_mai_tai.brokerdecides1_retirement import KINDS, PROOF_VERSION
 from project_mai_tai.db.models import (
@@ -30,6 +33,13 @@ def table_entity_state(kind, table):
 
 
 def validated_retirement_ids():
+    # Cache construction only. Each caller owns fresh mutable CTE objects and
+    # every execution still checks the current database rows and preimages.
+    return cloned_traverse(_retirement_graph_template(), {}, {})
+
+
+@lru_cache(maxsize=1)
+def _retirement_graph_template():
     # Keep one Core proof graph per statement. Name CTEs explicitly: prefix_with
     # copies an anonymous CTE whose original object identity can be recycled.
     source = BrokerDecidesDispatchRetirement.__table__.alias()
