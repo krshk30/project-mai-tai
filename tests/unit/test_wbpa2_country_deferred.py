@@ -414,3 +414,61 @@ async def test_non_country_resting_shapes_do_not_enter_new_actor(tmp_path, monke
         assert state(case) is None and case.provider.entries == []
     finally:
         await close_case(case)
+
+
+@pytest.mark.asyncio
+async def test_accepted_country_retry_and_old_queue_redelivery_never_create_second_live_buy(tmp_path, monkeypatch):
+    case = await make_case(tmp_path, monkeypatch, replies=[ControlledSubmitReply(
+        "accepted", "CONTROLLED one live resting BUY", native_id="CONTROLLED-ONE-LIVE-BUY")])
+    try:
+        observe_original(case)
+        await quote(case, BOUNDARY)
+        await drain_ticks(case)
+        retry, = queued(case)
+        await serial(case, retry)
+        assert state(case) is None
+        assert case.provider.live_clients == {case.service._build_client_order_id(retry)}
+        observe_original(case)  # late original reject cannot reopen an accepted generation
+        for _ in range(3):
+            await quote(case, BOUNDARY)
+        await drain_ticks(case)
+        await serial(case, retry)  # actual stream redelivery of the old queued envelope
+        assert state(case) is None and len(queued(case)) == len(case.provider.requests) == 1
+        assert [entry["operation"] for entry in case.provider.entries] == ["submit", "positions"]
+        assert case.provider.entries[1]["result"] == "REFUSED_UNKNOWN_NEVER_FLAT"
+    finally:
+        await close_case(case)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["missing_original_order", "execution_audit_without_fill_row"])
+async def test_country_original_terminal_proof_cannot_be_replaced_by_empty_or_conflicting_ledger(
+    tmp_path, monkeypatch, fault,
+):
+    from project_mai_tai.oms import webull_country_deferred as country
+    case = await make_case(tmp_path, monkeypatch)
+    try:
+        observe_original(case)
+        with case.factory.begin() as session:
+            order = session.get(BrokerOrder, UUID(ORIGINAL_ORDER))
+            audit = session.scalar(select(BrokerOrderEvent).where(BrokerOrderEvent.order_id == order.id))
+            if fault == "missing_original_order":
+                session.delete(audit)
+                session.flush()
+                session.delete(order)
+            else:
+                # A conflicting actual-style execution audit must block even
+                # when the materialized Fill row has not been written.
+                session.add(BrokerOrderEvent(id=uuid4(), order_id=order.id,
+                    event_type="partially_filled", event_source="broker", event_at=case.clock[0],
+                    payload={"client_order_id":order.client_order_id,
+                             "filled_quantity":"1", "metadata":deepcopy(order.payload)}))
+        with case.factory() as session:
+            assert country.no_working_reason(case.service, session, case.event) is not None
+        await quote(case, BOUNDARY)
+        await drain_ticks(case)
+        retry, = queued(case)
+        await serial(case, retry)
+        assert state(case) is None and case.provider.entries == []
+    finally:
+        await close_case(case)
