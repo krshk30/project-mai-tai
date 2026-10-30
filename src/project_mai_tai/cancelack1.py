@@ -376,6 +376,10 @@ def _closed_order(session, order, observed, *, replacement_linked=False,
                      or payload.get("momstuck2_refusal") == md.get("momstuck2_refusal")
                      and isinstance(payload.get("momstuck2_refusal"), dict)
                      and payload["momstuck2_refusal"].get("reason") == "refused_before_wire"))
+        if order.status == "rejected" and order.broker_order_id is None:
+            from project_mai_tai.entry_rejected_closure import broker_rejected_never_accepted
+            if broker_rejected_never_accepted(session, order, observed):
+                return True  # Positive venue refusal, never native/Schwab status expansion.
         if not order.broker_order_id or not events:
             return False
         webull_terminal = None

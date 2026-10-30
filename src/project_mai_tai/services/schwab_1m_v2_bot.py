@@ -4641,11 +4641,19 @@ class SchwabV2BotService:
 
         terminal: dict[str, set[int]] = {}
         for (symbol, opportunity_id), by_account in grouped.items():
+            required_accounts = expected_accounts
             if not expected_accounts.issubset(by_account):
-                continue
+                from project_mai_tai.entry_rejected_closure import historical_country_rejected_accounts
+                observed_ms = int((terminal_cutoff + timedelta(
+                    milliseconds=FLIP_OWNER_ROW_SETTLE_MS)).timestamp() * 1000)
+                historical = historical_country_rejected_accounts(
+                    session, symbol, opportunity_id, expected_accounts, observed_ms)
+                if not historical or not historical.issubset(by_account):
+                    continue
+                required_accounts = historical
             if all(
                 _terminal_unfilled(intent)
-                for account in expected_accounts
+                for account in required_accounts
                 for intent in by_account[account]
             ):
                 terminal.setdefault(symbol, set()).add(opportunity_id)

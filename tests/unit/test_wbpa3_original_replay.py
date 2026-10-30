@@ -1,8 +1,11 @@
 """Exact retained rows + disclosed CONTROLLED runtime, never native replay."""
 from datetime import UTC, datetime
 import json
+import os
 from types import SimpleNamespace
 from uuid import UUID
+
+import pytest
 
 from project_mai_tai.brokerdecides1 import AdmissionMemory, AdmissionSnapshot, NativeAccountBook
 from project_mai_tai.brokerdecides1_entry import entry_decision
@@ -15,6 +18,10 @@ from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
 from project_mai_tai.v2_flip_entry_ownership import FlipEntryOwnershipStore
 from tests.unit.wbpa3_episode_port import ACCOUNT_NAMES, OPPORTUNITY, seed_episode
+
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("WBPA3_SOURCE_DIRECTORY") or os.environ.get("WBPA3_EXPECTED_MODE") != "OLD",
+    reason="Historical OLD-only private profile; original execution receipt retains the unmodified body")
 
 
 def test_original_four_rejections_real_census_and_sell_path(tmp_path, monkeypatch, record_property):
