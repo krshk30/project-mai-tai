@@ -99,7 +99,8 @@ class ControlledProvider:
         raise AssertionError("UNCONFIGURED provider working orders; existing real proof required")
 
     async def fetch_order_update(self, request):
-        self._record("order_detail")
+        row = self._record("order_detail")
+        row["result"] = "REFUSED_UNKNOWN_KEEP_RESPONSIBILITY"
         raise AssertionError("UNCONFIGURED provider detail; no guessed terminal reply")
 
     async def fetch_oco_exit_fill(self, *args, **kwargs):

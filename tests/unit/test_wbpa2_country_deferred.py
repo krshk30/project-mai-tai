@@ -434,8 +434,8 @@ async def test_accepted_country_retry_and_old_queue_redelivery_never_create_seco
         await drain_ticks(case)
         await serial(case, retry)  # actual stream redelivery of the old queued envelope
         assert state(case) is None and len(queued(case)) == len(case.provider.requests) == 1
-        assert [entry["operation"] for entry in case.provider.entries] == ["submit", "positions"]
-        assert case.provider.entries[1]["result"] == "REFUSED_UNKNOWN_NEVER_FLAT"
+        assert [entry["operation"] for entry in case.provider.entries] == ["submit", "order_detail"]
+        assert case.provider.entries[1]["result"] == "REFUSED_UNKNOWN_KEEP_RESPONSIBILITY"
     finally:
         await close_case(case)
 
