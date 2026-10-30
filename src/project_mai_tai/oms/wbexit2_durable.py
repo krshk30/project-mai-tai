@@ -24,6 +24,8 @@ def _require(value):
 
 
 def _quantity(value):
+    if type(value) is int:  # Managed-position quantities are mapped Integer.
+        value = Decimal(value)
     _require(isinstance(value, Decimal) and value.is_finite()
              and value >= 0 and value == value.to_integral_value())
     return value

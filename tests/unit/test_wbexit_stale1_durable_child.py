@@ -10,7 +10,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
-from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, Fill, OmsManagedPosition, SystemIncident, TradeIntent, VirtualPosition
+from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, BrokerOrderEvent, Fill, OmsManagedPosition, SystemIncident, TradeIntent, VirtualPosition
 
 from project_mai_tai.oms import wbexit2
 from tests.unit.wbexit_stale1_episode_port import (
@@ -223,3 +223,90 @@ async def test_foreign_Schwab_binding_cannot_enter_Webull_boot_or_accounting(ret
         await wbexit2.hydrate_at_boot(case.service)
     assert case.service._wbexit2_boot_complete is False
     assert snapshot(case.factory) == before and case.attempts == []
+
+
+@pytest.mark.parametrize('operand,allowed', [
+    (0, True), (69, True), (Decimal('69'), True),
+    (True, False), (69.0, False), ('69', False), (None, False),
+    (-1, False), (Decimal('0.5'), False), (Decimal('NaN'), False),
+    (Decimal('Infinity'), False),
+], ids=['ORM_int_zero', 'ORM_int_original', 'Numeric_Decimal', 'bool', 'float',
+        'string', 'missing', 'negative', 'fractional', 'NaN', 'Infinity'])
+def test_declared_ORM_quantity_types_and_strict_refusals(operand, allowed):
+    from sqlalchemy import Integer, Numeric
+    from project_mai_tai.oms.wbexit2_durable import _quantity
+    assert isinstance(OmsManagedPosition.__table__.c.current_quantity.type, Integer)
+    assert isinstance(OmsManagedPosition.__table__.c.original_quantity.type, Integer)
+    assert isinstance(Fill.__table__.c.quantity.type, Numeric)
+    if allowed:
+        assert _quantity(operand) == Decimal(69 if operand else 0)
+    else:
+        with pytest.raises(ValueError): _quantity(operand)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('accounting_case', ['prior_software', 'OUR_sell', 'double_count_refused'])
+async def test_controlled_full_quantity_conservation_including_software(retained_episode, monkeypatch, accounting_case, record_property):
+    """CONTROLLED split 60native+9software; original TNMG replay stays separate."""
+    case = retained_episode
+    monkeypatch.setattr(wbexit2, '_now', lambda: case.now)
+    controlled_at = datetime(2026, 10, 30, 13, 34, 12, tzinfo=UTC)
+    with case.factory.begin() as db:
+        owner = db.get(SystemIncident, WB2_ID)
+        state = deepcopy(owner.payload)
+        entry = db.get(BrokerOrder, UUID(state['identity']['entry_id']))
+        native_fill = db.scalar(select(Fill).where(Fill.side == 'sell'))
+        native_order = db.get(BrokerOrder, native_fill.order_id)
+        native_fill.quantity = native_order.quantity = Decimal(60)
+        native_fill.broker_fill_id = native_order.broker_order_id + ':60'
+        protection = db.get(TradeIntent, UUID('47cf706e-592f-443c-8f37-a1ede53e8148'))
+        payload = deepcopy(protection.payload)
+        proof = json.loads(payload['metadata']['wbattach1_terminal_bookkeeping'])
+        next(c for c in proof['proof']['children'] if c['status'] == 'filled')['filled_quantity'] = '60'
+        payload['metadata']['wbattach1_terminal_bookkeeping'] = json.dumps(proof)
+        protection.payload = payload
+        soft_intent_id = UUID('00000000-0000-0000-0000-000000000091')
+        soft_order_id = UUID('00000000-0000-0000-0000-000000000092')
+        coid = 'CONTROLLED-software-own-nine'
+        metadata = {'entry_order_id': str(entry.id), 'oms_managed_row_id': state['identity']['managed_id']}
+        db.add(TradeIntent(id=soft_intent_id, strategy_id=entry.strategy_id,
+            broker_account_id=entry.broker_account_id, symbol='TNMG', side='sell',
+            intent_type='close', quantity=Decimal(9), reason=state['reason'], status='filled',
+            payload={'metadata': metadata}, created_at=controlled_at, updated_at=controlled_at))
+        db.add(BrokerOrder(id=soft_order_id, intent_id=soft_intent_id, strategy_id=entry.strategy_id,
+            broker_account_id=entry.broker_account_id, symbol='TNMG', side='sell', order_type='market',
+            time_in_force='day', quantity=Decimal(9), status='filled', client_order_id=coid,
+            broker_order_id='CONTROLLED-nine-native', payload=metadata,
+            submitted_at=controlled_at, updated_at=controlled_at))
+        db.add(Fill(id=UUID('00000000-0000-0000-0000-000000000093'), order_id=soft_order_id,
+            strategy_id=entry.strategy_id, broker_account_id=entry.broker_account_id,
+            symbol='TNMG', side='sell', quantity=Decimal(9), price=Decimal('4.54'),
+            broker_fill_id='CONTROLLED-nine-native:9', filled_at=controlled_at, payload={}))
+        db.add(BrokerOrderEvent(order_id=soft_order_id, event_type='filled', event_source='broker',
+                                event_at=controlled_at, payload={}))
+        if accounting_case == 'prior_software':
+            state['prior_software_filled'] = '9'
+            state['remaining'] = '60'
+        else:
+            state['sell'] = {'coid': coid, 'quantity': '9', 'filled_highwater': '9', 'ack': 'filled'}
+            if accounting_case == 'double_count_refused': state['prior_software_filled'] = '9'
+        owner.payload = state
+    before = snapshot(case.factory)
+    await hydrate(case)
+    await wbexit2.refresh_pending(case.service)
+    after = snapshot(case.factory)
+    assert all(after[t] == before[t] for t in before if t != 'system_incidents')
+    assert after['system_incidents'][str(WB3_ID)] == before['system_incidents'][str(WB3_ID)]
+    incident = after['system_incidents'][str(WB2_ID)]
+    state = incident['payload']
+    if accounting_case == 'double_count_refused':
+        assert incident['status'] == 'open' and state['phase'] != 'RESOLVED'
+        assert Decimal(state['remaining']) > 0 and 'durable_accounting_retirement' not in state
+        assert ('live:orb', 'TNMG') in case.service._wbexit2_pending
+    else:
+        assert incident['status'] == 'closed' and state['phase'] == 'RESOLVED' and state['remaining'] == '0'
+        assert sorted(state['child_fill_highwater'].values()) == ['0', '60']
+        assert state['durable_accounting_retirement']['wire_authority'] is False
+        assert ('live:orb', 'TNMG') not in case.service._wbexit2_pending
+    assert case.attempts == [] and state['original_attempt_outcome'] == 'FAIL'
+    record_property('scope', 'CONTROLLED60native+9software_conservation_not_originalTNMGeconomics')
