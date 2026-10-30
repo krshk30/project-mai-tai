@@ -29,6 +29,7 @@ async def test_original24_keeps_wb2_hold_despite_real_durable_child_copy(retaine
     original = json.loads((Path(__file__).parents[1] / 'fixtures/wbexit_stale1_original24_finish.json').read_text())
     assert original['head'] == '24d80deb1301cd3bf4c68f4efda98cd368a6716c'
     namespace = dict(wbexit2.__dict__)
+    namespace['_now'] = lambda: case.now
     exec(compile(original['finish_call'], '<pinned-original24-finish_call>', 'exec'), namespace)
     monkeypatch.setattr(wbexit2, 'finish_call', namespace['finish_call'])
     monkeypatch.setattr(wbexit2, '_now', lambda: case.now)
