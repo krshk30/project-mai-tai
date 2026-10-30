@@ -245,11 +245,13 @@ def test_declared_ORM_quantity_types_and_strict_refusals(operand, allowed):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('accounting_case', ['prior_software', 'OUR_sell', 'double_count_refused'])
+@pytest.mark.parametrize('accounting_case', ['prior_software', 'OUR_sell', 'double_count_refused',
+    'OUR_cancelled_zero', 'OUR_pending_zero_refused'])
 async def test_controlled_full_quantity_conservation_including_software(retained_episode, monkeypatch, accounting_case, record_property):
     """CONTROLLED split 60native+9software; original TNMG replay stays separate."""
     case = retained_episode
     monkeypatch.setattr(wbexit2, '_now', lambda: case.now)
+    zero_case = accounting_case in {'OUR_cancelled_zero', 'OUR_pending_zero_refused'}
     controlled_at = datetime(2026, 10, 30, 13, 34, 12, tzinfo=UTC)
     with case.factory.begin() as db:
         owner = db.get(SystemIncident, WB2_ID)
@@ -257,12 +259,13 @@ async def test_controlled_full_quantity_conservation_including_software(retained
         entry = db.get(BrokerOrder, UUID(state['identity']['entry_id']))
         native_fill = db.scalar(select(Fill).where(Fill.side == 'sell'))
         native_order = db.get(BrokerOrder, native_fill.order_id)
-        native_fill.quantity = native_order.quantity = Decimal(60)
-        native_fill.broker_fill_id = native_order.broker_order_id + ':60'
+        native_quantity = 69 if zero_case else 60
+        native_fill.quantity = native_order.quantity = Decimal(native_quantity)
+        native_fill.broker_fill_id = native_order.broker_order_id + ':' + str(native_quantity)
         protection = db.get(TradeIntent, UUID('47cf706e-592f-443c-8f37-a1ede53e8148'))
         payload = deepcopy(protection.payload)
         proof = json.loads(payload['metadata']['wbattach1_terminal_bookkeeping'])
-        next(c for c in proof['proof']['children'] if c['status'] == 'filled')['filled_quantity'] = '60'
+        next(c for c in proof['proof']['children'] if c['status'] == 'filled')['filled_quantity'] = str(native_quantity)
         payload['metadata']['wbattach1_terminal_bookkeeping'] = json.dumps(proof)
         protection.payload = payload
         soft_intent_id = UUID('00000000-0000-0000-0000-000000000091')
@@ -278,18 +281,26 @@ async def test_controlled_full_quantity_conservation_including_software(retained
             time_in_force='day', quantity=Decimal(9), status='filled', client_order_id=coid,
             broker_order_id='CONTROLLED-nine-native', payload=metadata,
             submitted_at=controlled_at, updated_at=controlled_at))
-        db.add(Fill(id=UUID('00000000-0000-0000-0000-000000000093'), order_id=soft_order_id,
-            strategy_id=entry.strategy_id, broker_account_id=entry.broker_account_id,
-            symbol='TNMG', side='sell', quantity=Decimal(9), price=Decimal('4.54'),
-            broker_fill_id='CONTROLLED-nine-native:9', filled_at=controlled_at, payload={}))
-        db.add(BrokerOrderEvent(order_id=soft_order_id, event_type='filled', event_source='broker',
+        if not zero_case:
+            db.add(Fill(id=UUID('00000000-0000-0000-0000-000000000093'), order_id=soft_order_id,
+                strategy_id=entry.strategy_id, broker_account_id=entry.broker_account_id,
+                symbol='TNMG', side='sell', quantity=Decimal(9), price=Decimal('4.54'),
+                broker_fill_id='CONTROLLED-nine-native:9', filled_at=controlled_at, payload={}))
+        terminal = ('cancelled' if accounting_case == 'OUR_cancelled_zero'
+                    else 'accepted' if accounting_case == 'OUR_pending_zero_refused' else 'filled')
+        db.add(BrokerOrderEvent(order_id=soft_order_id, event_type=terminal, event_source='broker',
                                 event_at=controlled_at, payload={}))
         if accounting_case == 'prior_software':
             state['prior_software_filled'] = '9'
             state['remaining'] = '60'
         else:
-            state['sell'] = {'coid': coid, 'quantity': '9', 'filled_highwater': '9', 'ack': 'filled'}
+            state['sell'] = {'coid': coid, 'quantity': '9',
+                'filled_highwater': '0' if zero_case else '9', 'ack': terminal}
             if accounting_case == 'double_count_refused': state['prior_software_filled'] = '9'
+        if zero_case:
+            db.flush()
+            db.get(BrokerOrder, soft_order_id).status = terminal
+            db.get(TradeIntent, soft_intent_id).status = terminal
         owner.payload = state
     before = snapshot(case.factory)
     await hydrate(case)
@@ -299,14 +310,14 @@ async def test_controlled_full_quantity_conservation_including_software(retained
     assert after['system_incidents'][str(WB3_ID)] == before['system_incidents'][str(WB3_ID)]
     incident = after['system_incidents'][str(WB2_ID)]
     state = incident['payload']
-    if accounting_case == 'double_count_refused':
+    if accounting_case in {'double_count_refused', 'OUR_pending_zero_refused'}:
         assert incident['status'] == 'open' and state['phase'] != 'RESOLVED'
         assert Decimal(state['remaining']) > 0 and 'durable_accounting_retirement' not in state
         assert ('live:orb', 'TNMG') in case.service._wbexit2_pending
     else:
         assert incident['status'] == 'closed' and state['phase'] == 'RESOLVED' and state['remaining'] == '0'
-        assert sorted(state['child_fill_highwater'].values()) == ['0', '60']
+        assert sorted(state['child_fill_highwater'].values()) == ['0', str(native_quantity)]
         assert state['durable_accounting_retirement']['wire_authority'] is False
         assert ('live:orb', 'TNMG') not in case.service._wbexit2_pending
     assert case.attempts == [] and state['original_attempt_outcome'] == 'FAIL'
-    record_property('scope', 'CONTROLLED60native+9software_conservation_not_originalTNMGeconomics')
+    record_property('scope', accounting_case + '_CONTROLLED_conservation_not_originalTNMGeconomics')

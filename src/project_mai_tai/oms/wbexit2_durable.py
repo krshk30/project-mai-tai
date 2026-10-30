@@ -45,11 +45,11 @@ def _object(value):
     return value
 
 
-def _fills(db, order, side, anchor, now):
+def _fills(db, order, side, anchor, now, *, terminal_zero=False):
     from project_mai_tai.oms.wbexit3 import LIMIT
     rows = db.scalars(select(Fill).where(Fill.order_id == order.id).limit(LIMIT + 1)
         .with_for_update().execution_options(populate_existing=True)).all()
-    _require(len(rows) <= LIMIT and bool(rows))
+    _require(len(rows) <= LIMIT and (bool(rows) or terminal_zero))
     seen = set()
     for fill in rows:
         at = _utc_row_time(fill.filled_at)
@@ -179,10 +179,13 @@ def _reconcile(db, state, now):
                  and _quantity(order.quantity) == wbexit2.positive_quantity(sell['quantity'])
                  and db.scalar(select(BrokerOrderEvent.id).where(BrokerOrderEvent.order_id == order.id,
                     BrokerOrderEvent.event_source == 'broker', BrokerOrderEvent.event_type == order.status).limit(1)) is not None)
-        fills = _fills(db, order, 'sell', anchor, now)
+        fills = _fills(db, order, 'sell', anchor, now,
+            terminal_zero=order.status in {'cancelled', 'rejected', 'expired'}
+                and wbexit2.positive_quantity(sell['filled_highwater'], zero=True) == 0)
         our = sum((f.quantity for f in fills), Decimal(0))
         _require(our == wbexit2.positive_quantity(sell['filled_highwater'], zero=True))
-        last_fill = max(last_fill, *(_utc_row_time(f.filled_at) for f in fills))
+        if fills:
+            last_fill = max(last_fill, *(_utc_row_time(f.filled_at) for f in fills))
     _require(wbexit3.prior_software_quantity(db, entry) == prior + our)
     _require(sum((Decimal(v) for v in highwater.values()), Decimal(0)) + prior + our == original)
     vp = db.scalars(select(VirtualPosition).where(VirtualPosition.strategy_id == entry.strategy_id,
