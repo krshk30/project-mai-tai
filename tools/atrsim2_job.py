@@ -139,6 +139,10 @@ def h2_check(symbol, at):
 # 13:53/13:56/13:58 UTC as the line fell; NCPL held 1.81 while its line stayed ~1.79); exits: OCO target +5% / stop -8%,
 # CONF1 confirmation (bar after the fill's bar must close long), sell flip.
 LIVE_OFFSET, LIVE_BAND, LIVE_TARGET, LIVE_STOP = 0.005, 0.005, 0.05, 0.08
+# Live ESTABLISHED-SHORT gate (schwab_1m_v2 cw_v2_resting_entry_min_short_bars, default 3): the
+# waiting buy is placed only after the line has been short for 3 closed bars (TNMG 10-30: SELL bar
+# 09:13, rested at 09:17). A shorter short never gets a waiting buy (ONEG 10-30 10:50, 1 bar).
+LIVE_MIN_SHORT_BARS = 3
 
 
 def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=False):
@@ -152,8 +156,10 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=F
     cutoff = datetime.combine(day, datetime.min.time(), ET).replace(hour=15, minute=45)
     session_end = datetime.combine(day, datetime.min.time(), ET).replace(hour=20)
     at = lambda i: datetime.fromtimestamp(series[i].ts / 1000, timezone.utc)
-    first = si + 1
-    if first > fi or rows[first - 1]["trail"] is None:
+    first = si + 1 + LIVE_MIN_SHORT_BARS
+    if first > fi:
+        return dict(base, status="SKIPPED", reason="short line lasted under 3 bars (live established-short rule)")
+    if rows[first - 1]["trail"] is None:
         return dict(base, status="SKIPPED", reason="no resting bar before the flip")
     seg_start = max(at(first), open_from)
     # The live waiting buy stays after the flip bar closes until it fills, a sell flip, or 15:45.

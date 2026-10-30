@@ -143,3 +143,33 @@ def test_h2_check_veto_keep_and_unknown():
         job.WINDOWS = None
         for s in ("AAA", "P1", "P2", "P3"):
             job.LINES.pop(s, None)
+
+
+def test_live_rules_waiting_buy_needs_an_established_three_bar_short(monkeypatch):
+    # Live gate (min_short_bars=3): TNMG 10-30 SELL bar 09:13 ET → rested from 09:17; ONEG 10-30 1-bar short → no rest.
+    from datetime import date
+    t = lambda m, s=0: datetime(2026, 10, 30, 13, m, s, tzinfo=timezone.utc)
+    def build(short_bars):
+        n = 1 + short_bars + 1  # long bar, SELL bar + rest of the short, BUY flip bar
+        series = [job.Bar(int(t(10 + i).timestamp() * 1000), 1.0, 1.0, 1.0, 1.0, 10_000) for i in range(n)]
+        rows = [dict(flip=None, trail=1.0) for _ in range(n)]
+        rows[1]["flip"], rows[-1]["flip"] = "SELL", "BUY"
+        return series, rows
+    prints = []
+    monkeypatch.setattr(job, "trades", lambda *a, **k: list(prints))
+    monkeypatch.setattr(job, "confirmed", lambda *a, **k: True)
+    monkeypatch.setattr(job, "continuous", lambda *a, **k: True)
+    try:
+        series, rows = build(1)
+        job.LINES["ONEG"] = (series, rows)
+        out = job.live_rules_sim(None, "ONEG", series[-1], None, date(2026, 10, 30), t(59), {})
+        assert out["status"] == "SKIPPED" and "under 3 bars" in out["reason"]
+        series, rows = build(4)  # SELL bar 13:11 + 3 more short bars → rest from 13:15 on the 13:14 line
+        job.LINES["TNMG"] = (series, rows)
+        prints[:] = [(t(14, 30), 1.02), (t(15, 10), 1.01)]  # a cross before the rest exists does not count
+        out = job.live_rules_sim(None, "TNMG", series[-1], None, date(2026, 10, 30), t(59), {})
+        # The 13:14:30 print predates the waiting buy (ignored); the 13:15:10 print fills it.
+        assert out["status"] == "OPEN" and out["entry_price"] == 1.01 and out["entry_time"] == "09:15:10"
+    finally:
+        job.LINES.pop("ONEG", None)
+        job.LINES.pop("TNMG", None)
