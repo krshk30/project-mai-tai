@@ -16,8 +16,9 @@ from uuid import UUID
 from sqlalchemy import select, text
 
 from project_mai_tai.atr_country_route import selection_from_metadata
-from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, Strategy, TradeIntent
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill, Strategy, TradeIntent
 from project_mai_tai.events import TradeIntentEvent, stream_name
+from project_mai_tai.fanout_segment_store import SNAPSHOT_TYPE as SEGMENT_SNAPSHOT, current_session_anchor
 from project_mai_tai.strategy_core.v2_entry_sizing import resting_buy_limit, resting_buy_stop
 
 
@@ -215,6 +216,8 @@ def precheck(service, event, session):
 
 def no_working_reason(service, session, event, *, ignore_client=""):
     """Positive existing durable terminal audits, never a native-flat inference."""
+    session.flush()
+    session.expire_all()  # Do not reuse identity-map values across a prewire await.
     account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == event.payload.broker_account_name))
     strategy = session.scalar(select(Strategy).where(Strategy.code == event.payload.strategy_code))
     if (account is None or account.provider != "webull" or account.is_active is not True
@@ -298,9 +301,59 @@ def no_working_reason(service, session, event, *, ignore_client=""):
                 or own.broker_order_id is not None or own.quantity != event.payload.quantity
                 or str((own.payload or {}).get("fanout_slot_id")) != _key(event)[4]
                 or str((own.payload or {}).get("fanout_segment_id")) != _key(event)[3]
-                or parent is None or str((parent.payload or {}).get("event_id")) != str(event.event_id)):
+                or parent is None or str((parent.payload or {}).get("event_id")) != str(event.event_id)
+                or own.submitted_at is not None or not own.payload.get("bot_control_prepared_at")
+                or own.payload.get("bot_control_permit")
+                or session.scalar(select(BrokerOrderEvent.id).where(BrokerOrderEvent.order_id == own.id).limit(1))
+                or session.scalar(select(Fill.id).where(Fill.order_id == own.id).limit(1))):
             return "country_owned_pending_UNKNOWN"
+        return _unsent_dispatch_gate(service, session, account, event, ignore_client)
     return service._mirrorhold_gate(session, event, ignore_client=ignore_client, session_bound=True)
+
+
+def _unsent_dispatch_gate(service, session, account, event, own_client):
+    """Same session universe/audit readers, excluding ONLY our proven unsent row.
+
+    The mirror gate deliberately treats a NULL submission clock as unknown.
+    Country preparation has separately proved that exact new row unsent; every
+    OTHER NULL/ambiguous row retains the original refusal behavior.
+    """
+    if not service._nfq_window_open(event):
+        return "resting_window_ended"
+    latest = session.scalar(select(DashboardSnapshot).where(
+        DashboardSnapshot.snapshot_type == SEGMENT_SNAPSHOT,
+        DashboardSnapshot.payload["symbol"].as_string() == event.payload.symbol,
+    ).order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc()).limit(1))
+    evidence = latest.payload if latest is not None else {}
+    if (evidence.get("strategy_code") != event.payload.strategy_code
+            or type(evidence.get("active")) is not bool
+            or evidence.get("session_anchor") != current_session_anchor(service._nfq_now()).isoformat()):
+        return "segment_identity_unproven"
+    if not evidence["active"] or str(evidence.get("fanout_segment_id")) != _key(event)[3]:
+        return "segment_ended"
+    for order in service._mirrorhold_session_orders(session, account, event):
+        if order.client_order_id == own_client:
+            continue  # Exact owned new no-permit/no-audit/no-fill row checked above.
+        if not service._mirrorhold_timestamp_readable(session, order.submitted_at):
+            return "dispatch_uncertain"
+        md = order.payload
+        if not service._mirrorhold_segment_readable(md):
+            if service._mirrorhold_unrelated_legacy_fill(session, order, event):
+                continue
+            return "dispatch_uncertain"
+        if (str(md["fanout_segment_id"]) == _key(event)[3]
+                and (not isinstance(md.get("fanout_slot_id"), str) or not md["fanout_slot_id"].strip())):
+            return "dispatch_uncertain"
+        if (str(md["fanout_segment_id"]) == _key(event)[3] and md.get("fanout_slot_id") == _key(event)[4]
+                and (order.status in {"filled", "partially_filled"} or session.scalar(
+                    select(Fill.id).where(Fill.order_id == order.id).limit(1)))):
+            return "mirror_filled"
+        if order.status in {"rejected", "cancelled", "canceled", "expired", "aborted"}:
+            if not service._mirrorhold_clear_order(session, order):
+                return "dispatch_uncertain"
+        elif order.status != "filled":
+            return "dispatch_uncertain" if order.status == "pending" else "duplicate_buy"
+    return None
 
 
 def claim(service, event):
@@ -336,6 +389,32 @@ def dispatch(service, session, event, client):
             or state.queued_event != str(event.event_id)):
         return "country_slot_claim_changed"
     return no_working_reason(service, session, event, ignore_client=client)
+
+
+def prepare_new_pending(service, session, event, request, order):
+    """The caller has just CREATED this exact retry row, before any submit.
+
+    get_or_create_order stamps a normal submission time. A freshly created
+    country retry is still unsent: record its preparation clock and leave the
+    submission clock absent so the unchanged bot-control fence can authorize it.
+    Never adopt/reset an existing order or manufacture clearance for a permit.
+    """
+    state = _states(service).get(_key(event))
+    parent = session.get(TradeIntent, order.intent_id)
+    if (not _retry(event) or state is None or not state.claimed
+            or state.queued_event != str(event.event_id)
+            or order.client_order_id != request.client_order_id
+            or request.client_order_id != service._build_client_order_id(event)
+            or order.status != "pending" or order.broker_order_id is not None
+            or order.symbol != request.symbol or order.side != "buy"
+            or order.quantity != request.quantity or order.payload != request.metadata
+            or "bot_control_permit" in order.payload or parent is None
+            or str(parent.payload.get("event_id")) != str(event.event_id)
+            or session.scalar(select(BrokerOrderEvent.id).where(BrokerOrderEvent.order_id == order.id).limit(1))
+            or session.scalar(select(Fill.id).where(Fill.order_id == order.id).limit(1))):
+        raise ValueError("country_new_pending_not_exact_unsent_owned_buy")
+    order.payload = {**order.payload, "bot_control_prepared_at": order.submitted_at.isoformat()}
+    order.submitted_at = None
 
 
 def schedule(service, symbol):

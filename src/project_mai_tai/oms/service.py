@@ -2898,6 +2898,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             if (event.payload.metadata.get("rpg_handoff_token") or event.payload.metadata.get("nfq_retry_token")
                     or self._is_webull_mirror_deferred_resubmit(event) or self._mirrorhold_scope(event)):
                 # Both durable lanes must record the exact client id before wire.
+                country_pending_new = (event.payload.metadata.get("webull_country_deferred_resubmit") == "true"
+                    and session.scalar(select(BrokerOrder.id).where(
+                        BrokerOrder.client_order_id == request.client_order_id)) is None)
+                if event.payload.metadata.get("webull_country_deferred_resubmit") == "true" and not country_pending_new:
+                    raise ValueError("country_pending_dispatch_already_exists")
                 pending_order = self.store.get_or_create_order(
                     session, intent=intent, strategy_id=strategy.id,
                     broker_account_id=broker_account.id, client_order_id=request.client_order_id,
@@ -2905,6 +2910,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     metadata=dict(request.metadata), order_type=request.order_type,
                     time_in_force=request.time_in_force, status="pending",
                 )
+                if country_pending_new:
+                    webull_country_deferred.prepare_new_pending(self, session, event, request, pending_order)
                 session.commit()
                 rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                 if rpg_refusal:
