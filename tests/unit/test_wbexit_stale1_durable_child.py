@@ -1,6 +1,8 @@
 """Original row-copy characterization; not live/native or full boot evidence."""
 import os
 import json
+from copy import deepcopy
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -42,11 +44,23 @@ async def test_original24_keeps_wb2_hold_despite_real_durable_child_copy(retaine
     assert child['quantity'] == Decimal(69) and child['price'] == Decimal('4.54')
     await hydrate(case)
     assert not case.service._wbexit3_pending
+    scan_started = datetime.now(UTC)
     await wbexit2.refresh_pending(case.service)
+    scan_ended = datetime.now(UTC)
     after = snapshot(case.factory)
-    assert after == before
+    expected = deepcopy(before)
+    expected_owner = expected['system_incidents'][str(WB2_ID)]
+    actual_clock = after['system_incidents'][str(WB2_ID)]['payload']['updated_at']
+    assert scan_started <= datetime.fromisoformat(actual_clock) <= scan_ended
+    expected_owner['payload'].update(
+        generation=expected_owner['payload']['generation'] + 1,
+        updated_at=actual_clock,
+        hold_reason='named_close_owner_pending_next_permitted_observation',
+        scan_exception=True, original_attempt_outcome='FAIL')
+    expected_owner['severity'] = 'critical'
+    assert after == expected
     state = after['system_incidents'][str(WB2_ID)]['payload']
     assert state['phase'] == 'HOLD' and Decimal(state['remaining']) == 69
     assert case.service._wbexit2_pending[('live:orb', 'TNMG')]['owner_id'] == str(WB2_ID)
     assert case.attempts == []
-    record_property('OLD24_original_copy', 'HOLD_remaining69_WB3_alreadyResolved_all_rows_unchanged_providerRedis0')
+    record_property('OLD24_original_copy', 'HOLD_remaining69_exact_expected_checkpoint_only_WB3_economic_rows_unchanged_providerRedis0')
