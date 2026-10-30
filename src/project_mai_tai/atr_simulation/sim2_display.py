@@ -16,14 +16,23 @@ from .cp_sim_display import panel
 ET = ZoneInfo("America/New_York")
 SNAPSHOT_TYPE = "atr_sim2_day"
 TITLES = ("FIRSTBAR", "FIRSTBAR+2min", "LIVE rules SIM", "LIVE+2min SIM")
-LIVE2_TITLE = "LIVE+2min SIM"
-LIVE2_DESCRIPTION = ("Simulation, not real trades: the LIVE rules SIM entry and exits, plus the 2-minute rule — "
-                     "a trade that is not up 1% within 2 minutes of the fill is sold.")
-LIVE_TITLE = "LIVE rules SIM"
-LIVE_DESCRIPTION = ("Simulation, not real trades: the same scanner-confirmed signals traded with the live ATR bot's "
-                    "own rules — waiting buy at the line +0.5% (limit +0.5% more), following the line every minute while short and kept after the flip until filled; "
-                    "exits: target +5%, stop -8%, confirmation exit if the bar after the fill does not close long, "
-                    "sell flip.")
+# Operator 10-29 20:0x: the names confused him — each table says plainly how it BUYS and how it SELLS.
+# The keys above stay as stored in the day rows; only the heading and description shown change.
+_LIVE_BUY = ("BUY like the live bot: waiting buy at the line +0.5% (limit +0.5% more), following the line every "
+             "minute while short and kept after the flip until filled.")
+_FB_BUY = "BUY at the first trade at or above the flip bar's high + 1 cent (skips the flip bar itself)."
+_SELL = "SELL at target +5%, stop -8%, or the next sell flip"
+_TWO_MIN = " — PLUS the 2-minute cut: a trade not up 1% within 2 minutes of the buy is sold."
+SHOWN = {
+    "FIRSTBAR": ("1 · FIRSTBAR buy", _FB_BUY + " " + _SELL + "."),
+    "FIRSTBAR+2min": ("2 · FIRSTBAR buy + 2-minute cut", _FB_BUY + " " + _SELL + _TWO_MIN),
+    "LIVE rules SIM": ("3 · LIVE bot buy", _LIVE_BUY + " " + _SELL
+                       + ", or the confirmation exit (the bar after the buy does not close long)."),
+    "LIVE+2min SIM": ("4 · LIVE bot buy + 2-minute cut", _LIVE_BUY + " " + _SELL
+                      + ", or the confirmation exit" + _TWO_MIN),
+}
+NOTE = ("Simulations, not real trades: every momentum-scanner-confirmed buy flip today, $600 per trade. "
+        "Tables 1–2 buy the FIRSTBAR way, tables 3–4 buy the LIVE bot way; tables 2 and 4 add the 2-minute cut.")
 # Operator 10-29 17:1x: full-width panels, all rows visible, readable columns.
 STYLE = ('<style>#atr-sim2{grid-column:1/-1;min-width:0;max-width:100%;width:100%}'
          '#atr-sim2 .panel{max-width:100%;width:100%;margin-bottom:16px;box-sizing:border-box}'
@@ -78,7 +87,7 @@ def render_day(doc, *, render_row, day: str):
         note = ("No simulation for " + day + " yet — the job runs every 5 minutes from 04:00 ET."
                 if doc is None else "Simulation unavailable right now (" + doc["unavailable"] + ").")
         return ('<div data-firstbar-mount="true" data-atrsim-firstbar="true"><section class="panel full">'
-                '<h3>ATR simulation (FIRSTBAR / FIRSTBAR+2min)</h3><p>' + escape(note) + '</p></section></div>')
+                '<h3>ATR simulation (4 tables)</h3><p>' + escape(note) + '</p></section></div>')
     generated = datetime.fromisoformat(doc["generated_at"]).astimezone(ET).strftime("%H:%M:%S")
     panels = []
     for title in TITLES:
@@ -89,9 +98,8 @@ def render_day(doc, *, render_row, day: str):
         total = sum(r.get("pnl", 0.0) for r in traded)
         updated = (f"{doc['trading_day']} · updated {generated} ET · {len(traded)} trades, {skipped} signals without a trade"
                    f" · total ${total:+.2f} on ${doc.get('notional_usd', 600):.0f} per trade")
-        extra = ({"description": LIVE_DESCRIPTION} if title == LIVE_TITLE
-                 else {"description": LIVE2_DESCRIPTION} if title == LIVE2_TITLE else {})
-        panels.append(panel(title, [_display(r) for r in shown], render_row=render_row, marker=title,
-                            updated_text=updated, **extra))
+        heading, description = SHOWN[title]
+        panels.append(panel(heading, [_display(r) for r in shown], render_row=render_row, marker=title,
+                            updated_text=updated, description=description))
     return ('<div id="atr-sim2" class="full" data-atrsim2="day" data-firstbar-mount="true" data-atrsim-firstbar="true">'
-            + STYLE + "".join(panels) + "</div>")
+            + STYLE + '<p class="sim-desc">' + escape(NOTE) + "</p>" + "".join(panels) + "</div>")
