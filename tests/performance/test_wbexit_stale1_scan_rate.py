@@ -2,6 +2,7 @@
 import asyncio
 from decimal import Decimal
 import logging
+import os
 from time import perf_counter
 
 import pytest
@@ -14,6 +15,8 @@ from tests.unit.wbexit_stale1_episode_port import seed_episode, hydrate, snapsho
 
 @pytest.mark.asyncio
 async def test_existing_DB_scan_60s_held_owner_with_240Hz_foreground(tmp_path, record_property):
+    if not os.environ.get('WBSTALE1_EPISODE_SOURCE'):
+        pytest.skip('requires the explicitly reviewed private C1 episode export')
     case = seed_episode(tmp_path)
     logger = case.service.logger
     previous = (logger.handlers[:], logger.propagate, logger.level)
