@@ -5,20 +5,68 @@ No old WFF/boot/cost modules are collected or called by these controls.
 """
 
 from datetime import datetime
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
 from decimal import Decimal
 from zoneinfo import ZoneInfo
+from uuid import uuid4
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from project_mai_tai.brokerdecides1_sync import account_names
+from project_mai_tai.db.models import Base, BrokerAccount, Strategy
 from tests.line_restore_acceptance_factory import make_line_restore_case
 from tools.l12_worx_olox_replay import CASES, consume_book, evidence_summary, guard_receipt, install_recording_emitters, load_e_packet, load_evidence, load_olox_partial_market, make_causal_market_case, replay_market_packet, replay_original_callbacks, select_available_bar_rows
 
 
 CONTRACT = json.loads((Path(__file__).parents[1] / "fixtures/l12_worx_olox_case_contract_20261022.json").read_text())
+RETAINED = Path(__file__).parents[1] / "fixtures/l12_worx_olox_retained"
+
+
+def retained_input(name):
+    defaults = {"L12_E_PACKET_ROOT": RETAINED,
+                "L12_OLOX_RETAINED_BARS": RETAINED / "SLOTCAP-OLOX-BARS-20261021.jsonl"}
+    return os.environ.get(name, str(defaults[name]))
+
+
+def retained_cases():
+    explicit = os.environ.get("L12_CASE_RETAINED_EXPORT")
+    if explicit is not None:
+        return load_evidence(explicit)  # Full122 bytes/universe remain hash-checked.
+    raw = (RETAINED / "case_subset.json").read_bytes()
+    assert sha256(raw).hexdigest() == "09958ee138421b6e91c987eefe1586a09aa59318fa20421e55b288d22510bb05"
+    subset = json.loads(raw)
+    assert subset["source_sha256"] == "31147bd20bb1f0c3e9a997bc45f9dbf41ef5fb71a6a58bec4b9c0a9e30c6c5f6"
+    assert subset["source_record_count"] == 122 and set(subset["cases"]) == set(CASES)
+    assert subset["scope"] == "EXACT_SELECTED_RECORDS_NOT_FULL_122_EXPORT_OR_NATIVE_BOOK"
+    rows = {}
+    for case_id, (index, symbol, day, flip) in CASES.items():
+        selected = subset["cases"][case_id]
+        assert selected["source_pointer"] == f"/{index}"
+        row = selected["record"]
+        assert (row["sym"], row["day"], row["flip"]) == (symbol, day, flip)
+        rows[case_id] = row
+    return rows
+
+
+@pytest.fixture
+def journal_factory(tmp_path):
+    """CONTROLLED current journal, never historical native or economic proof."""
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'l12-journal.sqlite'}")
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(engine, expire_on_commit=False)
+    with factory.begin() as session:
+        session.add(Strategy(code="schwab_1m_v2", name="CONTROLLED L12 publication"))
+        session.add_all(BrokerAccount(name=binding["account"], provider=binding["provider"],
+            environment="test") for binding in CONTRACT["controlled_account_bindings"])
+    try:
+        yield factory
+    finally:
+        engine.dispose()
 
 
 def make_case(record):
@@ -40,9 +88,13 @@ def make_case(record):
         "strategy_schwab_1m_v2_broker_provider": "simulated",
         "oms_adapter": "simulated",
     })
-    # Bind only the exported previous SELL identity for the card scope. No
-    # invented bars/owner budget/line-complete attestation/entry permission.
-    case.strategy.watchlist_state(case.symbol).atr_short_flip_bar_ts = short
+    state = case.strategy.watchlist_state(case.symbol)
+    state.atr_short_flip_bar_ts = short
+    # CONTROLLED OLD cap-only blocker: L12 is an exception to this note, not a
+    # universal native gate. This is not historical cap/owner/native evidence
+    # and supplies no bars, line-complete attestation or entry permission.
+    state.cw_seed_cap_watch_start_ms = short
+    state.cw_resting_taken = state.cw_reclaim_taken = True
     return case
 
 
@@ -123,7 +175,7 @@ async def test_incomplete_market_packet_cannot_manufacture_case_buy(record):
 
 
 def test_actual_retained_export_binding_keeps_missing_native_books_unknown():
-    rows = load_evidence(os.environ["L12_CASE_RETAINED_EXPORT"])
+    rows = retained_cases()
     assert set(rows) == set(CASES)
     for case_id, row in rows.items():
         receipt = evidence_summary(case_id, row)
@@ -157,15 +209,32 @@ def test_controlled_account_identity_is_explicit_not_paper_or_zip_inference(reco
 @pytest.mark.asyncio
 @pytest.mark.parametrize("record", CONTRACT["cases"], ids=lambda row: row["case_id"])
 @pytest.mark.parametrize("mode", ["working", "position", "stale", "CANCELACK", "missing"])
-async def test_real_emitter_refuses_negative_book_before_xadd(record, mode):
+async def test_real_emitter_refuses_negative_book_before_xadd(record, mode, journal_factory):
+    from project_mai_tai.brokerdecides1_prewire_authority import SIDECAR
     from project_mai_tai.strategy_core.schwab_1m_v2 import TradeIntentDraft
+    from project_mai_tai.v2_removed_wait import RemovedWaitStore
 
     case = make_case(record)
     transport = install_recording_emitters(case)
     await consume_book(case, None if mode == "missing" else controlled_packet(case, mode))
+    case.bot.session_factory = journal_factory
+    store = RemovedWaitStore(journal_factory, prewire_authority=True)
+    case.strategy._removed_wait_dispatch_persist = store.record_dispatch
+    token = f"CONTROLLED-NEGATIVE-{uuid4().hex}"
+    opportunity = str(case.strategy.watchlist_state(case.symbol).atr_short_flip_bar_ts)
+    # Earn the real current journal capability so this control reaches the
+    # native-card refusal, rather than stopping at a missing-authority guard.
+    capability = store.record_dispatch({"schema_version": 1, "strategy_code": "schwab_1m_v2",
+        "brokerdecides_exception": True, "symbol": case.symbol, "opportunity_id": opportunity,
+        "account_names": list(account_names(case.settings)), "kind": "attempt",
+        "attempt_token": token, "account_name": case.schwab.broker_account_name})
     # Explicit synthetic boundary stimulus, NOT a bar-generated/historical draft.
     draft = TradeIntentDraft(case.symbol, "buy", "open", Decimal("1"),
-        "CONTROLLED_NEGATIVE_SEND_FENCE_ONLY", {})
+        "CONTROLLED_NEGATIVE_SEND_FENCE_ONLY", {"fanout_segment_id": opportunity,
+            "clearwait_dispatch_token": token})
+    setattr(draft, SIDECAR, capability)
+    case.schwab.publication_boundary_factory = case.bot._brokerdecides1_publication_boundary
+    case.schwab.on_prewire_refusal = case.bot._brokerdecides1_prewire_refusal
     with pytest.raises(ValueError, match="brokerdecides1_hold"):
         await case.schwab.emit(draft)
     assert transport.publications == []
@@ -177,7 +246,7 @@ async def test_real_emitter_refuses_negative_book_before_xadd(record, mode):
 ])
 def test_e_packet_binds_original_arm_not_census_or_1325_quote_wait(case_id, expected_trigger):
     manifest = json.loads((Path(__file__).parents[1] / "fixtures/l12_worx_olox_e_packet_20261022.json").read_text())
-    packet = load_e_packet(os.environ["L12_E_PACKET_ROOT"], case_id, manifest)
+    packet = load_e_packet(retained_input("L12_E_PACKET_ROOT"), case_id, manifest)
     assert packet["issues"] == []
     assert len(packet["arms"]) == 1
     assert packet["arms"][0]["trigger"] == expected_trigger
@@ -188,7 +257,7 @@ def test_e_packet_binds_original_arm_not_census_or_1325_quote_wait(case_id, expe
 @pytest.mark.parametrize("case_id", tuple(CASES))
 def test_e_packet_preserves_fill_order_intent_reason_and_account_links(case_id):
     manifest = json.loads((Path(__file__).parents[1] / "fixtures/l12_worx_olox_e_packet_20261022.json").read_text())
-    packet = load_e_packet(os.environ["L12_E_PACKET_ROOT"], case_id, manifest)
+    packet = load_e_packet(retained_input("L12_E_PACKET_ROOT"), case_id, manifest)
     assert len(packet["fill_order_intent_links"]) == len(packet["fills_raw"])
     for link in packet["fill_order_intent_links"]:
         assert link["order_raw"] is not None
@@ -199,7 +268,7 @@ def test_e_packet_preserves_fill_order_intent_reason_and_account_links(case_id):
 
 
 def test_e_olox_original_1329_partial_bars_are_not_full_prefix_or_native_clock():
-    packet = load_olox_partial_market(os.environ["L12_OLOX_RETAINED_BARS"])
+    packet = load_olox_partial_market(retained_input("L12_OLOX_RETAINED_BARS"))
     assert packet["case_id"] == "OLOX-20261021-1329"
     assert packet["coverage"]["complete"] is False
     assert packet["events"][-1]["row"]["bar_time"] == "2026-10-21T17:29:00+00:00"
@@ -214,9 +283,12 @@ def test_e_olox_original_1329_partial_bars_are_not_full_prefix_or_native_clock()
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["flat", "working", "position", "stale", "LOSTACK", "CANCELACK"])
-async def test_e_olox_real_market_callbacks_preserve_partial_scope_under_native_branches(mode):
-    packet = load_olox_partial_market(os.environ["L12_OLOX_RETAINED_BARS"])
+async def test_e_olox_real_market_callbacks_preserve_partial_scope_under_native_branches(mode, journal_factory):
+    packet = load_olox_partial_market(retained_input("L12_OLOX_RETAINED_BARS"))
     case = make_causal_market_case(packet)
+    # The current consumer rechecks reserved tokens in the durable journal.
+    # An actual empty CONTROLLED table cannot retire the LOSTACK reservation.
+    case.bot.session_factory = journal_factory
     assert case.now_ms == packet["events"][0]["received_ms"]
     assert case.strategy.watchlist_state(case.symbol).atr_short_flip_bar_ts == 0
     result = await replay_original_callbacks(case, packet, native_mode=mode)
@@ -240,8 +312,17 @@ async def test_e_olox_real_market_callbacks_preserve_partial_scope_under_native_
         "stale": "snapshot_stale", "LOSTACK": "local_send_reserved",
         "CANCELACK": "own_inflight_UNKNOWN_or_working",
     }[mode]
-    assert all(step["native_card"]["reason"] == expected_reason for step in witnessed)
-    assert all(step["native_card"]["allowed"] is (mode == "flat") for step in witnessed)
+    scoped = [step for step in witnessed if step["native_card"]["reason"] != "outside_L12_exception"]
+    assert all(step["native_card"]["reason"] == expected_reason for step in scoped)
+    assert all(step["native_card"]["allowed"] is (mode == "flat") for step in scoped)
+    assert all(step["native_card"]["allowed"] is True for step in witnessed if step not in scoped)
+    # Do not invent an OLD cap/owner preimage in this causal market replay.
+    # Verify the delivered book itself even when the actual strategy correctly
+    # leaves this ordinary callback outside its narrow L12 exception.
+    native = case.strategy._brokerdecides1_memory.assess(accounts=account_names(case.settings),
+        symbol=case.symbol, segment=witnessed[-1]["line_segment_from_callback"], now_ms=case.now_ms,
+        max_age_ms=case.settings.strategy_schwab_1m_v2_brokerdecides1_max_age_ms)
+    assert native.reason == expected_reason and native.allowed is (mode == "flat")
     assert all(not step["line_ready"] for step in witnessed)
     # A missing prefix/quotes/boot cannot become qualified flat BUY acceptance.
     assert not case.schwab.intents and not case.webull.intents
@@ -257,7 +338,7 @@ async def test_e_worx_absent_original_bars_does_not_borrow_olox_or_seed_permissi
 
 @pytest.mark.asyncio
 async def test_e_partial_market_needs_explicit_diagnostic_scope_not_positive_acceptance():
-    packet = load_olox_partial_market(os.environ["L12_OLOX_RETAINED_BARS"])
+    packet = load_olox_partial_market(retained_input("L12_OLOX_RETAINED_BARS"))
     del packet["purpose"]
     case = make_causal_market_case(packet)
     result = await replay_market_packet(case, packet)
@@ -266,7 +347,7 @@ async def test_e_partial_market_needs_explicit_diagnostic_scope_not_positive_acc
 
 
 def test_e_callback_initialization_has_no_future_short_cap_or_watch_preimage():
-    packet = load_olox_partial_market(os.environ["L12_OLOX_RETAINED_BARS"])
+    packet = load_olox_partial_market(retained_input("L12_OLOX_RETAINED_BARS"))
     case = make_causal_market_case(packet)
     state = case.strategy.watchlist_state(case.symbol)
     assert case.now_ms == packet["events"][0]["received_ms"]
@@ -282,7 +363,7 @@ def test_e_callback_initialization_has_no_future_short_cap_or_watch_preimage():
 
 @pytest.mark.asyncio
 async def test_e_future_census_time_case_is_rejected_before_callback_or_publication():
-    packet = load_olox_partial_market(os.environ["L12_OLOX_RETAINED_BARS"])
+    packet = load_olox_partial_market(retained_input("L12_OLOX_RETAINED_BARS"))
     future_case = make_case(CONTRACT["cases"][1])
     with pytest.raises(ValueError, match="causal_case_initialization_required_no_clock_rewind"):
         await replay_original_callbacks(future_case, packet, native_mode="flat")
