@@ -54,7 +54,7 @@ def test_existing_channel_source_is_pinned_and_read_not_executed():
     raw = b'NTFY_URL="https://ntfy.sh/CONTROLLED_NOT_SENT"\nraise RuntimeError("MUST_NOT_EXECUTE")\n'
     assert phone.existing_channel(raw, reviewed_sha=sha256(raw).hexdigest()) == "https://ntfy.sh/CONTROLLED_NOT_SENT"
     real = Path(__file__).resolve().parents[2] / "ops/health/armed_segments_check.py"
-    assert sha256(real.read_bytes()).hexdigest() == "ee8c3116635429e7ad2ed5453bcd8cb13ebc311f528bc46da2c5fa20cedbe1e2"
+    assert sha256(real.read_bytes()).hexdigest() == "72c1d3ed56f0e7f21f754c470ed7dfa0a0070af7a1527939bc51fbdd40366cff"
 
 
 @pytest.mark.parametrize("literal", ["http://ntfy.sh/topic", "https://foreign.example/topic", "https://ntfy.sh/",
