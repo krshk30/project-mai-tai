@@ -1,7 +1,13 @@
 """C1 corrected human input; no oracle or model change."""
 from datetime import datetime, timedelta
+from pathlib import Path
+import sys
 from zoneinfo import ZoneInfo
 import pytest
+
+# Tool modules retain sibling imports; make this file independently collectible.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+
 from atrsimlive1_line_route import parity, parity_summary, REFERENCES, SUPERSEDED_REFERENCES
 from atrsimlive1_models import nanos
 

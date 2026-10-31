@@ -1,7 +1,12 @@
 """Controlled source-reader negatives; no actual retained GZ or model execution."""
 import hashlib
+from pathlib import Path
+import sys
 
 import pytest
+
+# Do not depend on another test file adding repository tools during collection.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 
 from atrsimlive1_captured_rr import (
     CapturedRefusal, decode, original_datetime, original_pairs, verified_bytes,
