@@ -178,13 +178,13 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=F
         return dict(base, status="SKIPPED", reason="outside the 07:00-15:45 entry window")
     stream = trades(conn, symbol, seg_start, min(session_end, now))
     fill = None
-    triggered, k, prev_ts = False, None, None
+    triggered, k, prev_ts, triggered_at = False, None, None, None
     index = {series[i].ts: i for i in range(first, fi + 1)}
     for ts, price in stream:
         if ts >= seg_end:
             break
         if triggered and prev_ts is not None and not continuous(symbol, prev_ts, ts):
-            triggered = False  # a FADE between two prints cancelled the order even with no print in the gap
+            triggered, triggered_at = False, None  # a FADE between two prints cancelled the order (no print in the gap)
         minute = int(ts.timestamp() // 60) * 60_000
         if minute > series[fi].ts:
             bar_k = k  # after the flip: the last resting price is kept (no new short line)
@@ -193,22 +193,27 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=F
         if bar_k is None or rows[bar_k - 1]["trail"] is None:
             continue  # minute without a stored bar: the bot had no line to rest on
         if not confirmed(symbol, ts):
-            triggered = False
+            triggered, triggered_at = False, None
             continue  # not confirmed on the scanner at this print: no order is resting
         if bar_k != k:
-            k, triggered = bar_k, False
+            k, triggered, triggered_at = bar_k, False, None
             trigger = ceil_cent(rows[k - 1]["trail"] * (1 + LIVE_OFFSET))
             limit = ceil_cent(trigger * (1 + LIVE_BAND))
         prev_ts = ts
         if not triggered and price >= trigger:
-            triggered = True
+            triggered, triggered_at = True, ts
         if triggered and price <= limit:
-            fill = (ts, price, k, trigger)
+            fill = (ts, price, k, trigger, triggered_at)
             break
     if fill is None:
         return dict(base, status="SKIPPED" if now >= seg_end else "WAITING",
                     reason="live resting buy never filled" if now >= seg_end else "live resting buy waiting")
-    f_ts, f_px, fk, trig = fill
+    f_ts, f_px, fk, trig, trig_at = fill
+    # Coach 10-31: keep the order generation (the resting price in force since bar fk opened) and the
+    # trigger print separate from the fill print.
+    order_times = {"order_price_since": datetime.fromtimestamp(series[fk].ts / 1000, timezone.utc).astimezone(ET).strftime("%H:%M:%S"),
+                   "triggered_at": trig_at.astimezone(ET).strftime("%H:%M:%S.%f")[:-3],
+                   "filled_at": f_ts.astimezone(ET).strftime("%H:%M:%S.%f")[:-3]}
     qty = int(NOTIONAL // f_px)
     # Live OCO target goes through broker_adapters.target_price.target_limit_price (ROUND_CEILING to the tick).
     from decimal import Decimal
@@ -245,13 +250,13 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=F
             break
     if exit_ is None and now >= session_end:
         if session_end - last_ts > SESSION_MARK_MAX_GAP:
-            return dict(base, trigger=trig, status="EXIT UNKNOWN", quantity=qty,
+            return dict(base, trigger=trig, status="EXIT UNKNOWN", quantity=qty, order_times=order_times,
                         entry_time=f_ts.astimezone(ET).strftime("%H:%M:%S"), entry_price=round(f_px, 4),
                         exit_time="unknown", reason=("no trade print in the last "
                         f"{int((session_end - last_ts).total_seconds() // 60)} min before 20:00 (capture ended); exit UNKNOWN"))
         exit_ = (session_end, last, "session end")
     x_px = exit_[1] if exit_ else last
-    return dict(base, trigger=trig, status="CLOSED" if exit_ else "OPEN", quantity=qty,
+    return dict(base, trigger=trig, status="CLOSED" if exit_ else "OPEN", quantity=qty, order_times=order_times,
                 entry_time=f_ts.astimezone(ET).strftime("%H:%M:%S"), entry_price=round(f_px, 4),
                 exit_time=exit_[0].astimezone(ET).strftime("%H:%M:%S") if exit_ else "open",
                 exit_price=round(x_px, 4), reason=exit_[2] if exit_ else "still open (marked at last trade)",
@@ -394,29 +399,45 @@ def tape_pressure(conn, symbol, at):
     out = {}
     for minutes in TAPE_WINDOWS_MIN:
         start = at - timedelta(minutes=minutes)
-        buy = sell = mid = unclassified = 0
+        v = dict(buy=0, sell=0, between=0, unknown_no_fresh_quote=0, unknown_locked_crossed=0,
+                 unknown_invalid_quote=0, excluded_odd_lot=0, excluded_condition=0)
         for ts, price, size, cond in tape:
-            if ts < start or not eligible(cond):
+            if ts < start:
+                continue
+            if size < 100:  # coach 10-31: odd lots are excluded (and counted)
+                v["excluded_odd_lot"] += size
+                continue
+            if not eligible(cond):
+                v["excluded_condition"] += size
                 continue
             k = bisect.bisect_right(q_ts, ts) - 1
-            if k < 0 or ts - q_ts[k] > QUOTE_MAX_AGE or not quotes[k][1] or not quotes[k][2]:
-                unclassified += size
-            elif float(quotes[k][1]) >= float(quotes[k][2]):
-                mid += size  # locked/crossed quote: the side is not knowable
-            elif float(price) >= float(quotes[k][2]):
-                buy += size
-            elif float(price) <= float(quotes[k][1]):
-                sell += size
+            bid = float(quotes[k][1]) if k >= 0 and quotes[k][1] is not None else None
+            ask = float(quotes[k][2]) if k >= 0 and quotes[k][2] is not None else None
+            if k < 0 or ts - q_ts[k] > QUOTE_MAX_AGE:
+                v["unknown_no_fresh_quote"] += size
+            elif not bid or not ask or bid <= 0 or ask <= 0:
+                v["unknown_invalid_quote"] += size
+            elif bid >= ask:
+                v["unknown_locked_crossed"] += size  # coach 10-31: side not knowable -> UNKNOWN, not "between"
+            elif float(price) >= ask:
+                v["buy"] += size
+            elif float(price) <= bid:
+                v["sell"] += size
             else:
-                mid += size
-        total = buy + sell + mid + unclassified
-        classified = buy + sell + mid
-        out[f"{minutes}m"] = ({"status": "UNKNOWN", "reason": "no captured trades in the window"} if total == 0 else
-                              {"status": "UNKNOWN", "reason": "no quote <= 5 s old for any trade", "volume": int(total)}
-                              if classified == 0 else
-                              {"buy_share": round(buy / classified, 4), "sell_share": round(sell / classified, 4),
-                               "mid_share": round(mid / classified, 4), "volume": int(total),
-                               "unclassified_volume": int(unclassified)})
+                v["between"] += size
+        v = {key: int(val) for key, val in v.items()}
+        eligible_volume = sum(val for key, val in v.items() if not key.startswith("excluded"))
+        classified = v["buy"] + v["sell"] + v["between"]
+        row = {"volume": v, "eligible_volume": eligible_volume,
+               "coverage": round(classified / eligible_volume, 4) if eligible_volume else None}
+        if eligible_volume == 0:
+            row.update(status="UNKNOWN", reason="no captured round-lot trades in the window")
+        elif classified == 0:
+            row.update(status="UNKNOWN", reason="no trade had a valid quote <= 5 s old")
+        else:
+            row.update(buy_share=round(v["buy"] / classified, 4), sell_share=round(v["sell"] / classified, 4),
+                       between_share=round(v["between"] / classified, 4))
+        out[f"{minutes}m"] = row
     return out
 
 
@@ -426,13 +447,19 @@ def stock_features(conn, symbol, flip_bar, at, price, previous):
     fi = next(i for i, b in enumerate(series) if b.ts == flip_bar.ts)
     si = max((i for i in range(fi) if rows[i]["flip"] == "SELL"), default=None)
     out = {"decision_at": at.astimezone(ET).strftime("%H:%M:%S"), "decision_price": round(price, 4)}
-    # 1. the earlier trade on this stock today (same table), closed before this decision
+    # 1. the earlier trade on this stock today (same table) that started before this decision.
+    # Coach 10-31: NONE / OPEN (still held at the decision) / UNKNOWN (exit unknown) / closed WIN-LOSS-FLAT.
     if previous is None:
         out["previous_trade"] = {"result": "none"}
     else:
-        p_exit, p_pct = previous
-        out["previous_trade"] = {"result": "loss" if p_pct < 0 else "win", "pnl_pct": p_pct,
-                                 "minutes_since_exit": round((at - p_exit).total_seconds() / 60, 1)}
+        p_entry, p_exit, p_status, p_pct = previous
+        if p_status == "EXIT UNKNOWN":
+            out["previous_trade"] = {"result": "unknown", "reason": "earlier trade exit UNKNOWN"}
+        elif p_exit is None or p_exit > at:
+            out["previous_trade"] = {"result": "open", "minutes_since_entry": round((at - p_entry).total_seconds() / 60, 1)}
+        else:
+            out["previous_trade"] = {"result": "loss" if p_pct < 0 else "win" if p_pct > 0 else "flat",
+                                     "pnl_pct": p_pct, "minutes_since_exit": round((at - p_exit).total_seconds() / 60, 1)}
     # 2. + 3. the purple (short) stretch: from the SELL flip bar to the bar before this BUY flip, but only
     # bars COMPLETED before the decision (codex 10-31: a resting buy can fill inside/before the flip bar).
     decision_ms = at.timestamp() * 1000
@@ -460,6 +487,11 @@ def stock_features(conn, symbol, flip_bar, at, price, previous):
     done = [b for b in series if b.ts + 60_000 <= at.timestamp() * 1000]
     day_high = max((b.high for b in done), default=None)
     out["below_day_high_pct"] = round((1 - price / day_high) * 100, 2) if day_high else None
+    # Coach 10-31: say how complete the day-high history was (stored bars only; no bar = no trades or a gap).
+    out["day_high_coverage"] = ({"first_bar_at": datetime.fromtimestamp(done[0].ts / 1000, timezone.utc).astimezone(ET).strftime("%H:%M"),
+                                 "bars": len(done),
+                                 "minutes_spanned": round((done[-1].ts - done[0].ts) / 60_000) + 1} if done else
+                                {"status": "UNKNOWN", "reason": "no bar completed before the decision"})
     return out
 
 
@@ -554,7 +586,7 @@ def run(now=None):
         windows = WINDOWS = confirmed_windows(conn, day)
         fills = live_fills(conn, anchor)
         session_end = datetime.combine(day, datetime.min.time(), ET).replace(hour=20)
-        last_closed = {"LIVE rules SIM": {}, "LIVE+2min SIM": {}}
+        last_trade = {"LIVE rules SIM": {}, "LIVE+2min SIM": {}}
 
         def at_clock(hms):
             hh, mm, ss = (int(x) for x in hms.split(":"))
@@ -566,11 +598,12 @@ def run(now=None):
                 at, price = at_clock(row["entry_time"]), row["entry_price"]
             else:
                 at, price = datetime.fromtimestamp(bar.ts / 1000 + 60, timezone.utc), bar.close
-            prev = last_closed[name].get(symbol)
+            prev = last_trade[name].get(symbol)
             row["stock"] = stock_features(conn, symbol, bar, at, price,
-                                          prev if prev is not None and prev[0] <= at else None)
-            if row.get("status") == "CLOSED" and row.get("exit_time") not in (None, "open", "unknown"):
-                last_closed[name][symbol] = (at_clock(row["exit_time"]), row["pnl_pct"])
+                                          prev if prev is not None and prev[0] < at else None)
+            if row.get("entry_time"):
+                exit_at = at_clock(row["exit_time"]) if row.get("exit_time") not in (None, "open", "unknown") else None
+                last_trade[name][symbol] = (at, exit_at, row.get("status"), row.get("pnl_pct"))
 
         for symbol, flips in flips_by_symbol(conn, anchor).items():
             for i, (bar, flip) in enumerate(flips):
