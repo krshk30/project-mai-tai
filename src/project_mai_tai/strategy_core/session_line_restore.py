@@ -177,6 +177,8 @@ class SessionLineRestoration:
         self._closed_live: dict[int, HistoryBar] = {}
         self._seed_invalidated = False
         self._trade_minutes: set[int] = set()
+        self._trade_evidence_revision = 0
+        self._trade_evidence_by_minute: dict[int, int] = {}
         self._traded_pairs: set[tuple[int, int]] = set()
         self.incomplete_reason = "coverage_unproven"
 
@@ -234,14 +236,27 @@ class SessionLineRestoration:
         self.revision += 1
         self.incomplete_reason = "coverage_unproven"
 
-    def observe_trade(self, timestamp_ms: int) -> None:
+    def observe_trade(self, timestamp_ms: int, *, track_generation: bool = False) -> None:
         minute = timestamp_ms // 60_000 * 60_000
         if self.anchor_ms <= minute < self.anchor_ms + 16 * 3_600_000:
+            # Same-minute evidence arrivals must invalidate an in-flight
+            # classification even when the legacy bar revision does not change.
+            if track_generation:
+                self._trade_evidence_revision += 1
+                self._trade_evidence_by_minute[minute] = self._trade_evidence_revision
             if minute not in self._trade_minutes:
                 self._trade_minutes.add(minute)
                 if any(left + 60_000 <= minute < right for left, right in self.gap_pairs()):
                     self.revision += 1
                     self.incomplete_reason = "trade_evidence_changed"
+
+    def trade_evidence_token(self, through_ms: int) -> int:
+        """Closed-window CAS; forming-minute prints cannot starve a past read."""
+        return max((revision for minute, revision in self._trade_evidence_by_minute.items()
+                    if minute <= through_ms), default=0)
+
+    def has_uncovered_trade(self, through_ms: int, covered_minutes) -> bool:
+        return any(minute <= through_ms and minute not in covered_minutes for minute in self._trade_minutes)
 
     def mark_traded_pair(self, pair: tuple[int, int]) -> None:
         if pair not in self._traded_pairs:

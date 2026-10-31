@@ -11,7 +11,7 @@ schema, join, or retention change that moves the baseline makes the entire run C
 than silently answering a different question.
 
 Exit codes:
-  0  PASS                 all four exercised metrics improved or reached their named clean state
+  0  PASS                 applicable metrics clean; comparisons N/A only with sealed route proof
   1  FAIL                 at least one exercised metric remains at/below the known-bad outcome
   2  COULD_NOT_TELL       query/control/identity evidence is incomplete
   3  UNEXERCISED          at least one metric has a zero denominator
@@ -24,12 +24,13 @@ import csv
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import io
+import json
 import math
 import statistics
 import subprocess
 from typing import Sequence
 
-from project_mai_tai.fanout_identity import fanout_slot_id
+from project_mai_tai.fanout_identity import ATR_COUNTRY_ROUTE_KEYS, fanout_slot_id
 
 
 PASS = 0
@@ -327,6 +328,7 @@ target_buy_legs AS (
       AND (
           (ba.name = 'live:orb' AND bo.payload::jsonb ? 'fanout_source')
           OR nullif(bo.payload::jsonb->>'fanout_segment_id', '') IS NOT NULL
+          OR bo.payload::jsonb ? 'atr_country_schema'
       )
 ),
 target_mirror_symbols AS (
@@ -356,6 +358,26 @@ target_matched_orders AS (
       AND bo.symbol IN (SELECT symbol FROM target_mirror_symbols)
       AND ba.name IN ('live:orb', 'live:schwab_1m_v2')
       AND bo.submitted_at >= b.since_at AND bo.submitted_at < b.until_at
+),
+-- Routing evidence includes unfilled submitted legs: an absent opposite fill must
+-- not erase a genuine two-venue expectation. Country seals are never inferred by date.
+target_route_orders AS (
+    SELECT ba.name AS account, bo.id::text AS order_id, upper(bo.symbol) AS symbol,
+           bo.payload::text AS payload, ba.provider::text AS provider,
+           coalesce(bo.submitted_at::text, '') AS submitted_at,
+           coalesce(fbo.first_fill_at::text, '') AS first_fill_at
+    FROM broker_orders bo
+    JOIN broker_accounts ba ON ba.id = bo.broker_account_id
+    LEFT JOIN fill_by_order fbo ON fbo.order_id = bo.id
+    CROSS JOIN target_bounds b
+    WHERE bo.side = 'buy'
+      AND ba.name IN ('live:orb', 'live:schwab_1m_v2')
+      AND (bo.id::text IN (SELECT order_id FROM target_buy_legs)
+           OR bo.id::text IN (SELECT order_id FROM target_matched_orders)
+           OR (bo.submitted_at >= b.since_at AND bo.submitted_at < b.until_at
+               AND (bo.payload::jsonb ? 'fanout_source'
+                    OR bo.payload::jsonb ? 'fanout_segment_id'
+                    OR bo.payload::jsonb ? 'atr_country_schema')))
 ),
 target_refused AS (
     SELECT
@@ -428,6 +450,10 @@ rows AS (
     SELECT 'MATCHED_ORDER', account, order_id, symbol, status, filled::text,
            source, '', '', ''
     FROM target_matched_orders
+    UNION ALL
+    SELECT 'ROUTE_ORDER', account, order_id, symbol, payload, provider,
+           submitted_at, first_fill_at, '', ''
+    FROM target_route_orders
     UNION ALL
     SELECT 'REFUSAL', event_id, session_date_et::text, coalesce(exit_fill_id, ''),
            '', '', '', '', '', ''
@@ -581,6 +607,141 @@ def _identity_key(fill: FillLeg) -> tuple[str, str, str, str] | None:
     return fill.symbol, fill.segment_id, fill.slot, fill.slot_id
 
 
+def _route_identity(row: RawRow, payload: dict) -> tuple[str, str, str, str] | None:
+    return _identity_key(FillLeg(
+        account=row.values[0], order_id=row.values[1], symbol=row.values[2],
+        filled_at="", price=1.0, segment_id=str(payload.get("fanout_segment_id", "")),
+        slot=str(payload.get("fanout_slot", "")),
+        slot_id=str(payload.get("fanout_slot_id", "")), source="",
+    ))
+
+
+def _orb_order_marker(payload: dict) -> bool:
+    """Positive producer markers only; absent ATR metadata proves nothing."""
+    if payload.get("orb_entry") == "true" or payload.get("orb_country_route") == "true":
+        return True
+    client_ids = [payload.get("client_order_id")]
+    permit = payload.get("bot_control_permit")
+    if isinstance(permit, str):
+        try:
+            permit = json.loads(permit)
+        except ValueError:
+            permit = None
+    if isinstance(permit, dict):
+        client_ids.append(permit.get("client_order_id"))
+    return any(isinstance(value, str) and value.startswith("orb_schwab-")
+               for value in client_ids)
+
+
+def route_scopes(rows: Sequence[RawRow], fills: Sequence[FillLeg]) -> dict[tuple[str, str], str]:
+    """N/A requires a complete causal single-route seal, never an absent peer fill."""
+    accounts = {"live:orb": "webull", "live:schwab_1m_v2": "schwab"}
+    evidence: dict[tuple[str, str], list[RawRow]] = {}
+    parsed: dict[tuple[str, str], tuple[RawRow, dict, tuple]] = {}
+    scopes: dict[tuple[str, str], str] = {}
+    for row in rows:
+        if row.kind == "ROUTE_ORDER":
+            evidence.setdefault((row.values[0], row.values[1]), []).append(row)
+    for identity, candidates in evidence.items():
+        scopes[identity] = "UNKNOWN"
+        if len(candidates) != 1:
+            continue
+        row = candidates[0]
+        if (identity[0] not in accounts or not identity[1] or not row.values[2]
+                or row.values[2] != row.values[2].strip().upper()):
+            continue
+        try:
+            payload = json.loads(row.values[3])
+            if not isinstance(payload, dict) or row.values[4] != accounts.get(identity[0]):
+                continue
+            clocks = [parse_instant(raw, "route order clock") for raw in row.values[5:7] if raw]
+            if not clocks or any(clock <= datetime(1970, 1, 1, tzinfo=UTC) for clock in clocks):
+                continue
+            # C12124: native first fills may carry whole seconds while DB submit
+            # carries microseconds. Only this comparison floors the DB clock.
+            if row.values[5] and row.values[6] and clocks[0].replace(microsecond=0) > clocks[1]:
+                continue
+            matching_fills = [fill for fill in fills
+                              if (fill.account, fill.order_id) == identity]
+            if _orb_order_marker(payload):
+                atr_markers = (payload.get("source") == "schwab_1m_v2"
+                               or payload.get("path") == "ATR Flip"
+                               or any(name.startswith(("atr_", "fanout_")) for name in payload))
+                if not atr_markers and not matching_fills:
+                    scopes[identity] = "EXCLUDED_NON_ATR"
+                continue  # Conflicting ATR evidence stays UNKNOWN, never excluded.
+            key = _route_identity(row, payload)
+            if key is None:
+                continue
+            if any(_identity_key(fill) != key or fill.symbol != row.values[2]
+                   or not row.values[6]
+                   or parse_instant(fill.filled_at, "filled leg clock") !=
+                   parse_instant(row.values[6], "route fill clock")
+                   for fill in matching_fills):
+                continue
+            parsed[identity] = row, payload, key
+            if any(name in payload for name in ATR_COUNTRY_ROUTE_KEYS):
+                if any(not isinstance(payload.get(name), str) for name in ATR_COUNTRY_ROUTE_KEYS):
+                    continue
+                broker = accounts[identity[0]]
+                sealed = parse_instant(payload["atr_country_sealed_at"], "country seal")
+                as_of = payload["atr_country_as_of"]
+                status = payload["atr_country_status"]
+                if (payload["atr_country_schema"] != "1"
+                        or payload["atr_country_symbol"] != row.values[2]
+                        or payload["atr_country_segment_id"] != key[1]
+                        or payload["atr_country_account"] != identity[0]
+                        or payload["atr_country_broker"] != broker
+                        or payload["atr_country_notional_usd"] != ("300" if broker == "webull" else "600")
+                        or not payload["atr_country_reason"] or not status
+                        or any(sealed > clock for clock in clocks)):
+                    continue
+                if as_of and parse_instant(as_of, "country source") > sealed and status != "FUTURE":
+                    continue
+                if broker == "schwab" and (
+                        payload["atr_country_reason"] != "sec_us" or status != "READY" or not as_of):
+                    continue
+                scopes[identity] = "NOT_APPLICABLE"
+        except (ValueError, TypeError, KeyError):
+            continue
+
+    # Retained filled legs themselves prove placement, but cannot prove a missing
+    # opposite leg was expected. New query rows also include unfilled submissions.
+    keys_by_account: dict[tuple, set[str]] = {}
+    for fill in fills:
+        identity = fill.account, fill.order_id
+        key = _identity_key(fill)
+        if key is not None and identity not in evidence:
+            keys_by_account.setdefault(key, set()).add(fill.account)
+    for identity, (_, payload, key) in parsed.items():
+        if not any(name in payload for name in ATR_COUNTRY_ROUTE_KEYS):
+            keys_by_account.setdefault(key, set()).add(identity[0])
+    for fill in fills:
+        identity = fill.account, fill.order_id
+        if identity not in evidence:
+            scopes[identity] = (
+                "EXPECTED" if keys_by_account.get(_identity_key(fill)) == set(accounts) else "UNKNOWN"
+            )
+    for identity, (_, payload, key) in parsed.items():
+        peers = [other for other, (_, _, peer_key) in parsed.items() if peer_key == key]
+        country_peers = [other for other in peers if any(
+            name in parsed[other][1] for name in ATR_COUNTRY_ROUTE_KEYS)]
+        if country_peers:
+            signatures = {json.dumps([parsed[other][1].get(name) for name in ATR_COUNTRY_ROUTE_KEYS],
+                                     sort_keys=True) for other in country_peers}
+            conflicting = (len(signatures) != 1 or len(country_peers) != len(peers)
+                           or any(scopes[other] != "NOT_APPLICABLE" for other in peers)
+                           or len({other[0] for other in peers}) != 1
+                           or any(fill.account != identity[0] and _identity_key(fill) == key
+                                  for fill in fills))
+            if conflicting:
+                for other in peers:
+                    scopes[other] = "UNKNOWN"
+        elif keys_by_account.get(key) == set(accounts):
+            scopes[identity] = "EXPECTED"
+    return scopes
+
+
 def evaluate(rows: Sequence[RawRow], *, since: datetime, until: datetime) -> Report:
     lines = [
         "### D6 FAN-OUT OUTCOME ACCEPTANCE",
@@ -602,17 +763,56 @@ def evaluate(rows: Sequence[RawRow], *, since: datetime, until: datetime) -> Rep
     lines.append("control=PASS known-bad populations reproduced from durable rows")
 
     fills = [_parse_fill(row) for row in rows if row.kind == "FANOUT_FILL"]
+    scopes = route_scopes(rows, fills)
     webull = [fill for fill in fills if fill.account == "live:orb"]
+    expected_webull = [fill for fill in webull
+                       if scopes.get((fill.account, fill.order_id)) == "EXPECTED"]
+    expected_schwab = [fill for fill in fills if fill.account == "live:schwab_1m_v2"
+                      and scopes.get((fill.account, fill.order_id)) == "EXPECTED"]
+    single = [fill for fill in fills
+              if scopes.get((fill.account, fill.order_id)) == "NOT_APPLICABLE"]
+    route_unknown = sum(scope == "UNKNOWN" for scope in scopes.values())
+    non_atr = sum(scope == "EXCLUDED_NON_ATR" for scope in scopes.values())
+    lines.append(
+        f"route_scope single_venue_fills={len(single)} expected_dual_webull_fills={len(expected_webull)} "
+        f"unknown_order_routes={route_unknown} excluded_non_atr_orders={non_atr}; "
+        "NOT_APPLICABLE is not a filled pair"
+    )
     schwab_keys = {
         key for fill in fills if fill.account == "live:schwab_1m_v2"
         if (key := _identity_key(fill)) is not None
     }
     webull_valid = [(fill, key) for fill in webull if (key := _identity_key(fill)) is not None]
     pair_ctt = len(webull) - len(webull_valid)
-    paired = sum(1 for _, key in webull_valid if key in schwab_keys)
-    webull_only = len(webull_valid) - paired
+    paired = sum(1 for fill, key in webull_valid
+                 if fill in expected_webull and key in schwab_keys)
+    webull_only = len(expected_webull) - paired
+    webull_keys = {key for _, key in webull_valid}
+    schwab_only = sum(_identity_key(fill) not in webull_keys for fill in expected_schwab)
     usable_rate = (100.0 * len(webull_valid) / len(webull)) if webull else 0.0
-    if not webull:
+    if route_unknown:
+        pair_metric = Metric(
+            "paired_legs", "COULD_NOT_TELL",
+            f"paired_legs={paired} usable={len(webull_valid)} of {len(webull)} "
+            f"route_unknown={route_unknown} single_venue={len(single)} "
+            "outcome=actual routing expectation unproven or conflicting",
+        )
+    elif single and not expected_webull and not expected_schwab:
+        pair_metric = Metric(
+            "paired_legs", "NOT_APPLICABLE",
+            f"paired_legs=0 usable={len(webull_valid)} of {len(webull)} "
+            f"single_venue={len(single)} expected_dual=0 "
+            "proof=sealed account/symbol/segment/venue/time-bound country routing",
+        )
+    elif webull_only or schwab_only:
+        pair_metric = Metric(
+            "paired_legs", "FAIL",
+            f"paired_legs={paired} usable={len(webull_valid)} of {len(webull)} "
+            f"webull_only={webull_only} schwab_only={schwab_only} could_not_tell=0 "
+            f"expected_dual_schwab_fills={len(expected_schwab)} "
+            "outcome=expected cross-venue filled counterpart missing",
+        )
+    elif not webull:
         pair_metric = Metric(
             "paired_legs",
             "UNEXERCISED",
@@ -634,14 +834,6 @@ def evaluate(rows: Sequence[RawRow], *, since: datetime, until: datetime) -> Rep
             f"webull_only={webull_only} could_not_tell=0 coverage={usable_rate:.1f}% "
             "outcome=not above 16/53 known-bad coverage",
         )
-    elif paired == 0:
-        pair_metric = Metric(
-            "paired_legs",
-            "FAIL",
-            f"paired_legs=0 usable={len(webull_valid)} of {len(webull)} "
-            f"webull_only={webull_only} could_not_tell=0 coverage={usable_rate:.1f}% "
-            "outcome=identity exists but no filled cross-venue pair exists",
-        )
     else:
         pair_metric = Metric(
             "paired_legs",
@@ -650,7 +842,10 @@ def evaluate(rows: Sequence[RawRow], *, since: datetime, until: datetime) -> Rep
             f"webull_only={webull_only} could_not_tell=0 coverage={usable_rate:.1f}%",
         )
 
-    order_rows = [row for row in rows if row.kind == "MATCHED_ORDER"]
+    all_order_rows = [row for row in rows if row.kind == "MATCHED_ORDER"]
+    order_rows = [row for row in all_order_rows
+                  if scopes.get((row.values[0], row.values[1]))
+                  not in {"NOT_APPLICABLE", "EXCLUDED_NON_ATR"}]
     mirror_orders = [
         row for row in order_rows
         if row.values[0] == "live:orb" and row.values[5] == "rth_resting_mirror"
@@ -659,7 +854,15 @@ def evaluate(rows: Sequence[RawRow], *, since: datetime, until: datetime) -> Rep
     mirror_fills = sum(row.values[4].lower() == "true" for row in mirror_orders)
     schwab_fills = sum(row.values[4].lower() == "true" for row in schwab_orders)
     matched_symbols = len({row.values[2] for row in mirror_orders})
-    if not mirror_orders or not schwab_orders:
+    proven_single_cohort = bool(single) and all(
+        scope in {"NOT_APPLICABLE", "EXCLUDED_NON_ATR"} for scope in scopes.values())
+    if proven_single_cohort and not order_rows:
+        fill_metric = Metric(
+            "fill_rate", "NOT_APPLICABLE",
+            "fill_rate mirror=0/0 schwab=0/0 matched_symbols=0 "
+            f"single_venue={len(single)} expected_dual=0 proof=sealed routing; no paired bake-off",
+        )
+    elif not mirror_orders or not schwab_orders:
         fill_metric = Metric(
             "fill_rate",
             "UNEXERCISED",

@@ -1,0 +1,22 @@
+def original_geometry(reports, base, quantity, symbol):
+    """WBEXIT2 proof validator; no dropped feature helper/flag is imported."""
+    import json
+    from project_mai_tai.oms import webull_attach_riskoff as wb
+    known = {r.client_order_id: r for r in wb.validated_child_reads(reports, base, quantity, symbol, _now())}
+    if len(known) != 2 or len({r.broker_order_id for r in known.values()}) != 2:
+        raise ValueError("wbexit2_original_native_children_UNKNOWN")
+    prices = []
+    for suffix, fields in (("T", ("limit_price", "limitPrice")), ("S", ("stop_price", "stopPrice"))):
+        report = known[wb.WebullBrokerAdapter._combo_leg_coid(base, suffix)]
+        geometry = json.loads(report.metadata.get("wbexit2_geometry", "null"))
+        values = [Decimal(str(geometry[k])) for k in fields if isinstance(geometry, dict) and k in geometry]
+        statuses = [str(geometry[k]).upper() for k in ("status", "order_status", "orderStatus")
+                    if isinstance(geometry, dict) and k in geometry]
+        if (report.origin != "broker" or not report.broker_order_id or report.event_type != "accepted"
+                or report.quantity != quantity or report.filled_quantity != 0
+                or not statuses or set(statuses) != {"WORKING"} or not values
+                or any(not v.is_finite() or v <= 0 or v != values[0]
+                       or wb.WebullBrokerAdapter._round_to_tick(v) != v for v in values)):
+            raise ValueError("wbexit2_original_WORKING_geometry_UNKNOWN")
+        prices.append(values[0])
+    return tuple(prices)

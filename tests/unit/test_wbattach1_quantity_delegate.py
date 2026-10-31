@@ -31,6 +31,7 @@ def controlled_clock(monkeypatch):
 ])
 async def test_service_delegate_passes_exact_session_context_and_permission(monkeypatch, pending_allowed, basis, expected):
     service = object.__new__(OmsRiskService)
+    service.settings = SimpleNamespace()  # WBEXIT2/3 read service.settings since 10-28; absent switch = off
     service.logger = logging.getLogger(__name__)
     context = {"cw_target_bound_row_id": "original-row"}
     unit = object()

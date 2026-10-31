@@ -42,6 +42,7 @@ class ActorPorts:
     stop_requested: Callable[[], bool] = lambda: False
     abandon_unsent: Callable[[str], Awaitable[bool]] | None = None
     diagnostic_account: Callable[[], str] | None = None
+    exit_decision_observer: Callable[[OwnedPosition, str, int], None] | None = None
 
 
 class LiveActor:
@@ -257,9 +258,20 @@ class LiveActor:
                         self._refresh_owners()
                         return
                     quote = self.ports.quote(episode.symbol) or {}
-                    reason = observation.position.exit_reason(quote.get("bid"),
-                        quote_ns=quote.get("observed_ns"), now_ns=self.ports.clock_ns())
+                    observer = getattr(self.ports, "exit_decision_observer", None)
+                    if observer is None:
+                        reason = observation.position.exit_reason(quote.get("bid"),
+                            quote_ns=quote.get("observed_ns"), now_ns=self.ports.clock_ns())
+                    else:
+                        bid, quote_ns = quote.get("bid"), quote.get("observed_ns")
+                        decision_ns = self.ports.clock_ns()  # Same original clock read, once.
+                        reason = observation.position.exit_reason(bid, quote_ns=quote_ns, now_ns=decision_ns)
                     if reason is not None:
+                        if observer is not None:
+                            try:
+                                observer(observation.position, reason, decision_ns)
+                            except Exception:
+                                pass  # Diagnostic failure cannot alter an exit decision.
                         await self.ports.exit_owned(observation.position, reason)
                 self._refresh_owners()
         except asyncio.CancelledError:

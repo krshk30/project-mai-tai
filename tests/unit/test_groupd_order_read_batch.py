@@ -70,7 +70,7 @@ async def test_batch_actual_run_db_after_session_close_three_reads_one_account_w
     measured = []
 
     async def original_pass(*, account_names, diagnostic_batch):
-        with factory() as session:
+        with factory():
             for order in orders:
                 diagnostic_batch.capture(order=order, account=account, report=report_for(order),
                     started=NOW, completed=NOW, native_account="CONTROLLED")

@@ -24,7 +24,7 @@
   "additions": {
     "src/project_mai_tai/atr_simulation/cp_sim_display.py": {
       "before_sha256": null,
-      "after_sha256": "607066c1e73bac122d3fe2ac181a2d2803f0cdc310c368ff7b98b2db12d496a9"
+      "after_sha256": "6b585afd37c80aaec80bd424734c3992759e23383784a62ccfbe194539560883"
     }
   }
 }

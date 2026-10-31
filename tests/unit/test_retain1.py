@@ -259,6 +259,165 @@ def test_exception_unlocks_and_never_claims_complete(conn, monkeypatch, capsys):
     assert "complete" not in capsys.readouterr().out
 
 
+def test_maintenance_vacuum_lock_defers_without_replaying_committed_deletes(conn, monkeypatch, capsys):
+    old = NOW - timedelta(days=8)
+    boundary = NOW - timedelta(days=7)
+    for table in ("market_capture_trades", "market_capture_quotes"):
+        conn.add(table, [(1, old), (2, boundary)])
+    execute = Cursor.execute
+
+    def locked(self, sql, params=()):
+        if sql == "VACUUM (ANALYZE) market_capture_trades":
+            self.conn.calls.append((sql, params))
+            raise mod.psycopg.errors.LockNotAvailable("controlled maintenance lock")
+        return execute(self, sql, params)
+
+    monkeypatch.setattr(Cursor, "execute", locked)
+    args = mod.parse_args(["--tables", "market_capture_trades,market_capture_quotes,market_capture_bars",
+                           "--go", "--batch", "10000", "--max-rows", "3"])
+    assert mod.run(conn, args, now=NOW) == 0
+    assert conn.ids("market_capture_trades") == conn.ids("market_capture_quotes") == {2}
+    deletes = [(sql, params) for sql, params in conn.calls if sql.startswith("DELETE")]
+    assert deletes == [
+        ("DELETE FROM market_capture_trades AS r WHERE r.id IN (SELECT c.id FROM market_capture_trades c "
+         "WHERE c.received_at < %s ORDER BY c.received_at, c.id LIMIT %s) AND r.received_at < %s",
+         (boundary, 3, boundary)),
+        ("DELETE FROM market_capture_quotes AS r WHERE r.id IN (SELECT c.id FROM market_capture_quotes c "
+         "WHERE c.received_at < %s ORDER BY c.received_at, c.id LIMIT %s) AND r.received_at < %s",
+         (boundary, 2, boundary)),
+        ("DELETE FROM market_capture_bars AS r WHERE r.id IN (SELECT c.id FROM market_capture_bars c "
+         "WHERE c.received_at < %s ORDER BY c.received_at, c.id LIMIT %s) AND r.received_at < %s",
+         (boundary, 1, boundary)),
+    ]
+    vacuums = [sql for sql, _ in conn.calls if sql.startswith("VACUUM")]
+    assert vacuums == ["VACUUM (ANALYZE) market_capture_trades",
+                       "VACUUM (ANALYZE) market_capture_quotes"]
+    assert "pg_advisory_unlock" in conn.calls[-1][0]
+    reports = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    item = dict(operation="vacuum-analyze", table="market_capture_trades", sqlstate="55P03")
+    assert [r for r in reports if r["stage"] == "maintenance_deferred"] == [
+        dict(stage="maintenance_deferred", **item)]
+    assert [r["table"] for r in reports if r["stage"] == "vacuum-analyze"] == ["market_capture_quotes"]
+    assert reports[-1] == dict(stage="pruning-complete-maintenance-deferred", dry_run=False,
+        rows_deleted=2, pruning_status="complete", maintenance_status="DEFERRED",
+        maintenance_deferred=[item])
+
+
+def test_maintenance_size_lock_records_vacuum_success_before_unknown_size(conn, monkeypatch, capsys):
+    conn.add("market_capture_trades", [(1, NOW - timedelta(days=8))])
+    execute = Cursor.execute
+    size_calls = []
+
+    def locked(self, sql, params=()):
+        if "pg_total_relation_size" in sql:
+            size_calls.append(params)
+            if len(size_calls) == 3:
+                reports = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+                assert reports[-1]["stage"] == "vacuum-analyze"
+                assert reports[-1]["table"] == "market_capture_trades"
+                self.conn.calls.append((sql, params))
+                raise mod.psycopg.errors.LockNotAvailable("controlled telemetry lock")
+        return execute(self, sql, params)
+
+    monkeypatch.setattr(Cursor, "execute", locked)
+    assert mod.run(conn, mod.parse_args(["--tables", "market_capture_trades", "--go"]), now=NOW) == 0
+    assert conn.ids("market_capture_trades") == set()
+    assert len(size_calls) == 3
+    assert sum(sql.startswith("DELETE") for sql, _ in conn.calls) == 1
+    assert sum(sql.startswith("VACUUM") for sql, _ in conn.calls) == 1
+    assert "pg_advisory_unlock" in conn.calls[-1][0]
+    reports = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert reports[0] == dict(stage="maintenance_deferred", operation="relation-size",
+                              table="market_capture_trades", sqlstate="55P03")
+    assert reports[1] == dict(stage="vacuum-size", table="market_capture_trades", relation_bytes="UNKNOWN")
+    assert reports[2]["pruning_status"] == "complete"
+    assert reports[2]["maintenance_status"] == "DEFERRED"
+
+
+@pytest.mark.parametrize("operation", ["delete", "count", "initial-size", "postdelete-size"])
+def test_nonmaintenance_lock_still_aborts_without_deferred_success(conn, monkeypatch, capsys, operation):
+    conn.add("market_capture_trades", [(1, NOW - timedelta(days=8))])
+    execute = Cursor.execute
+    sizes = 0
+
+    def locked(self, sql, params=()):
+        nonlocal sizes
+        if "pg_total_relation_size" in sql:
+            sizes += 1
+        matches = (operation == "delete" and sql.startswith("DELETE")
+            or operation == "count" and sql.startswith("SELECT count")
+            or operation == "initial-size" and "pg_total_relation_size" in sql and sizes == 1
+            or operation == "postdelete-size" and "pg_total_relation_size" in sql and sizes == 2)
+        if matches:
+            self.conn.calls.append((sql, params))
+            raise failure
+        return execute(self, sql, params)
+
+    failure = mod.psycopg.errors.LockNotAvailable("controlled nonmaintenance lock")
+    monkeypatch.setattr(Cursor, "execute", locked)
+    with pytest.raises(mod.psycopg.errors.LockNotAvailable) as caught:
+        mod.run(conn, mod.parse_args(["--tables", "market_capture_trades", "--go"]), now=NOW)
+    assert caught.value is failure
+    assert conn.ids("market_capture_trades") == (set() if operation == "postdelete-size" else {1})
+    assert not any(sql.startswith("VACUUM") for sql, _ in conn.calls)
+    assert "pg_advisory_unlock" in conn.calls[-1][0]
+    reports = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert not any(r["stage"] in {"maintenance_deferred", "complete", "pruning-complete-maintenance-deferred"}
+                   for r in reports)
+
+
+@pytest.mark.parametrize("operation", ["vacuum", "size"])
+@pytest.mark.parametrize("error_type", [mod.psycopg.errors.QueryCanceled,
+    mod.psycopg.errors.InsufficientPrivilege, mod.psycopg.Error])
+def test_other_maintenance_errors_remain_fatal(conn, monkeypatch, capsys, operation, error_type):
+    conn.add("market_capture_trades", [(1, NOW - timedelta(days=8))])
+    execute = Cursor.execute
+    sizes = 0
+    failure = error_type("controlled non-lock failure")
+
+    def failed(self, sql, params=()):
+        nonlocal sizes
+        if "pg_total_relation_size" in sql:
+            sizes += 1
+        if (operation == "vacuum" and sql.startswith("VACUUM")
+                or operation == "size" and "pg_total_relation_size" in sql and sizes == 3):
+            self.conn.calls.append((sql, params))
+            raise failure
+        return execute(self, sql, params)
+
+    monkeypatch.setattr(Cursor, "execute", failed)
+    with pytest.raises(error_type) as caught:
+        mod.run(conn, mod.parse_args(["--tables", "market_capture_trades", "--go"]), now=NOW)
+    assert caught.value is failure
+    assert conn.ids("market_capture_trades") == set()
+    assert sum(sql.startswith("DELETE") for sql, _ in conn.calls) == 1
+    assert sum(sql.startswith("VACUUM") for sql, _ in conn.calls) == 1
+    assert "pg_advisory_unlock" in conn.calls[-1][0]
+    reports = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert not any(r["stage"] in {"maintenance_deferred", "complete", "pruning-complete-maintenance-deferred"}
+                   for r in reports)
+    assert sum(r["stage"] == "vacuum-analyze" for r in reports) == (operation == "size")
+
+
+def test_deferred_maintenance_cannot_hide_remaining_eligible_rows(conn, monkeypatch, capsys):
+    conn.add("market_capture_trades", [(1, NOW - timedelta(days=8)), (2, NOW - timedelta(days=8))])
+    execute = Cursor.execute
+
+    def locked(self, sql, params=()):
+        if sql.startswith("VACUUM"):
+            self.conn.calls.append((sql, params))
+            raise mod.psycopg.errors.LockNotAvailable("controlled maintenance lock")
+        return execute(self, sql, params)
+
+    monkeypatch.setattr(Cursor, "execute", locked)
+    assert mod.run(conn, mod.parse_args(["--tables", "market_capture_trades", "--go", "--max-rows", "1"]),
+                   now=NOW) == 3
+    assert conn.ids("market_capture_trades") == {2}
+    reports = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert reports[-1]["stage"] == reports[-1]["pruning_status"] == "bounded-incomplete"
+    assert reports[-1]["rows_deleted"] == 1 and reports[-1]["maintenance_status"] == "DEFERRED"
+
+
 def test_main_connects_readonly_by_default_and_go_uses_autocommit(monkeypatch):
     calls = []
     class FakeConnection:

@@ -2,7 +2,7 @@
 
 import asyncio
 from copy import deepcopy
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from threading import Event, get_ident
 from types import SimpleNamespace
 

@@ -14,6 +14,7 @@ from project_mai_tai.broker_adapters.momentum_order_read import MomentumEntryLoo
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.db.models import AccountPosition, BotControlAttempt, BotControlState, BrokerAccount, BrokerOrder, BrokerOrderEvent, Fill, OmsManagedPosition, Strategy, TradeIntent, VirtualPosition
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+from project_mai_tai.fanout_identity import merge_broker_order_payload
 from project_mai_tai.momentum_live.admission import ACTIVE_STATES, Refusal, Route, STRATEGY_CODE
 from project_mai_tai.momentum_live.entry_reprice import UnsentEntryConflict, validate_entry_reprice
 
@@ -244,7 +245,7 @@ class LivePersistence:
                     or type(first_submit) is not int or first_submit <= 0 or episode != expected):
                 raise Refusal("mombuffer1_submission_owner_changed")
         order.quantity = parent.quantity = replacement.quantity
-        order.payload = {**metadata, **replacement.metadata}
+        order.payload = merge_broker_order_payload(metadata, replacement.metadata)
         parent.payload = {**payload, "metadata": dict(replacement.metadata),
                           "momlive_episode": dict(episode if episode is not None else previous_episode)}
         session.flush()

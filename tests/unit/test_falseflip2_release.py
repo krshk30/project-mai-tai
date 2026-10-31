@@ -619,8 +619,72 @@ def test_g3_and_core_atr_setters_unchanged_from_frozen_base():
     import ast
     import hashlib
 
-    # C1 LATEST C11821 2026-10-27 18:21: reviewed L12 strict-first branch is
-    # expected. Pin its exact 20dc AST (CI40579469080); retry-one stays frozen.
+    # Keep the frozen L12/ATR AST. Only the exact reviewed observational
+    # NOCHASE annotation may be removed; any guard/decision change still fails.
+    annotation = ast.parse('''
+if reason == "retry_segment_mismatch":
+    try:
+        no_chase = state.__dict__.get("_postflip_nochase_log")
+        if no_chase is not None:
+            message = no_chase.observed_line(
+                anchor_ms=state.atr_session_anchor_ms, allowed=allowed,
+                refusal_reason=reason, atr_state=state.atr_state,
+                short_segment=short_segment, retry_segment=state.retry_one_segment_id,
+            )
+            if message is not None:
+                logger.info("%s", message)
+    except Exception:
+        pass
+''').body[0]
+    update_annotations = ast.parse('''
+diagnostic_restore = None
+try:
+    no_chase = state.__dict__.get("_postflip_nochase_log")
+    if no_chase is not None:
+        diagnostic_restore = no_chase, no_chase.current
+except Exception:
+    state.__dict__.pop("_postflip_nochase_log", None)
+if diagnostic_restore is not None:
+    try:
+        diagnostic_restore[0].current = diagnostic_restore[1]
+    except Exception:
+        state.__dict__.pop("_postflip_nochase_log", None)
+if flip is not None:
+    try:
+        from project_mai_tai.strategy_core.postflip_nochase_log import PostFlipNoChaseLog
+        no_chase = state.__dict__.get("_postflip_nochase_log")
+        if no_chase is None:
+            no_chase = PostFlipNoChaseLog(state.symbol)
+            state.__dict__["_postflip_nochase_log"] = no_chase
+        no_chase.observe_transition(flip=flip, bar_ms=int(cur.timestamp_ms), anchor_ms=anchor)
+    except Exception:
+        state.__dict__.pop("_postflip_nochase_log", None)
+if flip is not None and not state_only and phase == "live" and getattr(self, "_flip_print_enabled", False):
+    try:
+        from project_mai_tai.strategy_core.flip_print_diagnostic import FlipPrintDiagnostic
+        observer = getattr(self, "_flip_print_observer", None)
+        if observer is None:
+            observer = FlipPrintDiagnostic()
+            self._flip_print_observer = observer
+        diagnostic = observer.line(symbol=state.symbol, flip=flip, bar_ms=int(cur.timestamp_ms),
+                                   close=cur.close, phase=phase, state_only=state_only)
+        if diagnostic is not None:
+            logger.info("%s", diagnostic)
+    except Exception:
+        pass
+''').body
+
+    class RemoveExactAnnotations(ast.NodeTransformer):
+        def __init__(self, allowed):
+            self.expected = {ast.dump(node): 0 for node in allowed}
+
+        def visit(self, node):
+            key = ast.dump(node)
+            if key in self.expected:
+                self.expected[key] += 1
+                return None
+            return super().visit(node)
+
     original = {
         "_strict_first_rest_admitted": "11063d9514a8cf920c060eb0c3501091e9c6127ed20677f693d72c06bffff922",
         # SLOTCAP-20261021: BUY flip clears slotclear_deferred_sell; ATR math unchanged
@@ -633,4 +697,14 @@ def test_g3_and_core_atr_setters_unchanged_from_frozen_base():
     after = ast.parse(inspect.getsource(__import__("project_mai_tai.strategy_core.schwab_1m_v2", fromlist=["_"])))
     for name, digest in original.items():
         current = [n for n in ast.walk(after) if isinstance(n, ast.FunctionDef) and n.name == name]
+        assert len(current) == 1
+        if name == "_strict_first_rest_admitted":
+            annotations = [node for node in current[0].body
+                           if ast.dump(node) == ast.dump(annotation)]
+            assert len(annotations) == 1
+            current[0].body.remove(annotations[0])
+        elif name == "_update_atr_state":
+            normalizer = RemoveExactAnnotations(update_annotations)
+            normalizer.visit(current[0])
+            assert set(normalizer.expected.values()) == {1}
         assert hashlib.sha256(ast.dump(current[0]).encode()).hexdigest() == digest

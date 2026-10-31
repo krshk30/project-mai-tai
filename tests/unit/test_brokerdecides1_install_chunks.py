@@ -12,7 +12,7 @@ from project_mai_tai.brokerdecides1_install_chunks import (
 )
 from project_mai_tai.brokerdecides1_retirement import BATCH, unresolved_query
 from project_mai_tai.db.models import BrokerDecidesDispatchRetirement as Retirement, DashboardSnapshot
-from tests.unit.test_brokerdecides1_local_census import ACCOUNTS, attempt, census
+from tests.unit.test_brokerdecides1_local_census import ACCOUNTS, attempt, census as census
 from tests.unit.test_brokerdecides1_retirement import observed, seed_old_closed
 
 

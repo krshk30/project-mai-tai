@@ -1,0 +1,19 @@
+{
+  "cases": {
+    "aggregate:confirmation": "c32983c2bb4f2d25bb5715c6f742cc0cf2af1934f771059cfe5be09479c7cf25",
+    "aggregate:stop": "bf369efdb9e81143e5b80b14a3f4874bd598d417ef883fceefa5ec63baeb7097",
+    "aggregate:target": "60ee0c8456820a06484e0b6835335ac80528d9f542707fb3c75103b28b72d6fb",
+    "core:excluded": "dd142a0eff13df7a06863a39ee94dfe7f80f37d934a166695c3199663e40d375",
+    "core:sell": "3fcf2d010efa2307ab36fec4ffa75c3cf93ee928b5f6d45c3d9b9f7f384b501b",
+    "core:stop": "a68c608604e21e6c300285859cf2916230caaa615866bd5f79c35dbb37f79ec0",
+    "core:target": "1e09d81d9d9e15ed1f4c3e3bdc685e16553273a08c8144c4cbfbf315e9d6db43",
+    "core:unknown": "233a2f72c743ebf1b6a45a361aa3ddac420e9baa2329832a1176bacaf716cac6",
+    "firstbar:excluded": "891a30e991b4dcab662e277d39d67141f389e1a85faecd6ed10d2f051050682e",
+    "firstbar:sell": "5977246270e8aebdfb01bbcaf45d6a1e6696efaa3ad40626e67bfe9efebf0977",
+    "firstbar:stop": "a7d21843b8f0f90ed52cf9dff3c43c96d1e2437bac24bfc6ac08e2cb66508deb",
+    "firstbar:target": "ff6a7ad0635da4e580b8096dbaf784b9bebb61ac346ae1f860dd055017bb571d",
+    "firstbar:unknown": "322e2fd82ea46f716985c390d192470d08723e9239797acb2fff1934023b3397"
+  },
+  "old_head": "7f95e8157f96f9a72f76455b894839e3a337203d",
+  "scope": "CONTROLLED_NOT_REAL_TODAY"
+}

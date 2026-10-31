@@ -18,11 +18,13 @@ def test_another_buy_in_exact_opportunity_cannot_disappear_from_close_proof(faul
     extra_buy = deepcopy(buy)
     extra_buy.id, extra_buy.order_id = "other-fill", "other-entry"
     extra_account = deepcopy(account)
-    if fault == "partial_sibling": extra_buy.quantity = Decimal(1)
+    if fault == "partial_sibling":
+        extra_buy.quantity = Decimal(1)
     elif fault == "other_account":
         extra_account.id, extra_account.name = "other-account", "live:orb"
         extra.broker_account_id = extra_buy.broker_account_id = "other-account"
-    elif fault == "reclaim_sibling": extra.payload["cw_entry_slot"] = "reclaim"
+    elif fault == "reclaim_sibling":
+        extra.payload["cw_entry_slot"] = "reclaim"
     assert closed_child_episodes([row], [(buy, entry, account), (extra_buy, extra, extra_account)],
         [(sell, child, account)]) == {}
 

@@ -59,23 +59,40 @@ def test_exact_full_child_and_linked_entry_produce_one_closed_episode():
 def test_missing_or_conflicting_episode_proof_never_becomes_closed(fault):
     values = episode_rows()
     row, entry, child, buy, sell, account = values
-    if fault == "wrong_entry": row.entry_order_id = "other"
-    elif fault == "wrong_client": row.entry_client_order_id = "other"
-    elif fault == "foreign_account": row.broker_account_name = ACCOUNTS[1]
-    elif fault == "wrong_symbol": row.symbol = "OTHER"
-    elif fault == "wrong_slot": entry.payload["fanout_slot_id"] = "other"
-    elif fault == "wrong_op": entry.payload["fanout_segment_id"] = "unknown"
-    elif fault == "reclaim": entry.payload["cw_entry_slot"] = "reclaim"
-    elif fault == "partial_buy": buy.quantity = Decimal(194)
-    elif fault == "partial_child": sell.quantity = Decimal(194)
-    elif fault == "unfilled_entry": entry.status = "working"
-    elif fault == "unfilled_child": child.status = "working"
-    elif fault == "foreign_child_intent": child.intent_id = "other"
-    elif fault == "wrong_child_client": child.client_order_id = "other"
-    elif fault == "open_row": row.status = "open"
-    elif fault == "nonzero_row": row.current_quantity = 1
-    elif fault == "before_entry": sell.filled_at = row.entry_time - timedelta(seconds=1)
-    elif fault == "after_close": sell.filled_at = row.updated_at + timedelta(seconds=1)
+    if fault == "wrong_entry":
+        row.entry_order_id = "other"
+    elif fault == "wrong_client":
+        row.entry_client_order_id = "other"
+    elif fault == "foreign_account":
+        row.broker_account_name = ACCOUNTS[1]
+    elif fault == "wrong_symbol":
+        row.symbol = "OTHER"
+    elif fault == "wrong_slot":
+        entry.payload["fanout_slot_id"] = "other"
+    elif fault == "wrong_op":
+        entry.payload["fanout_segment_id"] = "unknown"
+    elif fault == "reclaim":
+        entry.payload["cw_entry_slot"] = "reclaim"
+    elif fault == "partial_buy":
+        buy.quantity = Decimal(194)
+    elif fault == "partial_child":
+        sell.quantity = Decimal(194)
+    elif fault == "unfilled_entry":
+        entry.status = "working"
+    elif fault == "unfilled_child":
+        child.status = "working"
+    elif fault == "foreign_child_intent":
+        child.intent_id = "other"
+    elif fault == "wrong_child_client":
+        child.client_order_id = "other"
+    elif fault == "open_row":
+        row.status = "open"
+    elif fault == "nonzero_row":
+        row.current_quantity = 1
+    elif fault == "before_entry":
+        sell.filled_at = row.entry_time - timedelta(seconds=1)
+    elif fault == "after_close":
+        sell.filled_at = row.updated_at + timedelta(seconds=1)
     entries = [] if fault == "no_entry" else [(buy, entry, account)]
     exits = [] if fault == "no_child" else [(sell, child, account)]
     assert closed_child_episodes([row], entries, exits) == {}
@@ -122,15 +139,24 @@ def test_later_clean_short_retires_normal_identity_then_owner_no_retry_reset():
 def test_reconstruction_fails_closed_without_exact_complete_owner_proof(fault):
     strategy, state, writes, proof = owner_case()
     proofs = (proof,)
-    if fault == "foreign_op": proofs = (replace(proof, opportunity=OPPORTUNITY + 1),)
-    elif fault == "missing_sibling": state.flip_owner_fill_accounts.add(ACCOUNTS[1])
-    elif fault == "duplicate_account": proofs = (proof, proof)
-    elif fault == "foreign_row": state.flip_owner_position_ids = {ACCOUNTS[0]: "foreign"}
-    elif fault == "future_close": proofs = (replace(proof, closed_ms=NOW + 1),)
-    elif fault == "restore_unknown": strategy._flip_owner_restore_readable = False
-    elif fault == "book_stale": strategy._now_ms = lambda: NOW + 600000
-    elif fault == "book_unreadable": state.flip_owner_evidence_readable = False
-    else: strategy.settings.strategy_schwab_1m_v2_brokerdecides1_enabled = False
+    if fault == "foreign_op":
+        proofs = (replace(proof, opportunity=OPPORTUNITY + 1),)
+    elif fault == "missing_sibling":
+        state.flip_owner_fill_accounts.add(ACCOUNTS[1])
+    elif fault == "duplicate_account":
+        proofs = (proof, proof)
+    elif fault == "foreign_row":
+        state.flip_owner_position_ids = {ACCOUNTS[0]: "foreign"}
+    elif fault == "future_close":
+        proofs = (replace(proof, closed_ms=NOW + 1),)
+    elif fault == "restore_unknown":
+        strategy._flip_owner_restore_readable = False
+    elif fault == "book_stale":
+        strategy._now_ms = lambda: NOW + 600000
+    elif fault == "book_unreadable":
+        state.flip_owner_evidence_readable = False
+    else:
+        strategy.settings.strategy_schwab_1m_v2_brokerdecides1_enabled = False
     assert not recover_closed_owner(strategy, state, proofs)
     assert state.flip_owner_phase == "unknown" and not writes
 
@@ -149,17 +175,29 @@ def test_new_segment_retirement_keeps_every_real_money_and_line_fence(fault):
         field, provider = fault.split("_")
         changes["books"] = tuple(replace(book, **{"working" if field == "working" else "positions":
             frozenset({"YMAT"})}) if book.provider == provider else book for book in snapshot.books)
-    elif fault == "inflight": changes["inflight"] = frozenset({"YMAT"})
-    elif fault == "fill_current": changes["filled_segments"] = frozenset({("YMAT", SEGMENT)})
-    elif fault == "incomplete": changes["local_complete"] = False
-    elif fault == "stale20": strategy._now_ms = lambda: NOW + 19900
-    elif fault == "same_segment": state.atr_short_flip_bar_ts = state.flip_owner_retry_segment_id
-    elif fault == "restart": state.restart_rest_evidence_pending = True
-    elif fault == "removed_wait": strategy._removed_wait_requests[state.symbol] = object()
-    elif fault == "boot": strategy._entries_held = True
-    elif fault == "gap": strategy._gap_hold_enabled = state.gap_hold_active = True
-    elif fault == "line_unknown": strategy._line_restoration_enabled = True; strategy._line_readiness = None
-    else: memory.reserve("YMAT", "CONTROLLED-unknown-wire")
+    elif fault == "inflight":
+        changes["inflight"] = frozenset({"YMAT"})
+    elif fault == "fill_current":
+        changes["filled_segments"] = frozenset({("YMAT", SEGMENT)})
+    elif fault == "incomplete":
+        changes["local_complete"] = False
+    elif fault == "stale20":
+        strategy._now_ms = lambda: NOW + 19900
+    elif fault == "same_segment":
+        state.atr_short_flip_bar_ts = state.flip_owner_retry_segment_id
+    elif fault == "restart":
+        state.restart_rest_evidence_pending = True
+    elif fault == "removed_wait":
+        strategy._removed_wait_requests[state.symbol] = object()
+    elif fault == "boot":
+        strategy._entries_held = True
+    elif fault == "gap":
+        strategy._gap_hold_enabled = state.gap_hold_active = True
+    elif fault == "line_unknown":
+        strategy._line_restoration_enabled = True
+        strategy._line_readiness = None
+    else:
+        memory.reserve("YMAT", "CONTROLLED-unknown-wire")
     memory.apply(replace(snapshot, **changes))
     assert not retire_closed_owner_on_new_short(strategy, state, (proof,))
     assert state.flip_owner_phase == "unknown" and not writes

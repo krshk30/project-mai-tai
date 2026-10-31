@@ -33,6 +33,7 @@ async def scene(*, budget=16):
     bot.strategy = SimpleNamespace(_now_ms=lambda: clock.now_ns // 1000000, _symbol_states={})
     assert bot._keepwatch_producer_anchor_ms == 0
     assert not bot._keepwatch_producer_pins
+    bot._watchlist = {"AAA", "BBB"}  # Explicit controlled observation population.
     bot._subscription_symbols = lambda: {"AAA", "BBB"}
     ready, prepares, consumed = set(), [], []
 

@@ -12,18 +12,21 @@ import json
 import logging
 import re
 import sys
+from threading import Lock
 from contextvars import ContextVar
 from functools import wraps
 from urllib.parse import quote, urlencode
 
 from project_mai_tai.brokerdecides1_native import (
-    MAX_PAGES, MAX_ROWS, schwab_book, terminal_empty_open_orders, webull_book,
+    MAX_PAGES, MAX_ROWS, schwab_book, webull_book,
 )
+from project_mai_tai.webull_open_orders import open_order_page
 
 SDK_OPEN_REQUEST_SHA = "51200dd8b295b49d022be94994b43c8a184ce4cefc76ee6b6280f694c015f398"
 MAX_REQUESTS = 32
 READ_BUDGET_SECONDS = 4.0
 LOGGER = logging.getLogger(__name__)
+SYMBOL_DIAGNOSTIC_LOCK = Lock()
 BACKGROUND_ALLOWED = ContextVar("l12_background_allowed", default=None)
 BACKGROUND_TASKS = ContextVar("l12_background_tasks", default=None)
 BACKGROUND_FOREGROUND_ACTIVE = ContextVar("l12_foreground_active", default=None)
@@ -55,6 +58,9 @@ SAFE_FAILURE_CODES = frozenset({
     "Webull_continuation_UNKNOWN", "Webull_native_rows_at_cap", "Webull_holding_UNKNOWN",
     "Webull_duplicate_holding", "Webull_order_UNKNOWN", "Webull_native_order_identity_UNKNOWN",
     "Webull_order_status_or_items_UNKNOWN", "Webull_order_item_UNKNOWN", "Webull_symbol_overflow",
+    "Webull_open_envelope_account_UNKNOWN", "Webull_open_continuation_UNKNOWN",
+    "Webull_open_page_size_UNKNOWN", "Webull_open_cursor_UNKNOWN",
+    "Webull_open_unlocated_symbol_UNKNOWN",
 })
 
 
@@ -63,6 +69,29 @@ def _diagnostic_stage(stage, page=0, status=None):
     if state is not None:
         state.update(stage=stage, page=page,
             status=status if type(status) is int and 100 <= status <= 599 else "UNKNOWN")
+
+
+def _record_symbol_unknown_changes(adapter, account, current):
+    """Bounded account-local diagnostic state, updated only after a complete read."""
+    with SYMBOL_DIAGNOSTIC_LOCK:
+        state = getattr(adapter, "_brokerdecides_symbol_unknown", None)
+        if state is None:
+            state = {}
+            adapter._brokerdecides_symbol_unknown = state
+        previous = state.get(account, {})
+        changed = {symbol for symbol in current.keys() | previous.keys()
+                   if current.get(symbol) != previous.get(symbol)}
+        state[account] = dict(current)
+    for symbol in sorted(changed):
+        reasons = current.get(symbol)
+        try:
+            LOGGER.log(logging.WARNING if reasons else logging.INFO,
+                "[BROKERDECIDES1-NATIVE-SYMBOL-STATE] account=%s symbol=%s state=%s reason=%s",
+                account, symbol, "UNKNOWN" if reasons else "DECODED",
+                ",".join(reasons) if reasons else "complete_read_no_row_unknown")
+        except Exception:
+            # A diagnostic cannot remove the conservative native-working hold.
+            pass
 
 
 def _log_native_failure(exc):
@@ -193,10 +222,12 @@ def webull_pages(fetch, *, account_id, field, page_size, cursor_keys,
         if type(status) is not int or status != 200:
             raise ValueError("Webull_native_http_UNKNOWN")
         if field == "orders" and order_request_account is not None:
-            terminal_empty_open_orders(body, native_account=account_id, request_account=order_request_account)
-            return [body]  # Nonempty/continuation remain UNKNOWN pending actual model proof.
-        rows, more = _continuation(body, field, account_id, page_size,
-                                  request_account=positions_request_account)
+            rows, more, next_cursor = open_order_page(body, native_account=account_id,
+                                                     request_account=order_request_account)
+        else:
+            rows, more = _continuation(body, field, account_id, page_size,
+                                      request_account=positions_request_account)
+            next_cursor = None
         total += len(rows)
         if total >= MAX_ROWS:
             raise ValueError("Webull_native_row_cap_UNKNOWN")
@@ -204,7 +235,8 @@ def webull_pages(fetch, *, account_id, field, page_size, cursor_keys,
         if not more:
             return pages
         last = rows[-1] if rows else None
-        values = [last[k] for k in cursor_keys if isinstance(last, dict) and k in last]
+        values = ([next_cursor] if next_cursor else
+                  [last[k] for k in cursor_keys if isinstance(last, dict) and k in last])
         if (not values or any(not isinstance(v, str) or not v or v != values[0] for v in values)
                 or values[0] in cursors or values[0] == cursor):
             raise ValueError("Webull_native_cursor_UNKNOWN")
@@ -255,7 +287,8 @@ def _webull_blocking(adapter, account):
     return webull_book(account=account, native_account=configured.account_id,
         position_pages=positions, order_pages=orders, wire_started_ms=started,
         wire_completed_ms=stamp(), scope="all_native_working_including_previous_sessions", complete=True,
-        order_request_account=configured.account_id, positions_request_account=configured.account_id)
+        order_request_account=configured.account_id, positions_request_account=configured.account_id,
+        symbol_unknown_observer=lambda current: _record_symbol_unknown_changes(adapter, account, current))
 
 
 @_observe_native("webull")

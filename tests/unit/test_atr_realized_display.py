@@ -326,12 +326,11 @@ def test_shared_page_actual_live_data_and_modeled_rows_are_not_mutated(monkeypat
         raise AssertionError("unselected model source must not read")
     port = routes.AggregateSimulationReadPort(SimpleNamespace(read=unused), binding, realized)
     loop_thread, render_threads = get_ident(), []
-    from project_mai_tai.atr_simulation import cp_sim_display as compact
-    original_render = compact.render_page
+    original_render = routes.render_aggregate_page
     def observed_render(*args, **kwargs):
         render_threads.append(get_ident())
         return original_render(*args, **kwargs)
-    monkeypatch.setattr(compact, "render_page", observed_render)
+    monkeypatch.setattr(routes, "render_aggregate_page", observed_render)
     engine = sa.create_engine("sqlite:///:memory:")
     try:
         app = cp.build_app(Settings(_env_file=None, trade_coach_enabled=False,
@@ -344,13 +343,15 @@ def test_shared_page_actual_live_data_and_modeled_rows_are_not_mutated(monkeypat
         async def request():
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app),
                                           base_url="http://CONTROLLED") as client:
-                return await client.get("/bot/1m-schwab-v2")
-        response = asyncio.run(request())
+                return (await client.get("/bot/1m-schwab-v2"),
+                        await client.get("/atr-aggregate"))
+        response, aggregate = asyncio.run(request())
         assert response.status_code == 200 and data == original
         assert "$+10.00" in response.text
-        assert '<span>Realized</span><strong>+$251.00</strong>' in response.text
-        assert "172 complete / 1 unreconciled" in response.text
-        assert "never added to LIVE totals" in response.text
+        assert "Simulation unavailable right now" in response.text
+        assert "Realized (fills): +$251.00 gross over 172 complete signals" in aggregate.text
+        assert "1 signals unreconciled" in aggregate.text
+        assert "never added to LIVE daily totals" in aggregate.text
         assert render_threads and all(thread != loop_thread for thread in render_threads)
     finally:
         engine.dispose()

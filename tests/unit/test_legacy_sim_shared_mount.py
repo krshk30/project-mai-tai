@@ -67,7 +67,7 @@ def test_custom_firstbar_port_without_legacy_di_does_not_create_another_reader()
         assert firstbar.calls == old.calls == []
 
 
-def test_shared_atr_forms_are_separate_and_existing_live_bytes_stay_unchanged(monkeypatch):
+def test_shared_atr_uses_sim2_and_existing_live_bytes_stay_unchanged(monkeypatch):
     monkeypatch.setattr(cp, "utcnow", lambda: datetime(2026, 10, 23, 20, tzinfo=UTC))
     actual = cp._render_bot_detail_page
     captures = []
@@ -80,10 +80,11 @@ def test_shared_atr_forms_are_separate_and_existing_live_bytes_stay_unchanged(mo
     with mounted() as (app, firstbar, old, data, before):
         response = request(app, "/bot/1m-schwab-v2")
         assert response.status_code == 200 and firstbar.calls == old.calls == []
-        assert 'name="legacy_source_id"' in response.text
-        assert 'name="legacy_day"' in response.text and 'name="legacy_days"' in response.text
-        assert 'data-firstbar-mount="true"' in response.text
-        assert 'data-legacy-sim-mount="true"' in response.text
+        assert "Simulation unavailable right now" in response.text
+        assert 'name="legacy_source_id"' not in response.text
+        assert 'data-firstbar-mount="true"' in response.text  # Reused ATRSIM2 mount marker.
+        assert "Recorded FIRSTBAR SIM" not in response.text
+        assert 'data-legacy-sim-mount="true"' not in response.text
         snapshot, strategy, panel = captures[0]
         baseline = actual(snapshot, strategy)
         assert response.text.replace(panel, "", 1) == baseline
@@ -92,8 +93,8 @@ def test_shared_atr_forms_are_separate_and_existing_live_bytes_stay_unchanged(mo
 
 def test_legacy_source_uses_only_legacy_reader_and_seven_day_scope():
     with mounted() as (app, firstbar, old, data, before):
-        response = request(app, "/bot/1m-schwab-v2?legacy_source_id=" + SOURCE
-            + "&legacy_day=2026-10-23&legacy_days=7")
+        response = request(app, "/atr-simulation?source_id=" + SOURCE
+            + "&day=2026-10-23&days=7")
         assert response.status_code == 200 and firstbar.calls == [] and len(old.calls) == 1
         args, kwargs, _ = old.calls[0]
         assert args[0] == SOURCE and str(args[1]) == "2026-10-23" and str(args[2]) == "2026-10-29"
@@ -102,21 +103,21 @@ def test_legacy_source_uses_only_legacy_reader_and_seven_day_scope():
 
 def test_firstbar_source_does_not_select_legacy_source():
     with mounted() as (app, firstbar, old, _, _):
-        response = request(app, "/bot/1m-schwab-v2?source_id=CONTROLLED-seed&day="
+        response = request(app, "/atr-firstbar?source_id=CONTROLLED-seed&day="
             + SEED_START.isoformat() + "&days=32")
         assert response.status_code == 200 and len(firstbar.calls) == 1 and old.calls == []
 
 
 def test_out_of_seed_firstbar_window_keeps_original_guard_and_never_reads_legacy():
     with mounted() as (app, firstbar, old, _, _):
-        response = request(app, "/bot/1m-schwab-v2?source_id=CONTROLLED-seed&day=2026-10-12&days=32")
+        response = request(app, "/atr-firstbar?source_id=CONTROLLED-seed&day=2026-10-12&days=32")
         assert response.status_code == 400 and firstbar.calls == old.calls == []
 
 
-@pytest.mark.parametrize("query", ["legacy_days=8", "legacy_source_id=bad/path", "legacy_day=bad"])
+@pytest.mark.parametrize("query", ["days=8", "source_id=bad/path", "day=bad"])
 def test_invalid_legacy_query_refuses_before_any_page_read(query):
     with mounted() as (app, firstbar, old, _, _):
-        assert request(app, "/bot/1m-schwab-v2?" + query).status_code == 422
+        assert request(app, "/atr-simulation?" + query).status_code == 422
         assert firstbar.calls == old.calls == []
 
 

@@ -14,7 +14,7 @@ from project_mai_tai.db.models import BrokerOrder
 from project_mai_tai.momentum_live.admission import Refusal, Route, price_entry
 from project_mai_tai.momentum_live.entry_reprice import UnsentEntryConflict, marketable_entry, validate_entry_reprice
 from project_mai_tai.momentum_live.entry_wire import entry_wire_guard
-from tests.unit.test_mombuffer1_incap_reprice import durable, env, move_at, priced  # noqa: F401
+from tests.unit.test_mombuffer1_incap_reprice import durable, env, move_at, priced as priced  # noqa: F401
 
 
 @pytest.mark.asyncio

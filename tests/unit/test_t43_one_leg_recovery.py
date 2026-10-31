@@ -213,6 +213,7 @@ async def test_t43_ordinary_open_local_abort_is_terminal_only_for_its_new_audite
     event = TradeIntentEvent(source_service="schwab-1m-v2", payload=TradeIntentPayload(
         strategy_code="schwab_1m_v2", broker_account_name=h.old.broker_account_name,
         symbol=h.old.symbol, side="buy", intent_type="open", quantity=Decimal(2),
+        metadata={"entry_price": "3.10"},
         reason="CONTROLLED ordinary placement while RPG owns old buy"))
     result = await h.service.process_trade_intent(event)
     assert result[0].payload.status == "aborted"

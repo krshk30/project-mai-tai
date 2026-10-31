@@ -8,7 +8,7 @@ import pytest
 
 from ops.weekmaint import collector, policy
 from tests.unit.test_weekmaint1_policy import ACCOUNTS, NOW, snapshot
-from tests.unit.test_weekmaint1_review_fixes import make_backend  # noqa: F401
+from tests.unit.test_weekmaint1_review_fixes import make_backend as make_backend  # noqa: F401
 
 
 class ExistingAdapter:

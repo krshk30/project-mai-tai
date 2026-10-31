@@ -10,7 +10,7 @@ from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.oms.orb_pastlevel import receipt, unsent_plan
 from project_mai_tai.settings import Settings
-from project_mai_tai.strategy_core.orb_pastlevel import assert_same_selection, select_entry
+from project_mai_tai.strategy_core.orb_pastlevel import assert_same_selection, round_buy, select_entry
 from project_mai_tai.strategy_core.orb_schwab_bracket import build_orb_schwab_bracket_metadata
 
 NOW = datetime(2026, 10, 21, 13, 28, tzinfo=UTC)
@@ -73,6 +73,14 @@ def test_naive_quote_clock_still_rejected():
     ("3.42", "3.42", "3.44"),
 ])
 def test_tick_boundary_and_nominal_upward_rounding(level, trigger, cap):
+    if Decimal(level) < 1:
+        # PRICE1 checks the raw breakout before any tick can round it up to $1.
+        with pytest.raises(ValueError, match="^PRICE1-REFUSED$"):
+            choose(level=level, ask=level)
+        assert round_buy(Decimal(level)) == Decimal(trigger)
+        planned = build_orb_schwab_bracket_metadata(Decimal(level), tick_cap=True)
+        assert Decimal(planned["limit_price"]) == Decimal(cap)
+        return
     md = choose(level=level, ask=level)
     assert Decimal(md["stop_price"]) == Decimal(trigger)
     assert Decimal(md["orb_buy_cap_effective_price"]) == Decimal(cap)

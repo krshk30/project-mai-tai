@@ -63,6 +63,33 @@ LAUNCHED_NOT_IMPORTED: dict[str, str] = {
     ),
     "project_mai_tai.maintenance.reset_active_state": "maintenance CLI; has __main__",
     "project_mai_tai.momentum_gateway_handoff": ("measured by the Step 2 protocol; not wired"),
+    "project_mai_tai.atr_simulation.firstbar_comparison": (
+        "imported only by tools/atr_firstbar_study_replay.py (hand-run FIRSTBAR study replay); not runtime"
+    ),
+    "project_mai_tai.atr_simulation.firstbar_live_baseline": (
+        "ATRSIMLIVE1 offline study; imported only by the hand-run tools/atrsimlive1*.py CLIs (10-31: the box ATR page timer runs tools/atrsim2_job.py instead)"
+    ),
+    "project_mai_tai.atr_simulation.same_sip_binding": (
+        "ATRSIMLIVE1 offline study; imported only by the hand-run tools/atrsimlive1*.py CLIs (10-31: the box ATR page timer runs tools/atrsim2_job.py instead)"
+    ),
+    "project_mai_tai.atr_simulation.same_sip_engine": (
+        "imported only by tools/atrsimlive1_models.py (ATRSIMLIVE1 hand-run study); not runtime"
+    ),
+    "project_mai_tai.atr_simulation.same_sip_firstbar_live_baseline": (
+        "ATRSIMLIVE1 offline study; imported only by the hand-run tools/atrsimlive1*.py CLIs (10-31: the box ATR page timer runs tools/atrsim2_job.py instead)"
+    ),
+    "project_mai_tai.services.atr_simulation_firstbar_worker": (
+        "has __main__ (python -m); 10-31 no systemd unit installed on the box, so it runs only by hand"
+    ),
+    "project_mai_tai.phone_alert_policy": (
+        "imported by ops/health/phone_alert_gate.py, low_priority_alerts.py, orphan_order_check.py (root cron on the box)"
+    ),
+    "project_mai_tai.reconciliation.operator_closed_exits": (
+        "imported by ops/health/oco_capture_check.py (oco_capture_cron.sh, root cron */15 on the box)"
+    ),
+    "project_mai_tai.services.market_data_snapshot_worker": (
+        "python -m via ops/systemd/project-mai-tai-snapshot-worker.service (enabled + active on the box 10-31)"
+    ),
 }
 
 # ⛔⭐⭐ IMPORTED BY NOTHING **AND** LAUNCHED BY NOTHING. Findings, not exemptions.
@@ -80,6 +107,24 @@ KNOWN_INERT: dict[str, str] = {
         "it, there is no CLI, and no ops/docs reference. So the ban it encodes is not enforced "
         "anywhere — reason strings are still matched by hand at every call site. Found by this "
         "lint on 2026-08-19, the same shape as broker_refusal. Wiring it is open work."
+    ),
+    "project_mai_tai.oms.bot_control_cleanup": (
+        "10-31 claude-1 finding: KILLSW1 pure cleanup planner (plan_cleanup) shipped in the 10-16 install #1163 and imported by nothing; the live KILLSW1 cleanup refusals live in momentum_live/runtime.py instead. Wire it or delete it in a cleanup PR; nothing live depends on it today."
+    ),
+    "project_mai_tai.momentum_paper.case_collision_append": (
+        "10-31 claude-1 finding: cold reviewed append caller (no DSN/CLI) shipped 10-15 in #1160 for the case-collision repair; no tool, CLI or runtime imports it, so the reviewed append path cannot run. Delete in a cleanup PR or wire it to its tool."
+    ),
+    "project_mai_tai.atr_simulation.firstbar_study_publication": (
+        "10-31 claude-1 finding: ATRSIMLIVE1 FIRSTBAR study publication step; named only in tools/atrsimlive1_failure_literals.json and imported by no tool or runtime, so the publication it encodes never runs. Superseded by tools/atrsim2_job.py dashboard_snapshots."
+    ),
+    "project_mai_tai.oms.webull_identity_copy_audit": (
+        "10-31 claude-1 finding: Exact-13 Webull metadata repair rehearsal CLI (__main__, frozen files only); no launcher or runbook on the box invokes it, so the rehearsal it encodes never runs. Wire it to a reviewed runbook or delete it."
+    ),
+    "project_mai_tai.services.momentum_live_replay": (
+        "10-31 claude-1 finding: offline retained-detection arithmetic CLI (__main__, never dispatches) shipped 10-15 in #1160; no launcher, cron or runbook on the box invokes it, so its replay check never runs. Wire it or delete it."
+    ),
+    "project_mai_tai.atr_simulation.today_display": (
+        "10-31 claude-1 finding: ATRSIMLIVE1 TODAY display model; named only in tools/atrsimlive1_failure_literals.json and imported by nothing; the live ATR page reads tools/atrsim2_job.py dashboard_snapshots instead. Delete in a cleanup PR."
     ),
 }
 
@@ -131,11 +176,19 @@ def _imported_names() -> set[str]:
             tree = ast.parse(path.read_text(encoding="utf-8"))
         except (SyntaxError, UnicodeDecodeError):
             continue
+        package = _module_name(path).split(".")
+        if path.name != "__init__.py":
+            package = package[:-1]
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                found.add(node.module)
+            if isinstance(node, ast.ImportFrom) and (node.module or node.level):
+                module = node.module or ""
+                if node.level:
+                    # `from .entry import x` imports pkg.entry: resolve against this file's package.
+                    base = package[: len(package) - node.level + 1]
+                    module = ".".join(base + ([module] if module else []))
+                found.add(module)
                 for alias in node.names:
-                    found.add(f"{node.module}.{alias.name}")
+                    found.add(f"{module}.{alias.name}")
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     found.add(alias.name)
@@ -174,6 +227,13 @@ def test_known_inert_set_may_only_shrink():
     # One dated exception explicitly approved for removal in the 10-15 close PR.
     assert set(KNOWN_INERT) == {
         "project_mai_tai.trade_reasons", "project_mai_tai.momentum_live_routing",
+        # 10-31: four findings surfaced once relative imports were resolved (reported to operator).
+        "project_mai_tai.oms.bot_control_cleanup",
+        "project_mai_tai.momentum_paper.case_collision_append",
+        "project_mai_tai.atr_simulation.firstbar_study_publication",
+        "project_mai_tai.atr_simulation.today_display",
+        "project_mai_tai.oms.webull_identity_copy_audit",
+        "project_mai_tai.services.momentum_live_replay",
     }
     assert all(len(reason) > 120 for reason in KNOWN_INERT.values()), (
         "a KNOWN_INERT entry must explain what the module was for and what is lost while it is dead"
@@ -194,7 +254,8 @@ def test_sec_nightly_source_launch_does_not_exempt_unresolved_callers():
     ):
         assert unresolved not in targets
         assert unresolved not in LAUNCHED_NOT_IMPORTED
-        assert unresolved not in KNOWN_INERT
+        # 10-31: recorded as open findings (KNOWN_INERT), never as a launch exemption.
+        assert unresolved in KNOWN_INERT
 
 
 def test_broker_refusal_is_actually_wired():

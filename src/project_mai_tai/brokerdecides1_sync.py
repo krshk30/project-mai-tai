@@ -73,7 +73,10 @@ async def _background_refresh(service):
         BACKGROUND_ALLOWED, BACKGROUND_FOREGROUND_ACTIVE, BACKGROUND_TASKS,
     )
 
-    allowed = lambda: not service.__dict__.get("_brokerdecides1_foreground_syncs", 0) and not service.__dict__.get("_brokerdecides1_closing", False)
+    def allowed():
+        return (not service.__dict__.get("_brokerdecides1_foreground_syncs", 0)
+                and not service.__dict__.get("_brokerdecides1_closing", False))
+
     priority_token = BACKGROUND_ALLOWED.set(allowed)
     foreground_token = BACKGROUND_FOREGROUND_ACTIVE.set(
         lambda: bool(service.__dict__.get("_brokerdecides1_foreground_syncs", 0)))
@@ -220,7 +223,11 @@ def local_nonentry_activity(session, account_ids, terminal):
     return symbols
 
 
-def local_evidence(session, names):
+PRIOR_SESSION_TERMINAL = frozenset({"cancelled", "filled", "rejected", "expired", "aborted"})
+
+
+def local_evidence(session, names, *, prior_session_attempts_final=False,
+                   same_day_event_binding=False):
     """Durable OWN uncertainty/fills only. No native-flat claim comes from this DB."""
     from project_mai_tai.cancelack1 import _closed_with_replacements, working_buy_present
 
@@ -246,7 +253,6 @@ def local_evidence(session, names):
         raise ValueError("inflight_census_overflow")
     candidates = set(intent_symbols) | set(order_symbols)
     # Include durable replacement jobs whose old order may already be terminal.
-    from project_mai_tai.db.models import DashboardSnapshot
     from project_mai_tai.brokerdecides1_retirement import unresolved_jobs_query, unresolved_query
     from project_mai_tai.db.models import BrokerDecidesDispatchRetirement
 
@@ -306,13 +312,61 @@ def local_evidence(session, names):
     terminal_reservations = set()
     unknown_rows, unknown_examples = {}, {}
     observed = now_ms()
+    anchor = current_session_anchor()
+    event_bound = {}
+    if same_day_event_binding:
+        try:
+            from project_mai_tai.brokerdecides1_event_binding import accepted_event_bindings, zero_execution_closure
+
+            unmatched = {token: attempt for token, attempt in attempt_by_token.items()
+                if token not in by_token and attempt.created_at is not None
+                and (attempt.created_at.replace(tzinfo=UTC) if attempt.created_at.tzinfo is None
+                     else attempt.created_at) >= anchor}
+            if unmatched:
+                # A failed PostgreSQL statement aborts its transaction. Isolate
+                # new recovery reads so the original census can still finish.
+                with session.begin_nested():
+                    event_bound = accepted_event_bindings(session, unmatched,
+                        account_id_by_name, strategy_id, observed, anchor)
+        except Exception as error:
+            # Recovery is additive. A missing/overflowed new proof cannot
+            # invalidate the original census or unrelated symbols.
+            event_bound = {}
+            logging.getLogger(__name__).warning(
+                "[BROKERDECIDES1-EVENT-BINDING-REFUSED] reason=%s", type(error).__name__)
+    prior_final = 0
     for symbol, token, account, opportunity, changed_receipt in scoped_attempts:
         own = by_token.get(token, ())
+        recovered = token in event_bound
+        if recovered:
+            own = (event_bound[token],)
+        # C7B-min: a v2 open is DAY-only (OrderRequest default; no v2 producer sets TIF), so an
+        # attempt from a closed session with no order row cannot still be a working order. Only
+        # entry admission reads this set; current-session lost ACKs stay UNKNOWN.
+        stamp = attempt_by_token[token].created_at
+        if stamp is not None and stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=UTC)
+        # An own order row is also final when the DB already shows it terminal: cancel/reprice
+        # rewrites drop the token/segment metadata the strict match below needs.
+        if (prior_session_attempts_final and not changed_receipt
+                and stamp is not None and stamp < anchor
+                and all(order.status in PRIOR_SESSION_TERMINAL for order in own)):
+            prior_final += 1
+            continue
+        recovered_closed = False
+        if recovered:
+            try:
+                with session.begin_nested():
+                    recovered_closed = zero_execution_closure(session, own[0], observed)
+            except Exception as error:
+                logging.getLogger(__name__).warning(
+                    "[BROKERDECIDES1-EVENT-BINDING-REFUSED] reason=%s", type(error).__name__)
         if (changed_receipt or not own or any(order.symbol != symbol or order.strategy_id != strategy_id
                 or order.broker_account_id != account_id_by_name[account]
                 or order.side != "buy"
-                or str(order.payload.get("fanout_segment_id")) != str(opportunity)
-                or not _closed_with_replacements(session, order, observed)
+                or not recovered and str(order.payload.get("fanout_segment_id")) != str(opportunity)
+                or not (recovered_closed if recovered
+                        else _closed_with_replacements(session, order, observed))
                 for order in own)):
             inflight.add(symbol)  # No row / lost XADD ACK is UNKNOWN, including after restart.
             unknown_rows.setdefault(symbol, set()).add((attempt_by_token[token].id, changed_receipt))
@@ -343,6 +397,11 @@ def local_evidence(session, names):
         else:
             fills.add((order.symbol, segment))
     diagnostics = LOCAL_CENSUS_DIAGNOSTICS.get()
+    if prior_final and (diagnostics is None or diagnostics.get("prior_final") != prior_final):
+        logging.getLogger(__name__).info(
+            "[BROKERDECIDES1-PRIOR-SESSION-FINAL] attempts=%d reason=day_tif_session_closed", prior_final)
+        if diagnostics is not None:
+            diagnostics["prior_final"] = prior_final
     if diagnostics is not None:
         logged_rows = diagnostics["logged_rows"]
         next_logged_rows = {}
@@ -388,6 +447,29 @@ async def begin_pass(service):
     return generation
 
 
+def _warn_caller_timeout(service, generation, accounts, books, timeouts):
+    """One bounded warning/minute for TimeoutError at the existing await boundary."""
+    try:
+        observed = time.monotonic()
+        previous = service.__dict__.get("_brokerdecides1_caller_timeout_warning_at")
+        if previous is not None and observed - previous < 60.0:
+            return
+        aliases = {"live:orb", "live:schwab_1m_v2", "live:webull", "live:schwab"}
+        present = {book.account for book in books}
+        missing = ",".join(name if name in aliases else "UNKNOWN"
+            for name in accounts if name not in present)
+        timed_out = ",".join(name if name in aliases else "UNKNOWN" for name, _ in timeouts)
+        elapsed_ms = max(elapsed for _, elapsed in timeouts)
+        service.__dict__["_brokerdecides1_caller_timeout_warning_at"] = observed
+        service.logger.warning(
+            "[BROKERDECIDES1-CALLER-TIMEOUT] generation=%d missing_accounts=%s "
+            "timeout_accounts=%s exc=TimeoutError elapsed_ms=%d budget_ms=5000 "
+            "elapsed_scope=max_timeout_reader_wait",
+            generation, missing, timed_out, elapsed_ms)
+    except Exception:
+        pass  # Diagnostic sink/state failure cannot change the original UNKNOWN result.
+
+
 @_owned_pass
 async def finish_pass(service, generation, *, sync_succeeded):
     if generation is None:
@@ -408,7 +490,9 @@ async def finish_pass(service, generation, *, sync_succeeded):
             if reader is None:
                 raise ValueError("complete_native_reader_UNAVAILABLE")
             errors = []
+            caller_timeouts = []
             for name in publisher.accounts:
+                reader_started = time.monotonic()
                 try:
                     book = await asyncio.wait_for(reader(name), 5)
                     if (not isinstance(book, NativeAccountBook) or book.account != name
@@ -419,8 +503,14 @@ async def finish_pass(service, generation, *, sync_succeeded):
                         errors.append(book.reason)
                 except asyncio.CancelledError:
                     raise
+                except TimeoutError:
+                    caller_timeouts.append((name,
+                        max(0, int((time.monotonic() - reader_started) * 1000))))
+                    errors.append("native_account_book_UNKNOWN")
                 except Exception:
                     errors.append("native_account_book_UNKNOWN")
+            if caller_timeouts:
+                _warn_caller_timeout(service, generation, publisher.accounts, books, caller_timeouts)
             if errors:
                 raise ValueError(";".join(errors))
             from project_mai_tai.brokerdecides1_collect import require_background_priority
@@ -430,6 +520,14 @@ async def finish_pass(service, generation, *, sync_succeeded):
                 require_background_priority()
                 token = LOCAL_CENSUS_DIAGNOSTICS.set(census_diagnostics)
                 try:
+                    legacy = getattr(service.settings, "strategy_schwab_1m_v2_brokerdecides1_legacy_resolution_enabled", False)
+                    event_binding = getattr(service.settings,
+                        "strategy_schwab_1m_v2_brokerdecides1_same_day_event_binding_enabled", False) is True
+                    if event_binding:
+                        return local_evidence(session, publisher.accounts,
+                            prior_session_attempts_final=legacy, same_day_event_binding=True)
+                    if legacy:
+                        return local_evidence(session, publisher.accounts, prior_session_attempts_final=True)
                     return local_evidence(session, publisher.accounts)
                 finally:
                     LOCAL_CENSUS_DIAGNOSTICS.reset(token)

@@ -66,6 +66,16 @@ class QueryBudget:
             attempts = self.attempts.setdefault(endpoint, deque())
             while attempts and now - attempts[0] >= 2.0:
                 attempts.popleft()
+            # An abandoned ordinary caller cannot retain background priority
+            # forever. Match claim()'s 30s expiry across every endpoint, under
+            # this same lock; keep each live waiter's FIFO order and identity.
+            for waiting_endpoint, queue in self.waiting.items():
+                for _ in range(len(queue)):
+                    queued = queue.popleft()
+                    if now - self.last_wait.get((waiting_endpoint, queued), now) >= 30.0:
+                        self.last_wait.pop((waiting_endpoint, queued), None)
+                    else:
+                        queue.append(queued)
             pending = any(self.waiting.values())
             if (self.foreground_reads or self.terminal_inflight or pending or attempts
                     or now < self.blocked_until.get(endpoint, -float("inf"))

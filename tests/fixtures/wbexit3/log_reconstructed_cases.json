@@ -1,0 +1,76 @@
+{
+  "label": "LOG-RECONSTRUCTED_NOT_NATIVE_PASS",
+  "authority": "C12126 body742e0e652983ed0c5a6dd92b53b5762bac2657084e85c9f80786fcbbb72d1ae2",
+  "historical_native_preimages": "NOT_RETAINED_C1_ACCEPTED",
+  "assumptions": "DB keys, native IDs, geometry and complete typed broker replies are CONTROLLED; log operands below are retained evidence, not complete native tapes.",
+  "rows": [
+    {
+      "id": "AIXI-1020",
+      "selector": "2026-10-20 13:27-15:31 ET AIXI CW_FLIP/CW_HARD_STOP RTH",
+      "symbol": "AIXI",
+      "quantity": "95",
+      "entry_price": "3.14",
+      "clock_utc": "2026-10-20T17:27:00+00:00",
+      "source": "C12047 table + tests/fixtures/aixi_1327_packet_20261020.txt",
+      "log_operands": [
+        "WBATTACH1-BLOCKED software_exit_child_proof_required:wbattach1_protection_dispatch_or_exit_inflight x27",
+        "final_wire_proof_refused:ValueError:wbattach1_prepared_order_not_this_unposted_close x1"
+      ]
+    },
+    {
+      "id": "AIOK-1023-1448",
+      "selector": "2026-10-23 14:48 ET AIOK CONFIRMATION_EXIT RTH",
+      "symbol": "AIOK",
+      "quantity": "27",
+      "entry_price": "10.91",
+      "clock_utc": "2026-10-23T18:48:00+00:00",
+      "source": "C12047 table + retained Oct28 six-file projection file0 line36396 sha a6f43728e2a2ea9557028db21c5f3fdf3d1d3ec523c2dcf79ef8bf1fb64a0092",
+      "log_operands": [
+        "Webull RELEASED confirmed=2",
+        "software_exit_child_proof_required:wbattach1_positions_wire_receipt_unknown_or_stale sell=0",
+        "exit-fill fetch 429 just before"
+      ]
+    },
+    {
+      "id": "AIOK-1023-1504",
+      "selector": "2026-10-23 15:04-15:59 ET AIOK CW_TARGET RTH",
+      "symbol": "AIOK",
+      "quantity": "27",
+      "entry_price": "10.91",
+      "clock_utc": "2026-10-23T19:04:00+00:00",
+      "source": "C12047 quoted table; original native preimage not retained",
+      "log_operands": [
+        "OMS-V2-EXIT-OWNED-QUANTITY requested=27 managed=27 ledger=0E-8 sell=0 reason=own_quantity_cap",
+        "RECONCILE-READ FLAT_INFERRED (n=0) while 27 shares held",
+        "x128 CW_TARGET attempts"
+      ]
+    },
+    {
+      "id": "SPRC-1026-0753",
+      "selector": "2026-10-26 07:53 ET SPRC CW_FLIP PM",
+      "symbol": "SPRC",
+      "quantity": null,
+      "controlled_quantity": "10",
+      "clock_utc": "2026-10-26T11:53:00+00:00",
+      "source": "retained Oct28 six-file projection file3 line21104 sha b4d1bfb4ab0070214bde09e8123c7bd59f6c558d9d9ffe1a61865f38bc27c679",
+      "log_operands": [
+        "software_exit_child_proof_required:wbattach1_positions_wire_receipt_unknown_or_stale sell=0",
+        "protection=no_pair",
+        "later close_submitted 07:53:25.748 ET is submission, not fill proof"
+      ]
+    },
+    {
+      "id": "ELPW-1028-0931",
+      "selector": "2026-10-28 09:31 ET ELPW CW_FLIP RTH",
+      "symbol": "ELPW",
+      "quantity": "91",
+      "entry_price": "3.2968",
+      "clock_utc": "2026-10-28T13:31:00+00:00",
+      "source": "OCT28-C1-ELPW-0931-OMS-RAW.txt line2 qty=91 entry=3.2968; retained projection file5 line27919 sha77dc71f830ebdba515670758c456d6f1e7e75fa1204269a75240afa44bd8bf84",
+      "log_operands": [
+        "software_exit_child_proof_required:exit sell=0",
+        "later close_submitted 09:31:17.255 ET is submission, not fill proof"
+      ]
+    }
+  ]
+}

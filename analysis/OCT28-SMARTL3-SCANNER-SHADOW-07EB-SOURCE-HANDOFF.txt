@@ -1,0 +1,129 @@
+SMARTALERT1 L3 + scanner capture session candidate — C12023 SOURCE checkpoint
+Original Galileo sole own-source author, no tests/imports/AST/compile/model/
+DB/SQL/SSH/provider/capture/push/install/shared writes. Main sole integrator,
+Settings/hook/qualification/runtime owner; L4 owns actual bounded log/ledger.
+
+BASE / OWNERSHIP
+07ebcbaf12e76522e35e2809f0caaf43eb9b68f4 exact installed Group1 base.
+Own /private/tmp/oct28-galileo-smartl3-shadow-07eb-source-20261028
+Branch codex/oct28-smartl3-shadow-07eb.
+Old L3 root4460d2ab9381569db5be8b171a3138a04d3f55e4 preserved clean. Its system.py,
+system_replay.py and test_smartalert1_system.py are copied BYTE-EXACT (prior Main
+controlled60PASS stays original receipt, not retagged rebased execution).
+NOCHASE6662e3de7538f063e4e44d17a1123a9c7af9c9e4/source62 unchanged/frozen.
+OUTPUT874451652546a1b5670e10eeb001f85892832ad0 frozen separately.
+
+CONTROLLING SOURCE CONTRACT / RULINGS WHOLE READ
+/Users/velkris/.codex/task-queues/analysis/SMARTALERT1-CONTRACT-v1.json
+Original Main contract: stdlib L3 evaluator/replay has NO acquisition/clock/
+environment/DB/provider/phone calls. Plain supplied evidence and as_of only.
+C10920 scanner cause accepted; C11337 L1 UNKNOWNs accepted/no more historical
+reads; 3–5 sessions SHADOW alongside existing senders, C1 labels every30min,
+only then one-by-one retirement. C11741 stops_armed tightening is Pascal L2,
+not this lane; old naked-position RED checks remain unchanged.
+C12023 overnight source package released: ALL SHADOW/logledger/noPHONE. Entire
+reviewed ALL-ON+boot+watch/guard/preopen by02:30ET else nextclose; no install
+authority or qualification inferred from this source packet.
+
+EIGHT-FILE SOURCE CLOSURE
+3 unchanged qualified L3 files above;
+NEW ops/smartalert1/system_shadow.py;
+CHANGED services/scanner_confirmed_capture.py;
+NEW tests/unit/test_smartalert1_shadow_scanner.py;
+NEW tests/fixtures/smartalert1/scanner_capture_07eb.py.txt;
+NEW this handoff.
+No L2/L4 files/shared Settings/strategy-engine hook/ops existingcheckers changed.
+
+L3 SHADOW API (PURE; NO PERSISTENCE/PHONE)
+evaluate_system_shadow(evidence,policy,as_of=...) calls original evaluate_system.
+Preserves every original conclusion/clock/key/ref/qualification/action field;
+forces paging_eligible=False, adds shadow.mode=SHADOW/delivery_action=NONE/
+existing_senders_unchanged=True/would_page_under_supplied_policy=old eligibility.
+Candidate TRUE separately marked candidate_detection, NOT historical calibration
+or an approved page. Even QUALIFIED_LIVE supplied policy cannot bypass SHADOW.
+OFF returns []; UNKNOWN remains UNKNOWN. Output bound preserved524288bytes;
+overflow refuses, never trims a clean ledger. No new alert timing thresholds.
+Main/L4 MUST use this shadow entrypoint and actual bounded ledger writer; no
+sender invoked by this module. No invented ledger path or retirement action.
+L4/Main literal shadow ledger binding remains a shared integration operand.
+
+SCANNER WRITER CANDIDATE / DEFAULT-OFF
+Old07eb scanner_confirmed_capture.py is EXACT old32 helper (source diff EMPTY).
+Prior published source sha204a5725100c04b4d5bf99cd11c8ad34aaf14db805f3110c156a39682f95721b.
+Old calendar parser/SQL/count/latest-event/exception behavior retained unchanged.
+New optional capture_events(...,session_day_enabled=False). No caller changes
+here, so current capture remains original until Main/C1 explicitly wires it.
+FlagFalse/default -> literal old SQL params/commit behavior; no extra queries.
+FlagTrue derives key trade_date from actual scanner04ET session. HHMM>=04 maps
+to session's civil date; HHMM<04 maps to next civil date. No midnight/RTH/AH/20
+re-key; genuine overnight confirms remain valid. ALL event types share session
+date, while actual FADE/drop event_at remains original observation time.
+Existing natural-key ON CONFLICT SQL EXACT; no new migration/DML/retention rule.
+No scanner watchlist/selection/live feed/strategy membership/trade action change.
+UNKNOWN confirm clock logs bounded diagnostic then cannot write a fictional
+CONFIRM timestamp. Existing observation/DB failure guards remain. No code here
+classifies a missing/unknown timestamp as no scanner event or a healthy source.
+
+EXPLICIT REVIEW POINT BEFORE ENABLING THE NEW WRITER
+Missing/unparseable/forced-watchlist clock -> UNKNOWN (not fallback now);
+future beyond EXISTING60s tolerance -> UNKNOWN; naive observation -> UNKNOWN;
+DST ambiguous/nonexistent local time -> UNKNOWN rather than choosing an epoch.
+These conservative ON-policy dispositions must be accepted by Main/C1 before
+activation. This packet is a reviewable source proposal, not authority to omit
+real unproved events silently. New diagnostics retain that missingness.
+64-char time /1000-shadow-row resource bounds are NOT alert timing/volume rules.
+
+SEPARATE NO-WRITE SCANNER SHADOW API
+shadow_session_keys(now=actual_supplied_aware_clock,all_confirmed=existing_list)
+returns JSON-compatible SMARTALERT1_SCANNER_SESSION_SHADOW_V1 records with
+original order/symbols, actual observed_at, proposed key day/event_at or UNKNOWN,
+reason, writes=0, shadow_only=True, unknown_is_not_absence=True.
+Never invokes capture_events/session_factory/DB or mutates scanner state.
+Main hook may log this to the same SHADOW ledger without enabling new DB keys.
+
+MAIN-OWNED INTEGRATION PROPOSAL (NOT AUTHORED INTO SHARED FILES)
+Setting proposal from morning approved source plan:
+scanner_confirmed_capture_session_day_enabled:bool=False;
+env MAI_TAI_SCANNER_CONFIRMED_CAPTURE_SESSION_DAY_ENABLED.
+Prerequisite existing scanner_confirmed_capture_enabled remains separate.
+Main alone register exact intended/default values in Settings/catalog/runbook,
+and pass new keyword from existing strategy_engine_app.py capture hook. Hook
+currently uses capture_now.date(); ON helper derives corrected session date.
+No blanket newSMART flag auto-activates capture or pages. The SHADOW projection
+can be sampled/logged with existing snapshot data even while DB fix flag OFF.
+Do not call shadow projection twice to make fake independent observations.
+Main/L4 ledger ownership and exact source epochs/observed timestamps must be
+bound; this source adds NO phone/network/env acquisition path.
+
+CONTROL ROSTER NEW32 / ALL AUTHOR-UNRUN
+ONE tests/unit/test_smartalert1_shadow_scanner.py:
+3 supplied-mode SHADOW/noPHONE cases incl positive pre-shadow page eligibility;
+1 OFF/missing-source UNKNOWN;
+2 default/explicitOFF entire SQL params vs literal OLD07eb source;
+2 retained-source time patterns09:36:55/13:46:06 midnight..03:59 identical keys;
+1 genuine overnight confirm+FADE/drop;
+6 actual04/RTH/AH/20/calendar boundaries;
+5 absent/invalid/forced timestamp UNKNOWN;
+2 existing60/61s future tolerance;
+3 DST/naive-clock negatives;
+1 pure no-DB JSON-ready projection;
+1 literal SQL and ordinary-session full params equality;
+1 overflow refusal;
+3 unsafe shadow symbol shapes;
+1 unbounded confirm text UNKNOWN.
+Existing60 L3 tests copied unchanged, not rewritten/repeated by author.
+Literal OLD07eb fixture is full PUBLIC source, not a private-root dependency or
+target feature-OFF rewrite. Pinned exact source SHA above; no secrets/native
+payload. Main tests load it under separate namespace with common dependencies.
+
+SOURCE / HISTORICAL LIMITS
+ProvenOct27 storm4182 branch rows2symbols00..04 and currentwriter-completeFALSE
+alarm evidence retained from earlier Main receipts. No new scans/counts/queries.
+Oct21/22/23 exactbranch counts and lifetime junk-per-day remain UNKNOWN; 7day
+retention cannot prove a historical denominator. Do not fabricate them.
+LOW_VOLUME baseline/phone sender unchanged; after actual3–5session shadow labels,
+Main/C1 may retire/move digest using L1/L4 evidence. No immediate mute or numeric
+baseline threshold revision. Manual/paper/OMS/native legality remains source
+policy evidence, not inferred by this candidate.
+Next: Main review+new32 actual claim, shared Settings/hooks/L4 ledger binding,
+ALL-ON combo/newboot gate under overnight rule. No actual install qualification.

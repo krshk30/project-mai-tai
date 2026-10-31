@@ -12,7 +12,7 @@ from tests.unit.test_l12_current359_consumer_carry import operands
 from tools.l12_composed_execution_binding import CURRENT_F_BOOT_VERSION, bind_composed_execution
 from tools.l12_private_schema_evidence import CURRENT_F_APP_COMPONENT, CURRENT_359_APP_COMPONENT
 from tools.l12_private_restore_main import (
-    CopySourceGuard, require_current_f_app_inventory, require_current_359_app_inventory,
+    CopySourceGuard, require_current_359_app_inventory,
 )
 
 

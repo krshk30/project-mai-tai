@@ -1,0 +1,30 @@
+Portable literal OLD32 core reference for NOCHASELOG1 differential controls.
+This is repository source, NOT historical market/native/account data.
+
+Original commit32b0f6f6860bf6441363cddd91aa20709005f691
+Original path src/project_mai_tai/strategy_core/schwab_1m_v2.py
+Original blob d5102aa5dce8444c14fe6fd33a1980c43f8e6860
+Original source length545135bytes/9877lines.
+Original SHA256abf79c2b2fd8a0f9e9f946d6b461f44e924cfdc4d38e92ee4a08d1c7400414bc
+
+old32_core.py.gz.b64 is exact original source, gzip -n (no filename/time header),
+base64 folded96columns. Compressed128735bytes; encoded173436bytes.
+Encoded-file SHA2564902377cdbcc1ca412cead7fa0aba42f12f0ee331bb98560d40bbbb2e39cde0b
+Source-file reconstruction was verified by FILE-only base64/gzip/hash filters;
+no Python import/compile/test was run by author. This does not execute APP.
+
+Why full source: the strict admission method calls actual owner/retry/gate
+helpers and the real ATR/reset path. A sliced reimplementation or subclass of
+the new target would not be literal OLD. A complete hash-pinned baseline avoids
+that shortcut while compressed size is128735bytes (about126KiB). It also avoids
+requiring a private /private/tmp path, network download, unshallowed Git history
+or exec-git permission in CI. No old behavior is modeled/mocked/feature-switched.
+
+The test verifies encoded and uncompressed hashes before compiling/executing
+the original module in an independent namespace. Ordinary imports resolve to
+the CI checkout's common dependencies, exactly as the prior literal-old loader
+did; this is an OLD core comparison, not a whole old deployment/DB snapshot.
+
+This file is NOT the separately required sanitized actual POM/SPRC log fixture.
+That fixture remains blocked on the exact retained packet/line references from
+C1. Do not synthesize log lines from prose, owner rows or controlled tests.

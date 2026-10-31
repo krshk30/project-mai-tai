@@ -112,6 +112,7 @@ class BarInbox:
     historical_ignored: int = 0
     overflow_first_ms: int = 0
     overflow_last_ms: int = 0
+    rejected_logged: int = 0
 
     def offer(self, work: OwnedBar) -> bool:
         self.received += 1

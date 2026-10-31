@@ -740,6 +740,7 @@ async def test_strategy_engine_refuses_polygon_intent_before_redis() -> None:
 @pytest.mark.asyncio
 async def test_oms_refuses_polygon_intent_before_database_or_broker() -> None:
     service = OmsRiskService.__new__(OmsRiskService)
+    service.settings = SimpleNamespace()  # WBEXIT2/3 read service.settings since 10-28; absent switch = off
     service.logger = logging.getLogger("paper-test")
     service.session_factory = lambda: (_ for _ in ()).throw(AssertionError("DB reached"))
     service.broker_adapter = object()

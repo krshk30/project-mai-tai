@@ -1,0 +1,17 @@
+2026-10-28 12:19 ET — UNRUN intermediate source preserved, NOT for integration.
+Main initially requested defaultFalse Settings gate/all observer OFF inert and
+annotation-only exception isolation. Candidate source and external proposal:
+/private/tmp/OCT28-NOCHASELOG1-FLAGGED-CORE-EXTERNAL-PROPOSAL.diff
+SHA90bca111b2ed0fcbac51e9c881636eb7eb4cb8b9bd3faaaca9a742978ec73ebf
+/private/tmp/OCT28-NOCHASELOG1-SETTINGS-EXTERNAL-PROPOSAL.diff
+SHA7498a49668ae5490290fb0aaaa2838044d1033cf47c1652fbfbeabcc1bbdf1f2
+No Settings file was edited/applied; no tests/import/runtime executed.
+C1 whole12:16 EXPLICIT logging-only exemption, relayed Main12:19, WITHDRAWS
+Settings gate requirement. Do not apply these external patches. Preserve their
+source history as an unrun abandoned proposal; next successor restores ungated
+2ac annotation design. Exception isolation remains useful logging-only boundary
+but requires review separately from this withdrawn flag proposal.
+2ac original34controls and historical UNKNOWN/DEFERRED inputs remain retained.
+New ruling permits pure retrospective same-symbol/opportunity recovery
+classification, no N/no deadline/no raw ERROR mutation. Opportunity0 ambiguous
+must remain ERROR_UNKNOWN, never nearest-time pairing.

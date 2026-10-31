@@ -1,0 +1,35 @@
+C11313 delivered actual packet: OCT28-C1-NOCHASE-FIXTURE-POM-SPRC.log
+Raw SHA25617efb9342d5bc0c3d6ab7a9159b6c8f7e9ee9ee5adffb7afd21b78ee4ccefe0b
+Raw71182bytes/217physical lines, retained privately unchanged.
+
+pom_sprc_actual.tsv is the minimal approved projection, not original full log
+lines: exact original UTC timestamp text, original symbol, original marker tag,
+tab-separated. Severity/logger/body/payload removed. No epoch, opportunity,
+order/native/client IDs, keys/tokens, quotes, positions, price or account data;
+even live:orb was unnecessary and is not included. No synthetic event inserted.
+The raw SHA and physical source-line map are in pom_sprc_actual.provenance.json.
+CI requires only these committed files, never the private raw packet/path.
+
+Selected57rows = original POM ARM marker +all28observed mismatch admission
+markers +their28original country-refusal markers. Admission counts POM12 and
+SPRC16, NOT29; raw textual match29 includes the SPRC section heading. No dropped
+observed mismatch event, no dedup, no rounding/retiming, no gap-row invention.
+Selected marker timestamps from the two source dates remain in original packet
+order; SPRC follows POM and is earlier in calendar time. Do not globally sort.
+Country refusal timestamps may be1ms later; original values are retained.
+
+POM original context14:51..15:06Z covers10:54..11:05ET with a preceding ARM
+14:52:02.755Z. SPRC original10-26 context has admitted/refused logged pairs
+14:35:02.774..14:52:01.070Z with actual gaps in the selected context. Do not fill
+those gaps, infer absent events, or invent a missing SPRC ARM/BUY identity.
+
+Fixture SHA2563839690d7ab1610ac8e19b0185ce3851b7ddbbf1ee7fbf1a88c5692cc52577e9
+Fixture2984bytes/57rows. Two NEW tests pin its bytes, strict payload-free shape,
+observed per-symbol tag counts/order and original endpoints. No change to the
+already Main-qualified60 controls. No author tests/imports/compile/replay run.
+
+This closes the minimal sanitized ACTUAL MARKER FIXTURE input requirement only.
+It is NOT full causal callback/prefix/profile/owner replay, decision proof,
+wire/native/fill permission, incident cause closure or counterfactual trading
+acceptance. Old producer markers/severity remain unchanged. No severity/digest
+classification ships. No new decoder/replay rig or production source change.

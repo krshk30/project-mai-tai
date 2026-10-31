@@ -1,0 +1,33 @@
+Output format is unaligned.
+Field separator is "|".
+== routed ORB BUY candidates (orb_schwab, account live:orb, payload orb_country_route = true)
+id|symbol|status|quantity|submitted_at|route|payload
+55b43f16-66a6-4ed3-bb79-31b9ee018534|STAK|rejected|10.00000000|2026-10-22 13:28:03.445132+00|true|{"orb_entry": "true", "execution_mode": "fixed_opening_high_resting", "order_type": "STOP_LIMIT", "time_in_force": "day", "stop_price": "1.65", "limit_price": "1.65", "reference_price": "1.65", "orb_exit_anchor": "broker_trigger_not_actual_fill", "orb_buy_cap_pct": "0.5", "orb_target_pct": "5", "orb_stop_pct": "8", "orb_target_price": "1.73", "orb_protect_price": "1.52", "orb_country_route": "true", "orb_country_broker": "webull", "orb_country_reason": "sec_non_us", "orb_country_status": "READY", "orb_country_as_of": "2026-10-17T05:32:46.410100+00:00", "orb_intended_break_level": "1.65", "session": "NORMAL", "extended_hours": "false", "orb_deferred_macd_bar_close": "2026-10-22T13:28:00+00:00", "bot_control_generation": "0", "bot_control_decided_at": "2026-10-22T13:28:02.657305+00:00", "bot_control_permit": "{\"client_order_id\": \"orb_schwab-STAK-open-5a48637d31f9\", \"generation\": 0, \"recorded_at\": \"2026-10-22T13:28:03.436423+00:00\", \"revision\": 1, \"status\": \"MAY_HAVE_SENT\", \"strategy_id\": \"fb750bad-0aa2-4c02-80c6-3c4b89f4ea29\"}", "reject_reason": "LOCAL refusal (no broker request): Webull BUY stop-limit requires raw limit_price > stop_price; got limit=1.65 stop=1.65"}
+(1 row)
+== all orb_schwab BUYs on live:orb (any route) for ranking
+id|symbol|status|submitted_at|route
+55b43f16-66a6-4ed3-bb79-31b9ee018534|STAK|rejected|2026-10-22 13:28:03.445132+00|true
+(1 row)
+== matching virtual_positions (orb_schwab, live:orb, those symbols)
+psql:/tmp/claude1-h.sql:10: ERROR:  column v.payload does not exist
+LINE 1: select v.symbol, v.quantity, v.payload->'orbroute1_protectio...
+                                     ^
+== BUY fills for those orders
+order_id|quantity|price|filled_at
+(0 rows)
+Output format is unaligned.
+Field separator is "|".
+column_name
+id
+strategy_id
+broker_account_id
+symbol
+quantity
+average_price
+realized_pnl
+opened_at
+updated_at
+(9 rows)
+== VP rows orb_schwab live:orb
+id|strategy_id|broker_account_id|symbol|quantity|average_price|realized_pnl|opened_at|updated_at
+(0 rows)

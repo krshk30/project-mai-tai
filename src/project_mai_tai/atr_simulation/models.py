@@ -1,6 +1,9 @@
 """SIM-only current metadata; initial DDL is frozen in its versioned snapshot."""
 
-from .store_schema_20261023_aggregate import SIMULATION_TABLES, simulation_metadata
+from .store_schema_20261023_aggregate import (
+    SIMULATION_TABLES as SIMULATION_TABLES,
+    simulation_metadata,
+)
 
 
 metadata = simulation_metadata()

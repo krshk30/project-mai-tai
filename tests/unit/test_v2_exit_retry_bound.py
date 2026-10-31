@@ -35,6 +35,7 @@ SCHWAB_KEY = (SCHWAB_ACCT, SYM)
 
 def _svc(state: _PositionRead):
     svc = OmsRiskService.__new__(OmsRiskService)
+    svc.settings = SimpleNamespace()  # WBEXIT2/3 read service.settings since 10-28; absent switch = off
     svc.logger = logging.getLogger("test-retry-bound")
     svc._v2_exit_close_failures = {}
     svc._v2_exit_stood_down = set()
@@ -240,6 +241,7 @@ def _emit_svc(*, statuses, close_on_fill=False, row=_UNBOUND_ROW):
             strategy_code="schwab_1m_v2", broker_account_name=KEY[0], symbol=KEY[1],
             status="open", current_quantity=10)
     svc = OmsRiskService.__new__(OmsRiskService)
+    svc.settings = SimpleNamespace()  # WBEXIT2/3 read service.settings since 10-28; absent switch = off
     svc.logger = logging.getLogger("test-ceiling")
     svc._v2_exit_close_failures = {}
     svc._v2_exit_stood_down = set()
@@ -642,6 +644,7 @@ def _incident_session_factory():
 def test_sil1_persists_the_symbol_and_closes_only_when_the_episode_ends() -> None:
     sf = _incident_session_factory()
     svc = OmsRiskService.__new__(OmsRiskService)
+    svc.settings = SimpleNamespace()  # WBEXIT2/3 read service.settings since 10-28; absent switch = off
     svc.logger = logging.getLogger("test-sil1-incident")
     svc.settings = SimpleNamespace(strategy_schwab_1m_v2_account_name=SCHWAB_ACCT)
     svc._v2_exit_close_failures = {}
