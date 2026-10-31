@@ -1,0 +1,9 @@
+{
+  "pr_number": 1176,
+  "range_base": "4cd00d6394dd403827db3d77fd7b674914106bee",
+  "range_head": "ab6fafc924e1da60a75fcde0c50fa2cc77348015",
+  "reviewed_at": "2026-10-31T22:37:17Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "simulation-only stock inputs; completed-bar and prior-trade as-of causality fixes reviewed; 15 related tests and preserved causality assertion pass; retained baseline replay compared; latest nine-day replay is C1-reported"
+}
