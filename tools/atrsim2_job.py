@@ -433,17 +433,25 @@ def stock_features(conn, symbol, flip_bar, at, price, previous):
         p_exit, p_pct = previous
         out["previous_trade"] = {"result": "loss" if p_pct < 0 else "win", "pnl_pct": p_pct,
                                  "minutes_since_exit": round((at - p_exit).total_seconds() / 60, 1)}
-    # 2. + 3. the purple (short) stretch: from the SELL flip bar to the bar before this BUY flip
+    # 2. + 3. the purple (short) stretch: from the SELL flip bar to the bar before this BUY flip, but only
+    # bars COMPLETED before the decision (codex 10-31: a resting buy can fill inside/before the flip bar).
+    decision_ms = at.timestamp() * 1000
+    end = fi
+    while end > (si if si is not None else 0) and series[end - 1].ts + 60_000 > decision_ms:
+        end -= 1
     if si is None:
         out["purple"] = {"status": "UNKNOWN", "reason": "no SELL flip earlier today"}
+    elif end <= si:
+        out["purple"] = {"status": "UNKNOWN", "reason": "no purple bar completed before the decision"}
     else:
-        closes = [b.close for b in series[si:fi]]
+        closes = [b.close for b in series[si:end]]
         low_so_far, high_so_far, up, down = math.inf, 0.0, 0.0, 0.0
         for c in closes:  # biggest rise off an earlier low / drop off an earlier high, in time order
             up = max(up, c / low_so_far - 1) if low_so_far < math.inf else up
             down = max(down, 1 - c / high_so_far) if high_so_far else down
             low_so_far, high_so_far = min(low_so_far, c), max(high_so_far, c)
-        out["purple"] = {"minutes": round((series[fi].ts - series[si].ts) / 60_000, 1), "bars": len(closes),
+        out["purple"] = {"minutes": round((min(series[fi].ts, decision_ms) - series[si].ts) / 60_000, 1),
+                         "bars": len(closes),
                          "pullbacks": {f"{int(sz * 100)}pct": _pullbacks(closes, sz) for sz in PULLBACK_SIZES},
                          "max_swing_up_pct": round(up * 100, 2), "max_swing_down_pct": round(down * 100, 2)}
     # 4. time & sales before the decision

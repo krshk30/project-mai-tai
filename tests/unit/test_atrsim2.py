@@ -224,3 +224,21 @@ def test_round4_provenance_names_engine_and_trade_source():
     prov = job.provenance()
     assert len(prov["engine_sha256"]) == 64 and prov["engine_file"] == "tools/atrsim2_job.py"
     assert prov["trade_source"] == "market_capture_trades"
+
+
+def test_round4_purple_stretch_uses_only_bars_completed_before_the_decision(monkeypatch):
+    # Codex 10-31: a resting buy can fill before the BUY flip bar closes; later closes must not count.
+    base = int(datetime(2026, 10, 30, 13, 10, tzinfo=timezone.utc).timestamp() * 1000)
+    closes = [10.0, 9.9, 9.8, 9.7, 9.6, 5.0, 9.9]  # 13:10 SELL ... 13:15 would-be crash, 13:16 BUY flip
+    series = [job.Bar(base + i * 60_000, c, c, c, c, 100) for i, c in enumerate(closes)]
+    rows = [{"flip": None, "trail": 10.0, "state": "short"} for _ in series]
+    rows[0]["flip"], rows[-1]["flip"] = "SELL", "BUY"
+    monkeypatch.setitem(job.LINES, "TEST", (series, rows))
+    monkeypatch.setattr(job, "tape_pressure", lambda *a: {})
+    at = datetime(2026, 10, 30, 13, 15, 10, tzinfo=timezone.utc)  # fill inside the 13:15 bar
+    purple = job.stock_features(None, "TEST", series[-1], at, 9.7, None)["purple"]
+    assert purple["bars"] == 5 and purple["minutes"] == 5.2  # 13:10..13:14 completed; 13:15 not yet
+    assert purple["pullbacks"]["5pct"] == 0 and purple["max_swing_down_pct"] == 4.0
+    early = job.stock_features(None, "TEST", series[-1], datetime(2026, 10, 30, 13, 10, 30, tzinfo=timezone.utc),
+                               10.0, None)["purple"]
+    assert early["status"] == "UNKNOWN"
