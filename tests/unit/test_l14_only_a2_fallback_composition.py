@@ -197,8 +197,8 @@ def test_settings_are_a2_plus_only_three_opt_in_receipt_fields():
     assert "strategy_schwab_1m_v2_brokerdecides1_enabled" not in fields
 
 
-def test_installed_l14_successor_preserves_historical_preimages_and_reviewed_postimages():
-    # Historical55 bytes stay literal9c; installed source has reviewed later changes.
+def test_installed_l14_successor_matches_reviewed_content_postimages():
+    # Historical-only tests retain9c proofs; CURRENT guard requires no old Git objects.
     from tests.unit.test_l14_ui_current_lineage_successor import assert_current_protected_l14_successor
     assert_current_protected_l14_successor()
 
