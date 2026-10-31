@@ -1,0 +1,9 @@
+{
+  "pr_number": 1172,
+  "range_base": "f5154d9165c07d67237f8643e8b9967f2072d579",
+  "range_head": "078190f183c1b607ec04cde348a9fa884d064ce6",
+  "reviewed_at": "2026-10-31T15:25:45Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "docs-only fast path; non-docs coverage unchanged"
+}
