@@ -23,13 +23,20 @@ def test_bad_incremental_binding_refuses_before_source_or_any_inputs(monkeypatch
     values = {'--incremental-version': cli.INCREMENTAL_VERSION,
         '--incremental-cache-root': '/CONTROLLED/cache', '--policy': '/CONTROLLED/policy.json',
         '--stored-null-policy': NULL_REGULAR_V1, '--evidence-root': '/CONTROLLED/evidence'}
-    if fault == 'only_version': values.pop('--incremental-cache-root')
-    elif fault == 'only_root': values.pop('--incremental-version')
-    elif fault == 'unknown_version': values['--incremental-version'] = 'TRUTHY'
-    elif fault == 'no_policy': values.pop('--policy')
-    elif fault == 'no_null': values.pop('--stored-null-policy')
-    elif fault == 'no_evidence': values.pop('--evidence-root')
-    else: values['--incremental-cache-root'] = 'relative/cache'
+    if fault == 'only_version':
+        values.pop('--incremental-cache-root')
+    elif fault == 'only_root':
+        values.pop('--incremental-version')
+    elif fault == 'unknown_version':
+        values['--incremental-version'] = 'TRUTHY'
+    elif fault == 'no_policy':
+        values.pop('--policy')
+    elif fault == 'no_null':
+        values.pop('--stored-null-policy')
+    elif fault == 'no_evidence':
+        values.pop('--evidence-root')
+    else:
+        values['--incremental-cache-root'] = 'relative/cache'
     with pytest.raises(SystemExit) as error:
         cli.main(base_args() + [part for pair in values.items() for part in pair])
     assert error.value.code == 2
@@ -101,7 +108,8 @@ def test_child_binds_same_context_to_collector_and_model_and_seals_before_commit
     monkeypatch.setattr(cli.sys, 'stdout', SimpleNamespace(buffer=output))
     args = base_args() + ['--child', '--policy', '/CONTROLLED/policy.json',
         '--stored-null-policy', NULL_REGULAR_V1, '--evidence-run-dir', str(run)]
-    if enabled: args += ['--incremental-version', cli.INCREMENTAL_VERSION,
+    if enabled:
+        args += ['--incremental-version', cli.INCREMENTAL_VERSION,
                          '--incremental-cache-root', str(tmp_path/'cache')]
     assert cli.main(args) == 0
     assert events.index('collect') < events.index('model') < events.index('cache_commit')

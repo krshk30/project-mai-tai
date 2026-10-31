@@ -11,7 +11,7 @@ from project_mai_tai.atr_simulation import aggregate_entry_publication as pub
 from project_mai_tai.atr_simulation import aggregate_entry_read_model as read
 from project_mai_tai.atr_simulation.aggregate_entry_contract import LABEL, MODE, MODEL, VERSION
 from project_mai_tai.atr_simulation.aggregate_entry_display import render_aggregate_entry_table
-from tests.unit.test_atr_simulation_aggregate_entry_publication import operands, source, unknown_first
+from tests.unit.test_atr_simulation_aggregate_entry_publication import operands as operands, source, unknown_first
 
 
 def independent(receipt, *, flagged=False, unknown=False):

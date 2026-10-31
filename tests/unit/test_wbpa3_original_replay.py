@@ -1,5 +1,4 @@
 """Exact retained rows + disclosed CONTROLLED runtime, never native replay."""
-from datetime import UTC, datetime
 import json
 import os
 from types import SimpleNamespace

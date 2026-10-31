@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.unit.test_l12_nonce_restore_caller import nonce, new_lease
+from tests.unit.test_l12_nonce_restore_caller import nonce as nonce, new_lease
 from tools import l12_nonce_copy_lease as module
 from tools.l12_main_nonce_target import EXECUTION_BINDING_VERSION, MainNonceTarget
 

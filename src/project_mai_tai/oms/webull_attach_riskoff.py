@@ -1628,9 +1628,9 @@ class OrbAttachExit:
         from project_mai_tai.strategy_core.orb_schwab_bracket import build_orb_schwab_bracket_metadata
         metadata = entry.payload or {}
         original = build_orb_schwab_bracket_metadata(Decimal(metadata["orb_intended_break_level"]))
-        for field, canonical in (("stop_price", "stop_price"), ("orb_target_price", "bracket_target_price"),
+        for price_field, canonical in (("stop_price", "stop_price"), ("orb_target_price", "bracket_target_price"),
                                  ("orb_protect_price", "bracket_stop_price")):
-            price = Decimal(metadata[field])
+            price = Decimal(metadata[price_field])
             if not price.is_finite() or price != Decimal(original[canonical]):
                 raise ValueError("wbattach1_orb_original_geometry_changed")
         if state:

@@ -6,7 +6,7 @@ No startup metadata/control seed, unrelated hold restoration, or provider proof.
 """
 import asyncio
 from copy import deepcopy
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 import hashlib
 import json

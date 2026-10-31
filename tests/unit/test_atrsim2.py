@@ -4,6 +4,7 @@ import pathlib
 from datetime import datetime, timezone
 
 from project_mai_tai.atr_simulation.sim2_display import load_day, render_day
+from project_mai_tai.services.control_plane import _render_completed_position_row as render
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("atrsim2_job", ROOT / "tools" / "atrsim2_job.py")
@@ -16,9 +17,6 @@ def row(**kw):
                 entry_price=1.81, exit_time="13:26:00", exit_price=1.73, reason="sell flip", pnl=-26.48, pnl_pct=-4.42)
     base.update(kw)
     return base
-
-
-from project_mai_tai.services.control_plane import _render_completed_position_row as render
 
 
 def doc():
@@ -54,7 +52,8 @@ def test_job_rules_target_cent_ceiling_and_round_lot_filter():
 
 
 def test_scanner_filter_only_counts_signals_inside_confirm_fade_windows():
-    t = lambda h, m: datetime(2026, 10, 29, h, m, tzinfo=timezone.utc)
+    def t(h, m):
+        return datetime(2026, 10, 29, h, m, tzinfo=timezone.utc)
     windows = {"PCLA": [(t(13, 5), t(13, 59)), (t(14, 21), None)], "NUWE": [(t(13, 3), t(13, 3))]}
     assert job.on_scanner(windows, "PCLA", t(13, 30))
     assert not job.on_scanner(windows, "PCLA", t(14, 0))
@@ -64,7 +63,8 @@ def test_scanner_filter_only_counts_signals_inside_confirm_fade_windows():
 
 
 def test_live_row_uses_real_fills_in_the_signal_segment_including_inside_the_flip_bar():
-    t = lambda h, m, s=0: datetime(2026, 10, 29, h, m, s, tzinfo=timezone.utc)
+    def t(h, m, s=0):
+        return datetime(2026, 10, 29, h, m, s, tzinfo=timezone.utc)
     bar = job.Bar(int(t(15, 33).timestamp() * 1000), 8.3, 8.42, 8.3, 8.4, 1000)
     fills = {"PCLA": [("buy", 36.0, 8.42, t(15, 33, 10)), ("sell", 36.0, 8.85, t(15, 54, 10))]}
     base = {"symbol": "PCLA", "signal": "11:34", "trigger": 8.43}
@@ -77,7 +77,8 @@ def test_live_row_uses_real_fills_in_the_signal_segment_including_inside_the_fli
 
 def test_no_entry_print_counts_before_the_scanner_confirms():
     # Coach 10-29 check h: VEEA 10-01 modeled fill 09:07:21 vs CONFIRM 09:07:30.417 — must not fill.
-    t = lambda h, m, s=0: datetime(2026, 10, 1, h, m, s, tzinfo=timezone.utc)
+    def t(h, m, s=0):
+        return datetime(2026, 10, 1, h, m, s, tzinfo=timezone.utc)
     job.WINDOWS = {"VEEA": [(t(13, 7, 30), None)]}
     try:
         assert not job.confirmed("VEEA", t(13, 7, 21))
@@ -105,7 +106,8 @@ def test_flip_query_is_bounded_to_the_trading_day():
 
 
 def test_order_cancelled_by_a_fade_gap_with_no_print_and_causal_print_guard():
-    t = lambda h, m, s=0: datetime(2026, 10, 14, h, m, s, tzinfo=timezone.utc)
+    def t(h, m, s=0):
+        return datetime(2026, 10, 14, h, m, s, tzinfo=timezone.utc)
     # TCRT 10-14 shape: confirmed, FADE 13:31:00, reconfirm 13:35:00, no print in the gap.
     job.WINDOWS = {"TCRT": [(t(13, 0), t(13, 31)), (t(13, 35), None)]}
     try:
@@ -127,7 +129,8 @@ def test_order_cancelled_by_a_fade_gap_with_no_print_and_causal_print_guard():
 
 
 def test_h2_check_veto_keep_and_unknown():
-    t = lambda h, m: datetime(2026, 10, 21, h, m, tzinfo=timezone.utc)
+    def t(h, m):
+        return datetime(2026, 10, 21, h, m, tzinfo=timezone.utc)
     def series(start_price, step):
         return [job.Bar(int(t(15, m).timestamp() * 1000), 0, 0, 0, start_price + step * m, 1000) for m in range(0, 10)]
     job.LINES.update({"AAA": (series(2.0, -0.02), None), "P1": (series(5.0, -0.01), None),
@@ -148,7 +151,8 @@ def test_h2_check_veto_keep_and_unknown():
 def test_live_rules_waiting_buy_needs_an_established_three_bar_short(monkeypatch):
     # Live gate (min_short_bars=3): TNMG 10-30 SELL bar 09:13 ET → rested from 09:17; ONEG 10-30 1-bar short → no rest.
     from datetime import date
-    t = lambda m, s=0: datetime(2026, 10, 30, 13, m, s, tzinfo=timezone.utc)
+    def t(m, s=0):
+        return datetime(2026, 10, 30, 13, m, s, tzinfo=timezone.utc)
     def build(short_bars):
         n = 1 + short_bars + 1  # long bar, SELL bar + rest of the short, BUY flip bar
         series = [job.Bar(int(t(10 + i).timestamp() * 1000), 1.0, 1.0, 1.0, 1.0, 10_000) for i in range(n)]

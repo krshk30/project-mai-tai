@@ -74,8 +74,10 @@ async def test_original24_keeps_wb2_hold_despite_real_durable_child_copy(retaine
 @pytest.mark.parametrize('session_clock', ['captured', 'premarket', 'after_hours'])
 async def test_durable_real_child_copy_resolves_first_existing_scan(retained_episode, monkeypatch, record_property, session_clock):
     case = retained_episode
-    if session_clock == 'premarket': case.now = datetime(2026, 10, 31, 8, tzinfo=UTC)
-    elif session_clock == 'after_hours': case.now = datetime(2026, 10, 30, 23, tzinfo=UTC)
+    if session_clock == 'premarket':
+        case.now = datetime(2026, 10, 31, 8, tzinfo=UTC)
+    elif session_clock == 'after_hours':
+        case.now = datetime(2026, 10, 30, 23, tzinfo=UTC)
     monkeypatch.setattr(wbexit2, '_now', lambda: case.now)
     before = snapshot(case.factory)
     await hydrate(case)
@@ -127,28 +129,45 @@ async def test_durable_unknown_or_held_copy_retains_responsibility(retained_epis
         position = db.scalar(select(AccountPosition))
         vp = db.scalar(select(VirtualPosition))
         managed = db.scalar(select(OmsManagedPosition))
-        if case_name == 'missing_child_fill': db.delete(child_fill)
-        elif case_name == 'partial_child_fill': child_fill.quantity = Decimal(68)
-        elif case_name == 'foreign_child_fill': child_fill.strategy_id = WB3_ID
-        elif case_name == 'missing_buy_fill': db.delete(db.scalar(select(Fill).where(Fill.side == 'buy')))
-        elif case_name == 'wrong_child_coid': child_order.client_order_id = 'CONTROLLED-foreign'
-        elif case_name == 'wrong_child_parent': child_order.intent_id = UUID('47cf706e-592f-443c-8f37-a1ede53e8148')
-        elif case_name == 'missing_position': db.delete(position)
-        elif case_name == 'positive_position': position.quantity = Decimal(1)
-        elif case_name == 'preclose_position': position.source_updated_at = datetime(2026, 10, 30, 13, 34, tzinfo=UTC)
-        elif case_name == 'future_position': position.source_updated_at = datetime(2026, 10, 30, 16, tzinfo=UTC)
-        elif case_name == 'missing_VP': db.delete(vp)
-        elif case_name == 'positive_VP': vp.quantity = Decimal(1)
-        elif case_name == 'managed_open': managed.status = 'open'
-        elif case_name == 'managed_positive': managed.current_quantity = 1
+        if case_name == 'missing_child_fill':
+            db.delete(child_fill)
+        elif case_name == 'partial_child_fill':
+            child_fill.quantity = Decimal(68)
+        elif case_name == 'foreign_child_fill':
+            child_fill.strategy_id = WB3_ID
+        elif case_name == 'missing_buy_fill':
+            db.delete(db.scalar(select(Fill).where(Fill.side == 'buy')))
+        elif case_name == 'wrong_child_coid':
+            child_order.client_order_id = 'CONTROLLED-foreign'
+        elif case_name == 'wrong_child_parent':
+            child_order.intent_id = UUID('47cf706e-592f-443c-8f37-a1ede53e8148')
+        elif case_name == 'missing_position':
+            db.delete(position)
+        elif case_name == 'positive_position':
+            position.quantity = Decimal(1)
+        elif case_name == 'preclose_position':
+            position.source_updated_at = datetime(2026, 10, 30, 13, 34, tzinfo=UTC)
+        elif case_name == 'future_position':
+            position.source_updated_at = datetime(2026, 10, 30, 16, tzinfo=UTC)
+        elif case_name == 'missing_VP':
+            db.delete(vp)
+        elif case_name == 'positive_VP':
+            vp.quantity = Decimal(1)
+        elif case_name == 'managed_open':
+            managed.status = 'open'
+        elif case_name == 'managed_positive':
+            managed.current_quantity = 1
         elif case_name == 'missing_base_binding':
             protection = db.get(TradeIntent, UUID('47cf706e-592f-443c-8f37-a1ede53e8148'))
             changed = deepcopy(protection.payload)
             changed['metadata'].pop('webull_protect_base_client_order_id')
             protection.payload = changed
-        elif case_name == 'foreign_native_account': payload['native_account_id'] = 'CONTROLLED-foreign-native'
-        elif case_name == 'active_invocation': payload['invocation'] = 'CONTROLLED-foreign-live'
-        elif case_name == 'prior_software_without_fill': payload['prior_software_filled'] = '1'
+        elif case_name == 'foreign_native_account':
+            payload['native_account_id'] = 'CONTROLLED-foreign-native'
+        elif case_name == 'active_invocation':
+            payload['invocation'] = 'CONTROLLED-foreign-live'
+        elif case_name == 'prior_software_without_fill':
+            payload['prior_software_filled'] = '1'
         elif case_name == 'duplicate_child_execution':
             db.add(Fill(id=UUID('00000000-0000-0000-0000-000000000069'), order_id=child_order.id,
                 strategy_id=child_fill.strategy_id, broker_account_id=child_fill.broker_account_id,
@@ -241,7 +260,8 @@ def test_declared_ORM_quantity_types_and_strict_refusals(operand, allowed):
     if allowed:
         assert _quantity(operand) == Decimal(69 if operand else 0)
     else:
-        with pytest.raises(ValueError): _quantity(operand)
+        with pytest.raises(ValueError):
+            _quantity(operand)
 
 
 @pytest.mark.asyncio
@@ -296,7 +316,8 @@ async def test_controlled_full_quantity_conservation_including_software(retained
         else:
             state['sell'] = {'coid': coid, 'quantity': '9',
                 'filled_highwater': '0' if zero_case else '9', 'ack': terminal}
-            if accounting_case == 'double_count_refused': state['prior_software_filled'] = '9'
+            if accounting_case == 'double_count_refused':
+                state['prior_software_filled'] = '9'
         if zero_case:
             db.flush()
             db.get(BrokerOrder, soft_order_id).status = terminal

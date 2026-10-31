@@ -8,9 +8,9 @@ from pathlib import Path
 
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
-    FreshSellReleaseEvidence, OHLCVBar, SchwabV2Strategy,
+    OHLCVBar, SchwabV2Strategy,
 )
-from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitProof
+from project_mai_tai.v2_removed_wait import RemovedWait
 
 OLD = 1793291104243
 SELL_BAR = 1793294700000

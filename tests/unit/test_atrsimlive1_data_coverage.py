@@ -1,6 +1,5 @@
 """CONTROLLED C1 14:46 scope mechanics; no actual TODAY completeness proof."""
 
-from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
 import pytest

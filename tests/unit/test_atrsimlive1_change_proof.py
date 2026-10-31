@@ -46,8 +46,10 @@ def test_since_query_is_bound_candidate_only_with_quote_carry_scope(monkeypatch,
 @pytest.mark.parametrize('fault', ['corrected', 'deleted', 'late-backdated'])
 def test_empty_since_suffix_cannot_hide_changed_full_prefix(monkeypatch, fault):
     module, _, old, current = setup(monkeypatch)
-    if fault == 'deleted': current['row_count'] = 1
-    else: current['content_sha256'] = 'b' * 64
+    if fault == 'deleted':
+        current['row_count'] = 1
+    else:
+        current['content_sha256'] = 'b' * 64
     result = module.plan_window(old, current, current_asof=current['asof'],
         current_snapshot='NEW', open_window=True, enabled=True, discovery_row_count=0)
     assert result['action'] == 'FRESH_WINDOW'

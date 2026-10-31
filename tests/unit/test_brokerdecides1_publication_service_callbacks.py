@@ -4,7 +4,6 @@ import asyncio
 from dataclasses import replace
 
 import pytest
-from sqlalchemy import select
 
 from project_mai_tai.brokerdecides1 import AdmissionMemory
 from project_mai_tai.brokerdecides1_entry import prepare_send
@@ -17,7 +16,7 @@ from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
 from tests.unit.test_brokerdecides1_entry_hooks import ACCOUNTS
-from tests.unit.test_brokerdecides1_prewire_protocol import case
+from tests.unit.test_brokerdecides1_prewire_protocol import case as case
 
 
 def service_case(case):

@@ -41,10 +41,14 @@ def test_sealed_parser_facts_preserved_without_fabricating_raw_line():
 def test_sealed_fact_conflict_or_foreign_capture_refuses(fault):
     data, original = pair()
     route = original['producer']['day_routes'][0]
-    if fault == 'selected-hash': route['facts'][0]['selected_text_sha256'] = None
-    elif fault == 'route-quantity': route['notional'] = '600'
-    elif fault == 'duplicate': original['producer']['day_routes'].append(deepcopy(route))
-    else: data['snapshot_id'] = 'FOREIGN'
+    if fault == 'selected-hash':
+        route['facts'][0]['selected_text_sha256'] = None
+    elif fault == 'route-quantity':
+        route['notional'] = '600'
+    elif fault == 'duplicate':
+        original['producer']['day_routes'].append(deepcopy(route))
+    else:
+        data['snapshot_id'] = 'FOREIGN'
     with pytest.raises((CapturedRefusal, TypeError)):
         SealedRoutes(witness(), data, original)
 

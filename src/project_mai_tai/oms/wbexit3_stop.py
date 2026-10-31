@@ -245,7 +245,7 @@ def next_identity(service, db, lease, journal, row, entry, account, now):
         if order.client_order_id != expected:
             raise ControlConflict("wbexit3_stop_prior_retry_coid_CHANGED")
         sequences.add(sequence)
-        attempt = db.scalar(select(BotControlAttempt).where(BotControlAttempt.target_order_id == order.id,
+        db.scalar(select(BotControlAttempt).where(BotControlAttempt.target_order_id == order.id,
             BotControlAttempt.command_id == lease.command_id, BotControlAttempt.operation == "SUBMIT_EXIT"))
         observed = datetime.fromisoformat(order.payload[READ_KEY]["observed_at"])
         latest = max(latest or observed, observed)

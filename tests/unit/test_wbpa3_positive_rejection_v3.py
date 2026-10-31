@@ -175,18 +175,22 @@ def test_unknown_unanswered_conflicting_or_executed_entry_never_closes(episode, 
         parent = session.get(TradeIntent, order.intent_id)
         event = session.scalar(select(BrokerOrderEvent).where(BrokerOrderEvent.order_id == order.id))
         p = deepcopy(event.payload)
-        if fault == "missing_audit": session.delete(event)
-        elif fault == "unknown_origin": event.event_source = "unknown"
+        if fault == "missing_audit":
+            session.delete(event)
+        elif fault == "unknown_origin":
+            event.event_source = "unknown"
         elif fault == "timeout_no_reply":
             event.event_source = "unknown"
             p["metadata"].pop("webull_error_code")
             p["metadata"].pop("webull_http_status")
             parent.payload = {**parent.payload, "refusal_origin": "could_not_tell"}
-        elif fault == "foreign_coid": p["client_order_id"] = "CONTROLLED-FOREIGN"
+        elif fault == "foreign_coid":
+            p["client_order_id"] = "CONTROLLED-FOREIGN"
         elif fault == "accepted_before_reject":
             session.add(BrokerOrderEvent(order_id=order.id, event_type="accepted", event_source="broker",
                 event_at=event.event_at - timedelta(milliseconds=1), payload=deepcopy(event.payload)))
-        elif fault == "native_id_empty": order.broker_order_id = ""
+        elif fault == "native_id_empty":
+            order.broker_order_id = ""
         elif fault == "fill":
             session.add(Fill(order_id=order.id, strategy_id=order.strategy_id,
                 broker_account_id=order.broker_account_id, broker_fill_id="CONTROLLED-fill", symbol="CHOW",
@@ -195,14 +199,22 @@ def test_unknown_unanswered_conflicting_or_executed_entry_never_closes(episode, 
         elif fault == "positive_partial":
             event.event_type = "partially_filled"
             p["filled_quantity"] = "1"
-        elif fault == "unknown_metadata": parent.payload = {**parent.payload, "metadata": None}
-        elif fault == "future_event": event.event_at = case.observed + timedelta(seconds=1)
-        elif fault == "future_order": order.updated_at = case.observed + timedelta(seconds=1)
-        elif fault == "other_reject_code": p["metadata"]["webull_error_code"] = "CONTROLLED-OTHER-417"
-        elif fault == "no_error_code": p["metadata"].pop("webull_error_code")
-        elif fault == "http_unknown": p["metadata"].pop("webull_http_status")
-        elif fault == "missing_native_field": p.pop("broker_order_id")
-        elif fault == "quantity_mismatch": parent.quantity -= 1
+        elif fault == "unknown_metadata":
+            parent.payload = {**parent.payload, "metadata": None}
+        elif fault == "future_event":
+            event.event_at = case.observed + timedelta(seconds=1)
+        elif fault == "future_order":
+            order.updated_at = case.observed + timedelta(seconds=1)
+        elif fault == "other_reject_code":
+            p["metadata"]["webull_error_code"] = "CONTROLLED-OTHER-417"
+        elif fault == "no_error_code":
+            p["metadata"].pop("webull_error_code")
+        elif fault == "http_unknown":
+            p["metadata"].pop("webull_http_status")
+        elif fault == "missing_native_field":
+            p.pop("broker_order_id")
+        elif fault == "quantity_mismatch":
+            parent.quantity -= 1
         elif fault == "dispatch_token_mismatch":
             payload = deepcopy(parent.payload)
             payload["metadata"]["clearwait_dispatch_token"] = "CONTROLLED-UNMATCHED"
@@ -212,7 +224,8 @@ def test_unknown_unanswered_conflicting_or_executed_entry_never_closes(episode, 
             order.broker_order_id = p["broker_order_id"] = "CONTROLLED-WEBULL-WORKING"
             p["metadata"].pop("webull_error_code")
             p["metadata"].pop("webull_http_status")
-        if fault != "missing_audit": event.payload = p
+        if fault != "missing_audit":
+            event.payload = p
     with case.factory() as session:
         before = snapshot_sources(session)
         order = session.get(BrokerOrder, UUID(case.raw["orders"][0]["id"]))
@@ -239,13 +252,15 @@ def test_generic_Schwab_native_closure_and_real_working_buy_path_are_unchanged(e
             side="buy", intent_type="open", quantity=Decimal(1), status="cancelled", reason="CONTROLLED legacy",
             payload={"metadata": {}}, created_at=case.observed - timedelta(seconds=60),
             updated_at=case.observed - timedelta(seconds=30))
-        session.add(parent); session.flush()
+        session.add(parent)
+        session.flush()
         order = BrokerOrder(intent_id=parent.id, strategy_id=strategy.id, broker_account_id=account.id,
             client_order_id="CONTROLLED-SCHWAB-LEGACY", broker_order_id="CONTROLLED-SCHWAB-NATIVE",
             symbol="SCHWABCTRL", side="buy", order_type="stop_limit", time_in_force="day",
             quantity=Decimal(1), status="cancelled", payload={},
             submitted_at=case.observed - timedelta(seconds=55), updated_at=case.observed - timedelta(seconds=30))
-        session.add(order); session.flush()
+        session.add(order)
+        session.flush()
         session.add(BrokerOrderEvent(order_id=order.id, event_type="cancelled", event_source="broker",
             event_at=case.observed - timedelta(seconds=30), payload={"client_order_id": order.client_order_id,
                 "broker_order_id": order.broker_order_id, "broker_fill_id": None}))
@@ -287,7 +302,8 @@ def test_complete_historical_country_scope_never_waives_an_unanswered_other_entr
             created_at = case.observed - timedelta(seconds=30)
             if fault == "older_active_other_strategy":
                 strategy = Strategy(code="CONTROLLED_other", name="CONTROLLED other active owner", execution_mode="live")
-                session.add(strategy); session.flush()
+                session.add(strategy)
+                session.flush()
                 strategy_id = strategy.id
                 created_at = datetime.fromtimestamp(OPPORTUNITY / 1000, UTC) - timedelta(minutes=1)
             session.add(TradeIntent(strategy_id=strategy_id, broker_account_id=original.broker_account_id,
@@ -331,7 +347,8 @@ def add_controlled_later_opportunity(session, case, *, answered):
     raw_order = session.get(BrokerOrder, UUID(case.raw["orders"][0]["id"]))
     raw_event = session.scalar(select(BrokerOrderEvent).where(BrokerOrderEvent.order_id == raw_order.id))
     opportunity = case.observed_ms - 120000
-    at = lambda offset: datetime.fromtimestamp((opportunity + offset) / 1000, UTC)
+    def at(offset):
+        return datetime.fromtimestamp((opportunity + offset) / 1000, UTC)
     token, event_id = str(uuid4()), uuid4()
     common = {"schema_version": 1, "strategy_code": "schwab_1m_v2", "symbol": "CHOW",
         "opportunity_id": opportunity, "account_names": list(ACCOUNT_NAMES)}
@@ -351,14 +368,16 @@ def add_controlled_later_opportunity(session, case, *, answered):
     parent = TradeIntent(strategy_id=root.strategy_id, broker_account_id=root.broker_account_id,
         symbol="CHOW", side="buy", intent_type="open", quantity=root.quantity, status="rejected",
         reason="CONTROLLED independent later refusal", payload=payload, created_at=at(100), updated_at=at(350))
-    session.add(parent); session.flush()
+    session.add(parent)
+    session.flush()
     coid = f"schwab_1m_v2-CHOW-open-{event_id.hex[:12]}"[:40]
     order = BrokerOrder(intent_id=parent.id, strategy_id=parent.strategy_id,
         broker_account_id=parent.broker_account_id, symbol="CHOW", side="buy",
         order_type=raw_order.order_type, time_in_force=raw_order.time_in_force,
         quantity=parent.quantity, status="rejected", client_order_id=coid, broker_order_id=None,
         payload=deepcopy(md), submitted_at=at(330), updated_at=at(340))
-    session.add(order); session.flush()
+    session.add(order)
+    session.flush()
     audit = {**deepcopy(raw_event.payload), "client_order_id": coid,
         "metadata": {**deepcopy(raw_event.payload["metadata"]), **deepcopy(md)}}
     session.add(BrokerOrderEvent(order_id=order.id, event_type="rejected", event_source="broker",

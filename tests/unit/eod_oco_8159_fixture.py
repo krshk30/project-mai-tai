@@ -8,12 +8,14 @@ import time
 from dataclasses import replace
 from datetime import UTC, datetime
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 from project_mai_tai.broker_adapters.protocols import ExitPairReleaseResult
 from project_mai_tai.db.models import SystemIncident
 from project_mai_tai.oms.service import SERVICE_NAME
 
 # Main installs the same explicit CONTROLLED clock into the candidate module.
-utcnow = lambda: datetime(2026, 10, 30, 20, 1, tzinfo=UTC)
+def utcnow():
+    return datetime(2026, 10, 30, 20, 1, tzinfo=UTC)
 
 class RetainedEod8159:
     async def _release_v2_eod_oco(

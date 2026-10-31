@@ -71,15 +71,22 @@ def test_partial_changed_or_unbound_cohort_refuses_before_any_skip(failure):
     old = bindings(inputs, (world,))
     current = dict(old)
     reports = dict(engine.same_sip_reports)
-    if failure == 'missing_member': retained[world] = fresh[:1]
-    elif failure == 'reverse_order': retained[world] = tuple(reversed(fresh))
-    elif failure == 'input_changed': current[world] = ('b'*64, old[world][1])
-    elif failure == 'missing_proof': current = None
-    elif failure == 'bad_proof_shape': current[world] = old[world] = ('true', 'true')
+    if failure == 'missing_member':
+        retained[world] = fresh[:1]
+    elif failure == 'reverse_order':
+        retained[world] = tuple(reversed(fresh))
+    elif failure == 'input_changed':
+        current[world] = ('b'*64, old[world][1])
+    elif failure == 'missing_proof':
+        current = None
+    elif failure == 'bad_proof_shape':
+        current[world] = old[world] = ('true', 'true')
     elif failure == 'wrong_world_scenario':
         retained[world] = tuple(replace(item, today=item.volbody_optimistic) for item in fresh)
-    elif failure == 'missing_report': reports.pop(report_key(inputs[0].identity, world))
-    else: reports[report_key(inputs[0].identity, world)] = {'policy': SAME_SIP_CONSERVATIVE_V1}
+    elif failure == 'missing_report':
+        reports.pop(report_key(inputs[0].identity, world))
+    else:
+        reports[report_key(inputs[0].identity, world)] = {'policy': SAME_SIP_CONSERVATIVE_V1}
     with pytest.raises(ValueError):
         SimulationEngine().simulate_many(inputs, retained_worlds=retained, retained_reports=reports,
             retained_bindings=old, current_bindings=current)

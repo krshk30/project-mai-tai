@@ -112,7 +112,8 @@ async def test_cancellation_reaps_inflight_process_and_propagates():
     task = asyncio.create_task(send("RED", "body"))
     await asyncio.sleep(0)
     task.cancel()
-    with pytest.raises(asyncio.CancelledError): await task
+    with pytest.raises(asyncio.CancelledError):
+        await task
     assert len(calls) == 1 and process.killed and process.reaped
 
 
@@ -154,7 +155,9 @@ def test_flag_off_does_not_install_or_construct_sender(monkeypatch):
 def test_service_default_factory_is_installed_once_without_network(monkeypatch):
     calls = []
     injected = object()
-    def make(): calls.append(1); return injected
+    def make():
+        calls.append(1)
+        return injected
     monkeypatch.setattr(phone, "make_owner_phone", make)
     service = SchwabV2BotService(Settings(strategy_schwab_1m_v2_brokerdecides1_enabled=True))
     assert calls == [1] and service._brokerdecides1_owner_phone is injected

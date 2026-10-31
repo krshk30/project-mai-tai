@@ -4,7 +4,7 @@ from psycopg import ProgrammingError
 from psycopg._queries import PostgresQuery
 from psycopg.adapt import Transformer
 
-from tests.unit.test_l12_main_nonce_target import capability, owned_files
+from tests.unit.test_l12_main_nonce_target import capability as capability, owned_files as owned_files
 from tests.unit.test_l12_schema_rehearsal_outcomes import state, parent
 
 

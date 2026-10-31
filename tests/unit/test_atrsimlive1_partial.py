@@ -69,13 +69,20 @@ def test_actual_owned_child_partial_rejects_corruption_then_preserves_pending_an
     for fault in ('foreign-source', 'wrong-pid', 'path-escape', 'snapshot', 'evidence-bytes', 'fake-closure', 'wrong-pending'):
         metadata, component = json.loads(raw_meta), deepcopy(original)
         observed, child = closure, deepcopy(draft)
-        if fault == 'foreign-source': metadata['source_seal'] = 'b' * 64
-        elif fault == 'wrong-pid': metadata['child_pid'] += 1
-        elif fault == 'path-escape': component['directory'] = '../foreign'
-        elif fault == 'snapshot': component['component']['component']['snapshot_hash'] = 'c' * 64
-        elif fault == 'evidence-bytes': evidence_path.write_bytes(bytes([raw_evidence[0] ^ 1]) + raw_evidence[1:])
-        elif fault == 'fake-closure': observed = dict(closure)
-        else: child['pending_symbols'] = []
+        if fault == 'foreign-source':
+            metadata['source_seal'] = 'b' * 64
+        elif fault == 'wrong-pid':
+            metadata['child_pid'] += 1
+        elif fault == 'path-escape':
+            component['directory'] = '../foreign'
+        elif fault == 'snapshot':
+            component['component']['component']['snapshot_hash'] = 'c' * 64
+        elif fault == 'evidence-bytes':
+            evidence_path.write_bytes(bytes([raw_evidence[0] ^ 1]) + raw_evidence[1:])
+        elif fault == 'fake-closure':
+            observed = dict(closure)
+        else:
+            child['pending_symbols'] = []
         meta_path.write_text(json.dumps(metadata))
         component_path.write_text(json.dumps(component))
         with pytest.raises((cache.CacheRefusal, ValueError)):

@@ -86,10 +86,14 @@ def test_bad_pool_reference_cannot_change_selected_payload(monkeypatch, fault):
     pool, cache = setup(monkeypatch)
     packed = pool.pack_windows(body(), enabled=True)
     window = packed['body']['windows']['CONTROLLED']['a-origin']['trades']
-    if fault == 'negative': window['row_refs'] = [-1]
-    elif fault == 'boolean': window['row_refs'] = [False]
-    elif fault == 'duplicate': window['row_refs'] = [0, 0]
-    elif fault == 'foreign-pool': window['pool'] = 'quotes|CONTROLLED'
+    if fault == 'negative':
+        window['row_refs'] = [-1]
+    elif fault == 'boolean':
+        window['row_refs'] = [False]
+    elif fault == 'duplicate':
+        window['row_refs'] = [0, 0]
+    elif fault == 'foreign-pool':
+        window['pool'] = 'quotes|CONTROLLED'
     else:
         extra = deepcopy(packed['pools']['trades|CONTROLLED']['rows'][0])
         extra['id'] = 99

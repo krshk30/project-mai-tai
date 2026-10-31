@@ -11,6 +11,7 @@ import pytest
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.oms import wbexit2
+from tests.unit.test_webull_adapter import fake_sdk as fake_sdk
 
 
 BASE = "CONTROLLED-geometry-protect"
@@ -38,8 +39,6 @@ def result(function, rows):
         return "RETURN", function(rows, BASE, QTY, "CONTROLLED")
     except Exception as exc:
         return type(exc).__name__, str(exc)
-
-
 @pytest.mark.parametrize("change,predicate", [
     ("good", None), ("child_count", "child_count"),
     ("same_native", "distinct_broker_ids"), ("native_missing", "broker_order_id_present"),
@@ -185,6 +184,3 @@ def result_of_geometry(rows, symbol, *, baseline=False):
         return "RETURN", (original() if baseline else wbexit2.original_geometry)(rows, BASE, QTY, symbol)
     except Exception as exc:
         return type(exc).__name__, str(exc)
-
-
-from tests.unit.test_webull_adapter import fake_sdk as fake_sdk

@@ -70,29 +70,42 @@ def release_driver(mode, *, fail=False):
 
     async def db(work, *, commit):
         trace.append(("db", work.__name__, commit))
-        if mode == "base_error": raise RuntimeError("CONTROLLED base DB boundary")
+        if mode == "base_error":
+            raise RuntimeError("CONTROLLED base DB boundary")
         return work(None)
 
-    def get_row(*args, **kwargs): trace.append(("row",)); return row
-    def get_entry(*args): trace.append(("entry",)); return entry
-    def base_for(*args, **kwargs): trace.append(("base",)); return "" if mode == "no_base" else BASE
+    def get_row(*args, **kwargs):
+        trace.append(("row",))
+        return row
+    def get_entry(*args):
+        trace.append(("entry",))
+        return entry
+    def base_for(*args, **kwargs):
+        trace.append(("base",))
+        return "" if mode == "no_base" else BASE
 
     async def release(**kwargs):
         trace.append(("cancel_release", kwargs))
-        if mode == "release_error": raise RuntimeError("CONTROLLED cancel boundary")
-        if mode == "release_cancelled": raise asyncio.CancelledError()
+        if mode == "release_error":
+            raise RuntimeError("CONTROLLED cancel boundary")
+        if mode == "release_cancelled":
+            raise asyncio.CancelledError()
         return ExitPairReleaseResult(outcome="resolved_by_fill" if mode == "release_fill" else "released",
                                      reports=reports())
 
     async def confirm(**kwargs):
         trace.append(("confirm", kwargs))
-        if mode == "confirm_error": raise RuntimeError("CONTROLLED confirm boundary")
+        if mode == "confirm_error":
+            raise RuntimeError("CONTROLLED confirm boundary")
         outcome = "unanswerable" if mode == "confirm_unknown" else "reserved" if mode == "confirm_reserved" else "released"
         return ExitPairReleaseResult(outcome=outcome, reports=reports())
 
-    async def native(*args, **kwargs): trace.append(("non_webull", args, kwargs)); return "released"
+    async def native(*args, **kwargs):
+        trace.append(("non_webull", args, kwargs))
+        return "released"
     adapter = SimpleNamespace(release_exit_pair_for_close=release)
-    if mode != "confirm_missing": adapter.confirm_exit_pair_terminal = confirm
+    if mode != "confirm_missing":
+        adapter.confirm_exit_pair_terminal = confirm
     svc = SimpleNamespace(logger=log, store=SimpleNamespace(get_open_managed_position=get_row),
         broker_adapter=adapter, _is_v2_webull_account=lambda account: mode != "non_webull",
         _legacy_webull_partial_handover_refused=legacy, _run_db=db, _find_oco_entry_order=get_entry,
@@ -145,20 +158,28 @@ def transition_driver(methods, mode, *, fail=False):
             trace.append(("incident_query",))
             return SimpleNamespace(all=lambda: [incident])
 
-    def get_row(*args, **kwargs): trace.append(("row",)); return row
+    def get_row(*args, **kwargs):
+        trace.append(("row",))
+        return row
     async def db(work, *, commit):
         trace.append(("db", work.__name__, commit))
         if work.__name__ == "_current_row_id":
-            if mode == "current_row_error": raise RuntimeError("CONTROLLED post-confirm DB read")
-            if mode == "current_row_changed": row.id = "CONTROLLED-new-episode"
+            if mode == "current_row_error":
+                raise RuntimeError("CONTROLLED post-confirm DB read")
+            if mode == "current_row_changed":
+                row.id = "CONTROLLED-new-episode"
         return work(Session())
 
-    def read_snapshot(*args): trace.append(("snapshot",)); return snapshot
+    def read_snapshot(*args):
+        trace.append(("snapshot",))
+        return snapshot
     async def release(*args, **kwargs):
         trace.append(("release", args, kwargs))
         outcome = "resolved_by_fill" if mode.startswith("fill_recording") else "unanswerable" if mode == "unanswerable" else "released"
         return ExitPairReleaseResult(outcome=outcome, reports=reports())
-    async def close(*args, **kwargs): trace.append(("record_fill", args, kwargs)); return mode == "fill_recording_true"
+    async def close(*args, **kwargs):
+        trace.append(("record_fill", args, kwargs))
+        return mode == "fill_recording_true"
     async def carry(*args): trace.append(("carry", args))
     async def evaluate(*args): trace.append(("evaluate", args))
     def sync_incident(*args, **kwargs): trace.append(("sync_incident", kwargs))

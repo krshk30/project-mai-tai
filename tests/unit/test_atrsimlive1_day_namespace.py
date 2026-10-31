@@ -1,6 +1,5 @@
 """Controlled private FILE day/seal boundaries, never timer/native evidence."""
 from copy import deepcopy
-import hashlib
 import importlib
 import os
 from pathlib import Path

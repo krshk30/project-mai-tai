@@ -10,7 +10,7 @@ from unittest.mock import Mock
 import pytest
 
 from project_mai_tai.phone_alert_policy import (
-    locked_window_notice_resolved, manual_only, phone_decision, send_stop_once, stop_event_key,
+    locked_window_notice_resolved, manual_only, phone_decision, send_stop_once,
 )
 
 

@@ -5,9 +5,10 @@ import sys
 
 import pytest
 
+from tests.unit.test_atrsimlive1_collect_close import controlled, invoke
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "tools"), str(Path(__file__).parent)]
-from test_atrsimlive1_collect_close import controlled, invoke
 
 
 @pytest.fixture

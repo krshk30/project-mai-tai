@@ -138,18 +138,30 @@ def test_other_reasons_cancel_immediately_even_after_soft_deferral(reason):
 def test_unproved_soft_scope_cancels_immediately(mutation):
     bot, state, operands = controlled_service(enabled=mutation != "disabled")
     ledger = operands["ledger"]
-    if mutation == "not_stale": ledger.incomplete_reason = "coverage_unproven"
-    elif mutation == "no_attempt": bot._keepwatch_history_context.set(None)
-    elif mutation == "unowned_attempt": bot._keepwatch_history_scopes.clear()
-    elif mutation == "ledger": bot._line_sessions[SYMBOL] = SessionLineRestoration(SYMBOL, ANCHOR, 1)
-    elif mutation == "epoch": ledger.epoch += 1
-    elif mutation == "source": bot._line_source_identity[SYMBOL] = ("CONTROLLED-changed", 2)
-    elif mutation == "state": operands["state"] = object()
-    elif mutation == "trade": ledger.observe_trade(operands["trade_through"], track_generation=True)
-    elif mutation == "quarantine": bot._keepwatch_bar_quarantine[SYMBOL] = ANCHOR
-    elif mutation == "membership": bot._watchlist.clear()
-    elif mutation == "soft_rest": state.resting_is_broker_order = False
-    elif mutation == "missing_generation": state.resting_schwab_generation = state.resting_webull_generation = ""
+    if mutation == "not_stale":
+        ledger.incomplete_reason = "coverage_unproven"
+    elif mutation == "no_attempt":
+        bot._keepwatch_history_context.set(None)
+    elif mutation == "unowned_attempt":
+        bot._keepwatch_history_scopes.clear()
+    elif mutation == "ledger":
+        bot._line_sessions[SYMBOL] = SessionLineRestoration(SYMBOL, ANCHOR, 1)
+    elif mutation == "epoch":
+        ledger.epoch += 1
+    elif mutation == "source":
+        bot._line_source_identity[SYMBOL] = ("CONTROLLED-changed", 2)
+    elif mutation == "state":
+        operands["state"] = object()
+    elif mutation == "trade":
+        ledger.observe_trade(operands["trade_through"], track_generation=True)
+    elif mutation == "quarantine":
+        bot._keepwatch_bar_quarantine[SYMBOL] = ANCHOR
+    elif mutation == "membership":
+        bot._watchlist.clear()
+    elif mutation == "soft_rest":
+        state.resting_is_broker_order = False
+    elif mutation == "missing_generation":
+        state.resting_schwab_generation = state.resting_webull_generation = ""
     bot._keepwatch_hold_unknown(SYMBOL, "prefix_publication_unproven", transient_scope=operands)
     assert not state.resting_active and not state.webull_resting_active
     assert SYMBOL in bot._keepwatch_unknown

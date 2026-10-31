@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import create_engine, inspect, select
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
@@ -28,7 +28,7 @@ from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
 from project_mai_tai.oms import bot_control, bot_control_runtime, service as oms
 from project_mai_tai.settings import Settings
 
-from tests.unit.wbpa2_controlled_transport import ControlledProvider, ControlledRedis, ControlledSubmitReply
+from tests.unit.wbpa2_controlled_transport import ControlledProvider, ControlledRedis
 
 RAW_SHA = "7f8663cde1757ef67f051bbfa799bf58cc0a93bec57905aab1ecd95748512881"
 ORIGINAL_INTENT = "1c696692-1c90-4408-b584-e7fca8919f26"

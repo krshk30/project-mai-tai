@@ -89,6 +89,7 @@ def test_f1_audit_addition_keeps_exact_preexisting_flag_denominators():
     assert Settings.model_fields[name].default is False
     assert len({row["name"] for row in current["flags"]}) == len(current["flags"])
     numeric = json.loads((root / "ops/health/expected_numeric.json").read_text())["settings"]
-    projected = lambda rows: sum(1 + len(row.get("also_check_services", [])) for row in rows + numeric)
+    def projected(rows):
+        return sum((1 + len(row.get('also_check_services', [])) for row in rows + numeric))
     assert projected(baseline["flags"]) == 186  # +NCPL handoff, preserving the older hash above.
     assert projected(current["flags"]) == 187

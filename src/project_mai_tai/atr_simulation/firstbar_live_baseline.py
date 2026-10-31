@@ -172,8 +172,8 @@ def prepare_baseline_day(packet: StudyTapePacket, policy: ExecutionPolicy) -> Ba
         raise ValueError("pinned_pure_atr_oracle_required")
     trades = parse_study_tape(packet, policy)
     bars, uncertain = _bars(trades)
-    oracle_bars = [atr_oracle.Bar(start // 1_000_000, float(o), float(h), float(l), float(c), volume)
-                   for start, o, h, l, c, volume in bars]
+    oracle_bars = [atr_oracle.Bar(start // 1_000_000, float(o), float(h), float(low), float(c), volume)
+                   for start, o, h, low, c, volume in bars]
     rows = atr_oracle.compute_atr_trail(oracle_bars, seed="sma5", period=5, factor=3.5)
     all_flips = tuple((row["flip"], Boundary(bar[0] + MINUTE_NS, replace(packet.source,
         kind=EvidenceKind.DERIVED,

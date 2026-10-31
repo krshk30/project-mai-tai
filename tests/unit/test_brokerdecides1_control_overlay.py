@@ -11,7 +11,7 @@ from project_mai_tai.db.models import (
     BotControlAttempt, BotControlCommand, BotControlState, BrokerAccount,
     BrokerOrder, Strategy, TradeIntent,
 )
-from test_brokerdecides1_local_census import ACCOUNTS, census
+from test_brokerdecides1_local_census import ACCOUNTS, census as census
 
 
 def control(session, account, strategy, *, status="UNKNOWN", operation="CANCEL_ENTRY"):

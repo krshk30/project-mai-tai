@@ -27,7 +27,8 @@ def review():
 
 
 def test_same_elapsed_contract_59999ms_then60000ms_restores_exact_instance_port():
-    prior = lambda: 999.0
+    def prior():
+        return 999.0
     bot, clock = SimpleNamespace(_keepwatch_boot_retry_clock=prior), SimpleNamespace(now_ns=10 ** 18)
     real_monotonic, real_wait_for = time.monotonic, asyncio.wait_for
     with boot_deferral_clock(bot, clock) as receipt:
@@ -52,7 +53,8 @@ def test_repeated_callbacks_do_not_consume_elapsed_budget_or_change_headers():
 
 @pytest.mark.parametrize("start", [-1, True, 1.5, None])
 def test_invalid_origin_refuses_before_port_change(start):
-    prior = lambda: 1
+    def prior():
+        return 1
     bot = SimpleNamespace(_keepwatch_boot_retry_clock=prior)
     with pytest.raises(OwnerProtocolRefusal):
         with boot_deferral_clock(bot, SimpleNamespace(now_ns=start)):
@@ -62,7 +64,8 @@ def test_invalid_origin_refuses_before_port_change(start):
 
 @pytest.mark.parametrize("value", [9, True, 10.5, None])
 def test_rewind_or_noninteger_refuses_without_clock_repair(value):
-    prior = lambda: 1
+    def prior():
+        return 1
     bot, clock = SimpleNamespace(_keepwatch_boot_retry_clock=prior), SimpleNamespace(now_ns=10)
     with pytest.raises(OwnerProtocolRefusal):
         with boot_deferral_clock(bot, clock) as receipt:
@@ -74,7 +77,8 @@ def test_rewind_or_noninteger_refuses_without_clock_repair(value):
 
 @pytest.mark.parametrize("kind", [RuntimeError, asyncio.CancelledError, KeyboardInterrupt])
 def test_primary_failure_or_cancellation_preserved_and_restoration_recorded(kind):
-    prior = lambda: 1
+    def prior():
+        return 1
     bot = SimpleNamespace(_keepwatch_boot_retry_clock=prior)
     primary = kind("CONTROLLED")
     with pytest.raises(kind) as caught:
@@ -246,7 +250,8 @@ def test_observer_mode_is_explicit_bool(value):
 
 @pytest.mark.asyncio
 async def test_nonowner_wait_for_keeps_real_timeout_and_same_elapsed_clock():
-    prior = lambda: 5
+    def prior():
+        return 5
     bot, clock = SimpleNamespace(_keepwatch_boot_retry_clock=prior), SimpleNamespace(now_ns=123)
     port = AsyncioPort(SimpleNamespace())
     with boot_deferral_clock(bot, clock):

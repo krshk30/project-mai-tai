@@ -5,7 +5,7 @@ quantity/native-account corroboration, no other rows and native books remain
 explicit CONTROLLED operands. No production DML/native read is performed.
 """
 from copy import deepcopy
-from datetime import UTC,datetime,timedelta
+from datetime import timedelta
 from decimal import Decimal
 import json
 from uuid import UUID,uuid4
@@ -15,7 +15,7 @@ import pytest
 from project_mai_tai.brokerdecides1_sync import local_evidence
 from project_mai_tai.cancelack1 import _closed_with_replacements
 from project_mai_tai.db.models import BrokerAccount,BrokerOrder,BrokerOrderEvent,DashboardSnapshot,Fill,TradeIntent
-from tests.unit.test_brokerdecides1_local_census import census
+from tests.unit.test_brokerdecides1_local_census import census as census
 from tests.unit.test_brokerdecides1_event_binding import ACCOUNTS,NOW,selected_census,sell_after_census
 
 POSITIVE_ORDER=UUID('b9225b77-9c8f-4519-9be4-4b868496d3fc')
@@ -88,8 +88,10 @@ def test_cancelack_default_false_unchanged_and_exact_flagged_witness_only(census
     'later-working','later-audit-account','tied-terminal'])
 def test_combined_partial_replacement_or_conflicting_native_evidence_stays_held(census,monkeypatch,fault):
     session,_,order,event,parent,account,order_at,parent_at=selected(census,monkeypatch)
-    if fault=='native-account':account.external_account_id='CONTROLLED_FOREIGN'
-    elif fault=='quantity':order.quantity=parent.quantity=Decimal('36')
+    if fault=='native-account':
+        account.external_account_id='CONTROLLED_FOREIGN'
+    elif fault=='quantity':
+        order.quantity=parent.quantity=Decimal('36')
     elif fault=='local-fill':
         session.add(Fill(order_id=order.id,strategy_id=order.strategy_id,broker_account_id=order.broker_account_id,
             broker_fill_id='CONTROLLED_PARTIAL',symbol='PCLA',side='buy',quantity=Decimal('.5'),price=Decimal(8),
@@ -102,12 +104,15 @@ def test_combined_partial_replacement_or_conflicting_native_evidence_stays_held(
                 'broker_account_name':account.name,'strategy_code':'schwab_1m_v2','quantity':'35'}}))
     else:
         payload=deepcopy(event.payload)
-        if fault=='tied-terminal':at,kind=event.event_at,'cancelled'
+        if fault=='tied-terminal':
+            at,kind=event.event_at,'cancelled'
         else:
             at,kind=event.event_at+timedelta(seconds=1),'accepted'
             payload['metadata'].pop('_webull_terminal_proof')
             if fault=='later-audit-account':
-                kind='rejected';payload['internal']='CANCEL_VERIFY_RESUBMIT';payload['broker_order_id']=None
+                kind='rejected'
+                payload['internal']='CANCEL_VERIFY_RESUBMIT'
+                payload['broker_order_id']=None
                 payload['metadata'].update(webull_error_code='ORDER_CAN_NOT_BE_CANCEL',
                     cancel_outcome='confirmed_after_accepted_request',atr_country_account='CONTROLLED_FOREIGN')
         session.add(BrokerOrderEvent(id=uuid4(),order_id=order.id,event_type=kind,event_source='broker',
@@ -122,12 +127,15 @@ def test_combined_partial_replacement_or_conflicting_native_evidence_stays_held(
 
 def test_combined_exact_later_cancel_rejection_audit_does_not_replace_target_state(census,monkeypatch):
     session,_,order,event,parent,account,_,_=selected(census,monkeypatch)
-    payload=deepcopy(event.payload);payload['internal']='CANCEL_VERIFY_RESUBMIT';payload['broker_order_id']=None
+    payload=deepcopy(event.payload)
+    payload['internal']='CANCEL_VERIFY_RESUBMIT'
+    payload['broker_order_id']=None
     payload['metadata'].pop('_webull_terminal_proof')
     payload['metadata'].update(webull_error_code='ORDER_CAN_NOT_BE_CANCEL',cancel_outcome='confirmed_after_accepted_request')
     audit=BrokerOrderEvent(id=uuid4(),order_id=order.id,event_type='rejected',event_source='broker',
         event_at=event.event_at+timedelta(seconds=1),payload=payload)
-    session.add(audit);session.flush()
+    session.add(audit)
+    session.flush()
     assert ('PCLA',POSITIVE_TOKEN) in answer(session,True)[2]
     assert audit.event_type=='rejected' and order.status=='cancelled'
 
@@ -138,7 +146,8 @@ async def test_combined_flag_on_native_unknown_never_reads_local_or_claims_compl
     from project_mai_tai.brokerdecides1 import decode
     from project_mai_tai.brokerdecides1_sync import begin_pass,finish_pass
     async def reader(account):
-        if 'webull' in account:raise ValueError('CONTROLLED_NATIVE_UNKNOWN')
+        if 'webull' in account:
+            raise ValueError('CONTROLLED_NATIVE_UNKNOWN')
         return native(account)
     value=service(monkeypatch,reader)
     value.settings.strategy_schwab_1m_v2_brokerdecides1_same_day_event_binding_enabled=True

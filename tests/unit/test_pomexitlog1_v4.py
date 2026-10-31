@@ -20,7 +20,6 @@ import pytest
 from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot
 from project_mai_tai.momentum_live.runtime import OmsLiveRuntime
 from tests.unit.test_momlive1_actor import setup as actor_setup
-from tests.unit.test_momlive1_exit_recovery import fresh
 from tests.unit.test_momlive1_runtime import setup
 from tests.unit.test_momlive1_soft_exit_chase import advance_exit, exit_orders, prepared
 

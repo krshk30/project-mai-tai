@@ -16,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from project_mai_tai.services import atr_aggregate_routes as routes
 from project_mai_tai.services import control_plane as cp
 from project_mai_tai.settings import Settings
-from tests.unit.test_atr_simulation_aggregate_entry_publication import operands
+from tests.unit.test_atr_simulation_aggregate_entry_publication import operands as operands
 from tests.unit.test_atr_simulation_aggregate_entry_read_model import bound, independent, port
 from tests.unit.test_atrpnl1 import fill, page_data
 from tests.unit.test_firstbar_readonly_mount import Recorder as FirstbarRecorder

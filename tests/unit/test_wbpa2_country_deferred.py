@@ -15,7 +15,7 @@ from sqlalchemy import select
 from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent, DashboardSnapshot
 from project_mai_tai.fanout_segment_store import SNAPSHOT_TYPE
 from tests.unit.wbpa2_controlled_transport import ControlledSubmitReply
-from tests.unit.wbpa2_episode_port import (ACCOUNT, BOUNDARY, ORIGINAL_ORDER, SLOT, SYMBOL,
+from tests.unit.wbpa2_episode_port import (ACCOUNT, BOUNDARY, ORIGINAL_ORDER, SYMBOL,
     append_recorded_rows, close_case, drain_ticks, event_from_intent, make_case,
     observe_original, queued, quote, real_v2_cancel, serial, state)
 

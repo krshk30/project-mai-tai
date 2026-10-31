@@ -1,5 +1,4 @@
 """Controlled snapshot boundary; no native, route, tape or financial proof."""
-from copy import deepcopy
 import pytest
 from tests.unit.test_atrsimlive1_runtime import module, unavailable, NOW
 

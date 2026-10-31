@@ -14,7 +14,6 @@ import pytest
 from sqlalchemy import select
 
 from project_mai_tai.db.models import BrokerOrder, Fill, OmsManagedPosition, VirtualPosition
-from project_mai_tai.oms import wbexit3
 from tests.unit.test_wbattach1_riskoff import make_case as make_case, closes
 from tests.unit.test_wbexit2_route import ControlledOwnerBroker, close_case, owner_case, saved
 from tests.unit.test_wbexit3_obligation import enable, obligations

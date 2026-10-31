@@ -28,7 +28,8 @@ def test_child_preserves_v1_default_or_streams_all_v2_input_and_model(monkeypatc
     monkeypatch.setattr(cli.sys, 'stdout', SimpleNamespace(buffer=output))
     args = ['--child', '--source-manifest', str(tmp_path/'source.json'), '--dsn-env', 'DATABASE_URL']
     run = directory(tmp_path)
-    if compact: args += ['--evidence-run-dir', str(run)]
+    if compact:
+        args += ['--evidence-run-dir', str(run)]
     assert cli.main(args) == 0
     result = json.loads(output.getvalue())
     assert result['schema'] == ('ATRSIMLIVE1_TODAY_COMPACT_V2' if compact else 'ATRSIMLIVE1_TODAY_V1')
@@ -72,7 +73,8 @@ def test_parent_refuses_schema_other_than_explicit_requested_mode(monkeypatch, t
     monkeypatch.setattr(cli, 'bounded_child', lambda *a, **kw: (json.dumps({'schema': wrong}).encode(), 0.1))
     args = ['--source-manifest', str(tmp_path/'source.json'), '--dsn-env', 'DATABASE_URL',
         '--destination', str(tmp_path/'current.json')]
-    if compact: args += ['--evidence-root', str(directory(tmp_path))]
+    if compact:
+        args += ['--evidence-root', str(directory(tmp_path))]
     with pytest.raises(ValueError, match='explicit_requested_output_schema_required'):
         cli.main(args)
 
@@ -83,7 +85,8 @@ def test_parent_and_child_evidence_flags_cannot_cross_authority(monkeypatch, chi
     monkeypatch.setattr(cli, 'source_binding', lambda path: pytest.fail('must refuse before source'))
     args = ['--source-manifest', '/CONTROLLED/source.json', '--dsn-env', 'DATABASE_URL']
     args += ['--child', '--evidence-root', '/CONTROLLED'] if child else ['--evidence-run-dir', '/CONTROLLED']
-    with pytest.raises(SystemExit) as error: cli.main(args)
+    with pytest.raises(SystemExit) as error:
+        cli.main(args)
     assert error.value.code == 2
 
 
@@ -103,10 +106,14 @@ def test_compact_runtime_publishes_original_object_and_reader_accepts(tmp_path):
 def test_compact_runtime_rejects_wrong_day_future_or_bad_rows(tmp_path, fault):
     import atrsimlive1_runtime as runtime
     path, compact, seal = assembled(tmp_path)
-    if fault == 'day': compact['trading_day'] = '2026-10-27'
-    elif fault == 'future': compact['generated_at'] = '2026-10-29T18:00:00+00:00'
-    else: compact['tables']['FIRSTBAR']['rows'][0]['row']['pnl_label_known'] = 'true'
-    with pytest.raises(ValueError): runtime.publish(compact, path/'current.json', NOW)
+    if fault == 'day':
+        compact['trading_day'] = '2026-10-27'
+    elif fault == 'future':
+        compact['generated_at'] = '2026-10-29T18:00:00+00:00'
+    else:
+        compact['tables']['FIRSTBAR']['rows'][0]['row']['pnl_label_known'] = 'true'
+    with pytest.raises(ValueError):
+        runtime.publish(compact, path/'current.json', NOW)
     assert not (path/'current.json').exists()
 
 
@@ -117,4 +124,5 @@ def test_output_helper_cannot_be_omitted_from_reviewed_source_manifest(tmp_path)
     path = tmp_path/'source.json'
     path.write_text(json.dumps({'schema': 'ATRSIMLIVE1_REVIEWED_SOURCE_V1', 'head': 'a'*40,
         'files': {name: 'a'*64 for name in cli.REQUIRED_SOURCE if name != 'tools/atrsimlive1_output.py'}}))
-    with pytest.raises(ValueError, match='all_loadbearing_source_pins_required'): cli.source_binding(path)
+    with pytest.raises(ValueError, match='all_loadbearing_source_pins_required'):
+        cli.source_binding(path)

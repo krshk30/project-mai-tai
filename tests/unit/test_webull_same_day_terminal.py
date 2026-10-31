@@ -126,29 +126,52 @@ def test_missing_ambiguous_or_conflicting_detail_stays_unknown(fault):
     item = proof['body']['items'][0]
     if fault == 'missing':
         event.payload['metadata'].pop('_webull_terminal_proof')
-    elif fault == 'wrong-source': proof['source'] = '/trade/orders/list'
-    elif fault == 'wrong-account': proof['body']['account_id'] = 'CONTROLLED-foreign'
-    elif fault == 'wrong-client': proof['body']['client_order_id'] = 'CONTROLLED-foreign'
-    elif fault == 'wrong-native': proof['body']['order_id'] = 'CONTROLLED-foreign'
-    elif fault == 'wrong-symbol': item['symbol'] = 'OTHER'
-    elif fault == 'wrong-side': item['side'] = 'SELL'
-    elif fault == 'wrong-quantity': item['qty'] = '36'
-    elif fault == 'missing-fill': item.pop('filled_qty')
-    elif fault == 'partial-fill': item['filled_qty'] = '1'
-    elif fault == 'nan-fill': item['filled_qty'] = 'NaN'
-    elif fault == 'bool-fill': item['filled_qty'] = False
-    elif fault == 'contradictory-fill': item['filledQty'] = '1'
-    elif fault == 'nonterminal': item['order_status'] = 'WORKING'
-    elif fault == 'version': proof['version'] = '0' * 64
-    elif fault == 'execution-positive': proof['execution'][2] = '1'
-    elif fault == 'missing-native-body': proof['body'].pop('order_id')
-    elif fault == 'multiple-items': proof['body']['items'].append(deepcopy(item))
-    elif fault == 'future-proof': proof['acquired_at'] = '2026-10-30T00:00:00+00:00'
-    elif fault == 'naive-proof': proof['acquired_at'] = '2026-10-29T13:57:04'
-    elif fault == 'root-positive-fill': proof['body']['filled_quantity'] = '1'
-    elif fault == 'root-working-status': proof['body']['status'] = 'WORKING'
-    elif fault == 'outcome-conflict': event.payload['cancel_outcome'] = 'confirmed'
-    elif fault == 'refusal-origin': event.payload['refusal_origin'] = 'could_not_tell'
+    elif fault == 'wrong-source':
+        proof['source'] = '/trade/orders/list'
+    elif fault == 'wrong-account':
+        proof['body']['account_id'] = 'CONTROLLED-foreign'
+    elif fault == 'wrong-client':
+        proof['body']['client_order_id'] = 'CONTROLLED-foreign'
+    elif fault == 'wrong-native':
+        proof['body']['order_id'] = 'CONTROLLED-foreign'
+    elif fault == 'wrong-symbol':
+        item['symbol'] = 'OTHER'
+    elif fault == 'wrong-side':
+        item['side'] = 'SELL'
+    elif fault == 'wrong-quantity':
+        item['qty'] = '36'
+    elif fault == 'missing-fill':
+        item.pop('filled_qty')
+    elif fault == 'partial-fill':
+        item['filled_qty'] = '1'
+    elif fault == 'nan-fill':
+        item['filled_qty'] = 'NaN'
+    elif fault == 'bool-fill':
+        item['filled_qty'] = False
+    elif fault == 'contradictory-fill':
+        item['filledQty'] = '1'
+    elif fault == 'nonterminal':
+        item['order_status'] = 'WORKING'
+    elif fault == 'version':
+        proof['version'] = '0' * 64
+    elif fault == 'execution-positive':
+        proof['execution'][2] = '1'
+    elif fault == 'missing-native-body':
+        proof['body'].pop('order_id')
+    elif fault == 'multiple-items':
+        proof['body']['items'].append(deepcopy(item))
+    elif fault == 'future-proof':
+        proof['acquired_at'] = '2026-10-30T00:00:00+00:00'
+    elif fault == 'naive-proof':
+        proof['acquired_at'] = '2026-10-29T13:57:04'
+    elif fault == 'root-positive-fill':
+        proof['body']['filled_quantity'] = '1'
+    elif fault == 'root-working-status':
+        proof['body']['status'] = 'WORKING'
+    elif fault == 'outcome-conflict':
+        event.payload['cancel_outcome'] = 'confirmed'
+    elif fault == 'refusal-origin':
+        event.payload['refusal_origin'] = 'could_not_tell'
     if fault == 'duplicate-json':
         event.payload['metadata']['_webull_terminal_proof'] = '{"source":"x","source":"y"}'
     elif fault == 'oversize-json':
@@ -167,22 +190,38 @@ def test_scope_execution_and_maturity_negatives(fault):
     order, events, account, observed = controlled_binding()
     event = proof_event(events)
     strategy = 'schwab_1m_v2'
-    if fault == 'schwab': account.provider = 'schwab'
-    elif fault == 'account-binding': account.id = uuid4()
-    elif fault == 'account-native-missing': account.external_account_id = None
-    elif fault == 'strategy': strategy = 'momentum_warn_live'
-    elif fault == 'segment': order.payload['fanout_segment_id'] = '1'
-    elif fault == 'event-client': event.payload['client_order_id'] = 'CONTROLLED-foreign'
-    elif fault == 'event-native': event.payload['broker_order_id'] = 'CONTROLLED-foreign'
-    elif fault == 'event-origin': event.event_source = 'unknown'
-    elif fault == 'event-order': event.order_id = uuid4()
-    elif fault == 'duplicate-event': events.append(deepcopy(event))
-    elif fault == 'fill-event': events[0].event_type = 'partially_filled'
-    elif fault == 'fill-id': events[0].payload['broker_fill_id'] = 'CONTROLLED-fill'
-    elif fault == 'partial-marker': event.payload['metadata']['webull_terminal_with_partial_fill'] = 'cancelled'
-    elif fault == 'fresh-event': observed = int(event.event_at.timestamp() * 1000) + 14999
-    elif fault == 'working-order': order.status = 'accepted'
-    elif fault == 'empty-events': events.clear()
+    if fault == 'schwab':
+        account.provider = 'schwab'
+    elif fault == 'account-binding':
+        account.id = uuid4()
+    elif fault == 'account-native-missing':
+        account.external_account_id = None
+    elif fault == 'strategy':
+        strategy = 'momentum_warn_live'
+    elif fault == 'segment':
+        order.payload['fanout_segment_id'] = '1'
+    elif fault == 'event-client':
+        event.payload['client_order_id'] = 'CONTROLLED-foreign'
+    elif fault == 'event-native':
+        event.payload['broker_order_id'] = 'CONTROLLED-foreign'
+    elif fault == 'event-origin':
+        event.event_source = 'unknown'
+    elif fault == 'event-order':
+        event.order_id = uuid4()
+    elif fault == 'duplicate-event':
+        events.append(deepcopy(event))
+    elif fault == 'fill-event':
+        events[0].event_type = 'partially_filled'
+    elif fault == 'fill-id':
+        events[0].payload['broker_fill_id'] = 'CONTROLLED-fill'
+    elif fault == 'partial-marker':
+        event.payload['metadata']['webull_terminal_with_partial_fill'] = 'cancelled'
+    elif fault == 'fresh-event':
+        observed = int(event.event_at.timestamp() * 1000) + 14999
+    elif fault == 'working-order':
+        order.status = 'accepted'
+    elif fault == 'empty-events':
+        events.clear()
     assert invoke(order, events, account, observed, strategy=strategy) is None
 
 
@@ -214,15 +253,24 @@ def test_scoped_later_cancel_request_rejection_is_not_target_state_or_proof():
 def test_later_conflict_or_nonexact_audit_cannot_be_skipped(fault):
     order, events, account, observed = controlled_binding()
     audit = controlled_later_audit(events)
-    if fault == 'unknown-purpose': audit.payload.pop('internal')
-    elif fault == 'other-code': audit.payload['metadata']['webull_error_code'] = 'OTHER'
-    elif fault == 'working': audit.event_type = 'accepted'
-    elif fault == 'filled': audit.event_type = 'filled'
-    elif fault == 'foreign-native': audit.payload['broker_order_id'] = 'CONTROLLED-other'
-    elif fault == 'foreign-segment': audit.payload['metadata']['fanout_segment_id'] = '2'
-    elif fault == 'unknown-origin': audit.event_source = 'unknown'
-    elif fault == 'same-time': audit.event_at = proof_event(events).event_at
-    elif fault == 'could-not-tell': audit.payload['metadata']['cancel_outcome'] = 'could_not_tell'
+    if fault == 'unknown-purpose':
+        audit.payload.pop('internal')
+    elif fault == 'other-code':
+        audit.payload['metadata']['webull_error_code'] = 'OTHER'
+    elif fault == 'working':
+        audit.event_type = 'accepted'
+    elif fault == 'filled':
+        audit.event_type = 'filled'
+    elif fault == 'foreign-native':
+        audit.payload['broker_order_id'] = 'CONTROLLED-other'
+    elif fault == 'foreign-segment':
+        audit.payload['metadata']['fanout_segment_id'] = '2'
+    elif fault == 'unknown-origin':
+        audit.event_source = 'unknown'
+    elif fault == 'same-time':
+        audit.event_at = proof_event(events).event_at
+    elif fault == 'could-not-tell':
+        audit.payload['metadata']['cancel_outcome'] = 'could_not_tell'
     events.append(audit)
     assert invoke(order, events, account, observed) is None
 

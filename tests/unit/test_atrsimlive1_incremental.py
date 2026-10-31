@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import importlib
 import hashlib
-import json
 from pathlib import Path
 from uuid import UUID
 
@@ -117,12 +116,18 @@ def test_episode_key_invalidates_actual_identity_cohort_input_policy_and_source(
         cohort_sha256='d' * 64, policies=binding(cache)['policies'], source_seal='a' * 64)
     old = cache.cache_key(**args)
     changed = deepcopy(args)
-    if change == 'account': changed['identity']['account_id'] = 'OTHER'
-    elif change == 'segment': changed['identity']['segment_id'] = 'OTHER'
-    elif change == 'cohort': changed['cohort_sha256'] = 'e' * 64
-    elif change == 'window': changed['window_sha256'] = 'e' * 64
-    elif change == 'policy': changed['policies']['null_policy'] = 'OTHER'
-    else: changed['source_seal'] = 'e' * 64
+    if change == 'account':
+        changed['identity']['account_id'] = 'OTHER'
+    elif change == 'segment':
+        changed['identity']['segment_id'] = 'OTHER'
+    elif change == 'cohort':
+        changed['cohort_sha256'] = 'e' * 64
+    elif change == 'window':
+        changed['window_sha256'] = 'e' * 64
+    elif change == 'policy':
+        changed['policies']['null_policy'] = 'OTHER'
+    else:
+        changed['source_seal'] = 'e' * 64
     assert cache.cache_key(**changed) != old
 
 
@@ -132,11 +137,16 @@ def test_unknown_open_or_mixed_outcome_never_becomes_reusable(monkeypatch, case)
     receipt = dict(issues=[], fills=[dict(quantity=100)], exits=[dict(quantity=100, reason='TARGET_5')], gross_pnl='5')
     row = dict(pnl_label_known=True, pnl_pct_label_known=True)
     assert cache.finished_known(receipt, row)
-    if case == 'issue': receipt['issues'] = ['UNKNOWN_CONDITIONS_COLUMN_MISSING']
-    elif case == 'open': receipt['exits'][0]['reason'] = 'OPEN'
-    elif case == 'zero': receipt['fills'] = []
-    elif case == 'quantity': receipt['exits'][0]['quantity'] = 101
-    else: row['pnl_label_known'] = False
+    if case == 'issue':
+        receipt['issues'] = ['UNKNOWN_CONDITIONS_COLUMN_MISSING']
+    elif case == 'open':
+        receipt['exits'][0]['reason'] = 'OPEN'
+    elif case == 'zero':
+        receipt['fills'] = []
+    elif case == 'quantity':
+        receipt['exits'][0]['quantity'] = 101
+    else:
+        row['pnl_label_known'] = False
     assert not cache.finished_known(receipt, row)
 
 
@@ -164,10 +174,14 @@ def test_late_or_corrected_prefix_same_count_forces_fresh_not_time_only_hit(monk
 def test_current_RR_certificate_cannot_be_replaced_by_stale_or_partial_metadata(monkeypatch, case):
     cache, reads, *_ = modules(monkeypatch)
     current = cert(reads)
-    if case == 'snapshot': current['snapshot_id'] = 'FOREIGN'
-    elif case == 'asof': current['asof'] += timedelta(seconds=1)
-    elif case == 'query': current['schema'] = 'UNREVIEWED'
-    else: current['complete'] = False
+    if case == 'snapshot':
+        current['snapshot_id'] = 'FOREIGN'
+    elif case == 'asof':
+        current['asof'] += timedelta(seconds=1)
+    elif case == 'query':
+        current['schema'] = 'UNREVIEWED'
+    else:
+        current['complete'] = False
     with pytest.raises(cache.CacheRefusal):
         reads.read_plan(cert(reads), current, current_asof=LEFT + timedelta(minutes=3),
                         current_snapshot='CONTROLLED-RR', open_window=False)
@@ -341,8 +355,10 @@ def test_any_changed_dependency_invalidates_whole_cohort_binding(monkeypatch, fi
                   current_asof=LEFT + timedelta(minutes=3), current_snapshot='CONTROLLED-RR')
     before = reads.proof_bindings([who], windows=[window], **kwargs)
     changed = deepcopy(window)
-    if field == 'quote_content': changed['certificates']['quotes']['content_sha256'] = 'f' * 64
-    else: changed['header_hashes'][field] = 'f' * 64
+    if field == 'quote_content':
+        changed['certificates']['quotes']['content_sha256'] = 'f' * 64
+    else:
+        changed['header_hashes'][field] = 'f' * 64
     after = reads.proof_bindings([who], windows=[changed], **kwargs)
     assert before['bindings'] != after['bindings'] and before['cohort_sha256'] != after['cohort_sha256']
 

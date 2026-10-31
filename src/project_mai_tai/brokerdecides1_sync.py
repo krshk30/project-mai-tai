@@ -73,7 +73,10 @@ async def _background_refresh(service):
         BACKGROUND_ALLOWED, BACKGROUND_FOREGROUND_ACTIVE, BACKGROUND_TASKS,
     )
 
-    allowed = lambda: not service.__dict__.get("_brokerdecides1_foreground_syncs", 0) and not service.__dict__.get("_brokerdecides1_closing", False)
+    def allowed():
+        return (not service.__dict__.get("_brokerdecides1_foreground_syncs", 0)
+                and not service.__dict__.get("_brokerdecides1_closing", False))
+
     priority_token = BACKGROUND_ALLOWED.set(allowed)
     foreground_token = BACKGROUND_FOREGROUND_ACTIVE.set(
         lambda: bool(service.__dict__.get("_brokerdecides1_foreground_syncs", 0)))
@@ -250,7 +253,6 @@ def local_evidence(session, names, *, prior_session_attempts_final=False,
         raise ValueError("inflight_census_overflow")
     candidates = set(intent_symbols) | set(order_symbols)
     # Include durable replacement jobs whose old order may already be terminal.
-    from project_mai_tai.db.models import DashboardSnapshot
     from project_mai_tai.brokerdecides1_retirement import unresolved_jobs_query, unresolved_query
     from project_mai_tai.db.models import BrokerDecidesDispatchRetirement
 

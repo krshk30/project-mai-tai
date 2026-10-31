@@ -26,7 +26,7 @@ from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.settings import Settings
 from tests.unit.test_oms_store import build_test_session_factory
 from test_oms_risk_service import FakeRedis, FakeWorkingOrderRefreshBrokerAdapter
-from tests.unit.test_brokerdecides1_local_census import ACCOUNTS, attempt, census, order as census_order
+from tests.unit.test_brokerdecides1_local_census import ACCOUNTS, attempt, census as census, order as census_order
 
 
 def controlled_metadata():

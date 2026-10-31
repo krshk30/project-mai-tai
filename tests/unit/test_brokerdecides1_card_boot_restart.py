@@ -20,7 +20,7 @@ from project_mai_tai.fanout_segment_store import current_session_anchor
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from tests.line_restore_acceptance_factory import make_line_restore_case
 from tests.unit.test_brokerdecides1_card_only import card_case
-from tests.unit.test_brokerdecides1_local_census import ACCOUNTS, attempt, census, order
+from tests.unit.test_brokerdecides1_local_census import ACCOUNTS, attempt, census as census, order
 
 
 class PrivatePacketTransport:

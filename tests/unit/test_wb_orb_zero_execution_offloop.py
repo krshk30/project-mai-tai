@@ -14,7 +14,7 @@ from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrde
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms import orb_country, webull_attach_riskoff as wb
 from project_mai_tai.oms.service import ArmedHardStop
-from tests.unit.test_wbattach1_riskoff import NOW, attach, make_case
+from tests.unit.test_wbattach1_riskoff import NOW, attach, make_case as make_case
 
 
 async def prepared(make_case, site, account):

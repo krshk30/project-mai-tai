@@ -37,10 +37,14 @@ def test_features_default_OFF_and_explicit_profile_get_new_namespace(monkeypatch
 def test_foreign_feature_profiles_fail_closed(monkeypatch, fault):
     cache, _ = modules(monkeypatch)
     value = binding(cache, closed_components=True)
-    if fault == 'null': value['features'] = None
-    elif fault == 'string-flag': value['features']['closed_components'] = 'true'
-    elif fault == 'foreign-version': value['features']['version'] = 'foreign'
-    else: value['features']['permission'] = True
+    if fault == 'null':
+        value['features'] = None
+    elif fault == 'string-flag':
+        value['features']['closed_components'] = 'true'
+    elif fault == 'foreign-version':
+        value['features']['version'] = 'foreign'
+    else:
+        value['features']['permission'] = True
     with pytest.raises(cache.CacheRefusal, match='exact_reviewed_cache_feature_profile_required'):
         cache.features(value)
 

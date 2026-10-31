@@ -7,7 +7,7 @@ import pytest
 from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.broker_adapters.schwab import SchwabAccountConfig, SchwabBrokerAdapter
 from project_mai_tai.settings import Settings
-from tests.unit.test_webull_adapter import _adapter, _FakeClient, fake_sdk
+from tests.unit.test_webull_adapter import _adapter, _FakeClient, fake_sdk as fake_sdk
 
 
 STRATEGIES = ["schwab_1m_v2", "orb_schwab", "momentum_warn_live"]

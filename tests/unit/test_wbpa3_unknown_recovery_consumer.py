@@ -7,7 +7,7 @@ from sqlalchemy import select
 from project_mai_tai import brokerdecides1_sync as sync
 from project_mai_tai.db.models import DashboardSnapshot
 from tests.unit.wbpa3_episode_port import ACCOUNT_NAMES, OPPORTUNITY
-from tests.unit.test_wbpa3_positive_rejection_v3 import driver, episode, terminal_recovery
+from tests.unit.test_wbpa3_positive_rejection_v3 import driver, episode as episode, terminal_recovery
 
 pytestmark = pytest.mark.skipif(not os.environ.get("WBPA3_SOURCE_DIRECTORY"),
     reason="Requires reviewed private retained CHOW inputs")

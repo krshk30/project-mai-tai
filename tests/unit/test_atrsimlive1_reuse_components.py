@@ -16,7 +16,7 @@ def setup(monkeypatch, tmp_path):
     module = importlib.import_module('atrsimlive1_reuse_components')
     cache = importlib.import_module('atrsimlive1_incremental_cache')
     reads = importlib.import_module('atrsimlive1_incremental_reads')
-    from tests.unit.test_atrsimlive1_current_rr_model_context import context, ORIGIN
+    from tests.unit.test_atrsimlive1_current_rr_model_context import context
     from project_mai_tai.atr_simulation import same_sip_types as t
     _, run, _, first, _, data, _ = context(monkeypatch, tmp_path, 'CORE', True)
     base = first.tape_coverage.start_ns
@@ -92,7 +92,8 @@ def test_unknown_open_or_uncovered_component_is_never_planned_reused(monkeypatch
     elif fault == 'uncovered':
         end = episodes[0].tape_coverage.start_ns + 90_000_000_000
         episodes = (replace(episodes[0], tape_coverage=replace(episodes[0].tape_coverage, end_ns=end)), episodes[1])
-    else: episodes = (replace(episodes[0], watched=None), episodes[1])
+    else:
+        episodes = (replace(episodes[0], watched=None), episodes[1])
     result = module.plan(episodes, candidates, proofs, **options, enabled=True)
     assert result['retained'] == ()
     assert set(result['fresh']) == {0, 1}

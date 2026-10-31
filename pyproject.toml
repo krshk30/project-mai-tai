@@ -45,6 +45,22 @@ target-version = "py312"
 
 [tool.ruff.lint.per-file-ignores]
 "sql/migrations/env.py" = ["E402"]
+# Preserve the sealed successor provenance prologue before its engine imports.
+"src/project_mai_tai/atr_simulation/same_sip_engine.py" = ["E402"]
+# Preserve the sealed successor provenance prologue before its exit imports.
+"src/project_mai_tai/atr_simulation/same_sip_exits.py" = ["E402"]
+# Preserve the sealed successor provenance prologue before its fill-model imports.
+"src/project_mai_tai/atr_simulation/same_sip_fill_models.py" = ["E402"]
+# Preserve the sealed successor provenance prologue before its planner imports.
+"src/project_mai_tai/atr_simulation/same_sip_firstbar.py" = ["E402"]
+# Preserve the sealed successor provenance prologue before its FIRSTBAR exit imports.
+"src/project_mai_tai/atr_simulation/same_sip_firstbar_exits.py" = ["E402"]
+# Preserve the sealed successor provenance prologue before its baseline imports.
+"src/project_mai_tai/atr_simulation/same_sip_firstbar_live_baseline.py" = ["E402"]
+# Preserve the sealed successor provenance prologue before its replay imports.
+"src/project_mai_tai/atr_simulation/same_sip_firstbar_replay.py" = ["E402"]
+# Keep the STOP helper after ATR proof definitions; do not reorder the order-path imports.
+"src/project_mai_tai/oms/bot_control_atr.py" = ["E402"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

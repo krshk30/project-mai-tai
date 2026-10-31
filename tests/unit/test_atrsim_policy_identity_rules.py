@@ -54,7 +54,8 @@ def test_distinct_equal_policies_are_separate_identity_entries(monkeypatch):
     calls = []
     loader = original._rules
     monkeypatch.setattr(original, '_rules', lambda value: calls.append(id(value)) or loader(value))
-    for policy in (left, right, left, right): fast.classify_execution(row, '14', policy)
+    for policy in (left, right, left, right):
+        fast.classify_execution(row, '14', policy)
     assert calls == [id(left), id(right)]
     assert fast._RULES_BY_IDENTITY[id(left)][0] is left
     assert fast._RULES_BY_IDENTITY[id(right)][0] is right
@@ -82,25 +83,32 @@ def test_cached_rules_never_skip_per_print_identity_or_classification_validation
         'size': 200, 'eligible': False, 'reason': 'UNPROVEN', 'conditions_present': False}
     changed = replace(row, execution=replace(evidence, **{field: values[field]}))
     for method in (original.execution_status, fast.execution_status):
-        with pytest.raises(ValueError): method(changed)
+        with pytest.raises(ValueError):
+            method(changed)
 
 
 @pytest.mark.parametrize('fault', ('source_sha', 'duplicate_code', 'nonboolean_flag', 'empty_rules'))
 def test_invalid_source_or_rules_keep_original_refusal(fault):
     policy = replace(POLICY)
-    if fault == 'source_sha': policy = replace(policy, source=replace(SOURCE, sha256='bad'))
-    elif fault == 'duplicate_code': policy = replace(policy, rules=(policy.rules[0], policy.rules[0]))
-    elif fault == 'nonboolean_flag': policy = replace(policy, rules=(replace(policy.rules[0], updates_volume=1),))
-    else: policy = replace(policy, rules=())
+    if fault == 'source_sha':
+        policy = replace(policy, source=replace(SOURCE, sha256='bad'))
+    elif fault == 'duplicate_code':
+        policy = replace(policy, rules=(policy.rules[0], policy.rules[0]))
+    elif fault == 'nonboolean_flag':
+        policy = replace(policy, rules=(replace(policy.rules[0], updates_volume=1),))
+    else:
+        policy = replace(policy, rules=())
     for method in (original.classify_execution, fast.classify_execution):
-        with pytest.raises(ValueError): method(trade(61), '14', policy)
+        with pytest.raises(ValueError):
+            method(trade(61), '14', policy)
     assert id(policy) not in fast._RULES_BY_IDENTITY
 
 
 def test_mutable_unhashable_policy_graph_does_not_gain_new_acceptance():
     policy = replace(POLICY, rules=list(POLICY.rules))
     for method in (original.classify_execution, fast.classify_execution):
-        with pytest.raises(TypeError): method(trade(61), '14', policy)
+        with pytest.raises(TypeError):
+            method(trade(61), '14', policy)
 
 
 def test_first_identity_miss_still_invokes_original_source_validation(monkeypatch):

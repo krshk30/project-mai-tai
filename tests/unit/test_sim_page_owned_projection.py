@@ -2,7 +2,7 @@
 
 import asyncio
 from copy import deepcopy
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 import sys
 from uuid import UUID

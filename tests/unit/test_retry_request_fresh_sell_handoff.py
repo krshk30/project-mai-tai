@@ -96,19 +96,30 @@ def test_negative_cannot_release_owned_or_unknown_episode(fault, pm):
     strategy, state, request, clock = setup(pm=pm)
     proof_request = request
     clear, at = True, clock[0]
-    if fault == "position": state.position_qty = 1
-    elif fault == "held_position": state.position_qty_held = 1
-    elif fault == "working_schwab": state.resting_active = True
-    elif fault == "working_webull": state.webull_resting_active = True
+    if fault == "position":
+        state.position_qty = 1
+    elif fault == "held_position":
+        state.position_qty_held = 1
+    elif fault == "working_schwab":
+        state.resting_active = True
+    elif fault == "working_webull":
+        state.webull_resting_active = True
     elif fault == "partial_fill":
         state.flip_owner_open_positions = {"live:orb": SimpleNamespace(quantity=1)}
-    elif fault == "stale_sell": state.fresh_sell_owner_release_segment_ms = 0
-    elif fault == "identity": state.fanout_segment_id = OLD + 1
-    elif fault == "stale_position_book": state.flip_owner_evidence_at_ms -= 15_001
-    elif fault == "stale_cancel": at -= 15_001
-    elif fault == "cancel_unknown": clear = False
-    elif fault == "different_request": proof_request = replace(request, token="CONTROLLED_OTHER_TOKEN")
-    elif fault == "replayed_sell": strategy._bar_observation_phase = "replay"
+    elif fault == "stale_sell":
+        state.fresh_sell_owner_release_segment_ms = 0
+    elif fault == "identity":
+        state.fanout_segment_id = OLD + 1
+    elif fault == "stale_position_book":
+        state.flip_owner_evidence_at_ms -= 15_001
+    elif fault == "stale_cancel":
+        at -= 15_001
+    elif fault == "cancel_unknown":
+        clear = False
+    elif fault == "different_request":
+        proof_request = replace(request, token="CONTROLLED_OTHER_TOKEN")
+    elif fault == "replayed_sell":
+        strategy._bar_observation_phase = "replay"
     strategy._fresh_sell_release_evidence[state.symbol] = FreshSellReleaseEvidence(
         proof_request, at, clear, "CONTROLLED_NEGATIVE")
     assert not strategy._fresh_sell_release_owner(state, None)

@@ -1,9 +1,9 @@
 """C7B-min: prior-session v2 attempts with no order row are final for admission (DAY-only)."""
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, timedelta
 
 from project_mai_tai.brokerdecides1_sync import local_evidence
 from project_mai_tai.fanout_segment_store import current_session_anchor
-from tests.unit.test_brokerdecides1_local_census import ACCOUNTS, attempt, census, order  # noqa: F401
+from tests.unit.test_brokerdecides1_local_census import ACCOUNTS, attempt, census as census, order  # noqa: F401
 
 
 def _age(row, created_at):

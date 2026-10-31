@@ -3,7 +3,6 @@
 No source initializer/permission or logger success replacement. The existing
 owned broker fixture supplies synthetic provider data, never native evidence.
 """
-import asyncio
 from datetime import UTC, datetime
 import json
 from pathlib import Path

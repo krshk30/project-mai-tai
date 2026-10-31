@@ -24,7 +24,7 @@ from project_mai_tai.services import strategy_engine_app as current
 from project_mai_tai.services import scanner_confirmed_capture as capture
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core import ReferenceData
-from project_mai_tai.strategy_core import momentum_confirmed, snapshot_utils, top_gainers
+from project_mai_tai.strategy_core import snapshot_utils, top_gainers
 from tests.unit.test_strategy_engine_service import make_snapshot_payload
 
 

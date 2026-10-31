@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from project_mai_tai.db.models import BrokerOrder, Fill, OmsManagedPosition, SystemIncident, VirtualPosition
-from project_mai_tai.oms import orb_protection_work, wbexit2, wbexit3
+from project_mai_tai.oms import orb_protection_work, wbexit3
 from tests.unit.wbexit3_narrow_boot_fixture import (
     build_case, canonical, finish_case, receipt, rows, run_narrow_cut, seed_controlled_aged_duties,
 )

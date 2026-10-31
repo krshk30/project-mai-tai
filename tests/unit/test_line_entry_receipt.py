@@ -67,27 +67,45 @@ class Controlled:
         b._line_live_bars = {'TNMG': set()}
         b._keepwatch_halt_binding_current = called('sparse_binding', False)
         b._line_snapshot_current = called('snapshot', failure != 'snapshot_not_current')
-        if failure == 'awaiting_sell': b._keepwatch.awaiting_sell.add('TNMG')
-        if failure == 'not_tradeable': b._keepwatch.tradeable.clear()
-        if failure == 'anchor_mismatch': b._keepwatch.anchor_ms -= 86_400_000
-        if failure == 'quarantine': b._keepwatch_bar_quarantine['TNMG'] = anchor
-        if failure == 'protected_symbol': b.settings.protected_symbol_set.add('TNMG')
-        if failure == 'boot_exclusion_sources_unreadable': b._boot_exclusion_sources_readable = False
-        if failure == 'history_unknown': b._keepwatch_unknown.add('TNMG')
-        if failure == 'history_proof_missing': b._keepwatch_proven.clear()
-        if failure == 'history_anchor_mismatch': b._keepwatch_proven['TNMG'].anchor_ms -= 86_400_000
-        if failure == 'readd_needs_live': b._line_readd_needs_live.add('TNMG')
-        if failure == 'source_waiting': b._line_source_waiting['TNMG'] = ledger.epoch
+        if failure == 'awaiting_sell':
+            b._keepwatch.awaiting_sell.add('TNMG')
+        if failure == 'not_tradeable':
+            b._keepwatch.tradeable.clear()
+        if failure == 'anchor_mismatch':
+            b._keepwatch.anchor_ms -= 86_400_000
+        if failure == 'quarantine':
+            b._keepwatch_bar_quarantine['TNMG'] = anchor
+        if failure == 'protected_symbol':
+            b.settings.protected_symbol_set.add('TNMG')
+        if failure == 'boot_exclusion_sources_unreadable':
+            b._boot_exclusion_sources_readable = False
+        if failure == 'history_unknown':
+            b._keepwatch_unknown.add('TNMG')
+        if failure == 'history_proof_missing':
+            b._keepwatch_proven.clear()
+        if failure == 'history_anchor_mismatch':
+            b._keepwatch_proven['TNMG'].anchor_ms -= 86_400_000
+        if failure == 'readd_needs_live':
+            b._line_readd_needs_live.add('TNMG')
+        if failure == 'source_waiting':
+            b._line_source_waiting['TNMG'] = ledger.epoch
         if failure == 'current_bar_stale':
             state.bars[-1].timestamp_ms -= 60_000
             ledger.current_bar_ms -= 60_000
-        if failure == 'atr_not_ready': state.atr_state = 'unknown'
-        if failure == 'trail_missing': state.atr_trail = None
-        if failure == 'trail_nan': state.atr_trail = float('nan')
-        if failure == 'trail_zero': state.atr_trail = 0.0
-        if failure == 'bars_missing': state.bars = []
-        if failure == 'ledger_missing': b._line_sessions.clear()
-        if failure == 'spanning_unclean': b._line_published['TNMG'].request.spanning_pairs = ((current-600_000, current),)
+        if failure == 'atr_not_ready':
+            state.atr_state = 'unknown'
+        if failure == 'trail_missing':
+            state.atr_trail = None
+        if failure == 'trail_nan':
+            state.atr_trail = float('nan')
+        if failure == 'trail_zero':
+            state.atr_trail = 0.0
+        if failure == 'bars_missing':
+            state.bars = []
+        if failure == 'ledger_missing':
+            b._line_sessions.clear()
+        if failure == 'spanning_unclean':
+            b._line_published['TNMG'].request.spanning_pairs = ((current-600_000, current),)
         if original:
             for name in ('_line_buy_ready', '_entry_membership_allowed', '_keepwatch_entry_allowed'):
                 setattr(b, name, MethodType(ORIGINAL[name], b))
@@ -123,7 +141,8 @@ def test_original_boolean_and_gate_call_order_unchanged(branch, failure):
     assert after.calls == before.calls
     assert actual.branch == branch
     reason = 'atr_not_ready' if failure in {'trail_missing', 'trail_nan', 'trail_zero'} else failure
-    if branch == 'current_publication' and failure == 'history_unknown': reason = 'none'
+    if branch == 'current_publication' and failure == 'history_unknown':
+        reason = 'none'
     assert actual.first_false_predicate == reason
 
 
@@ -195,7 +214,8 @@ def test_named_wrappers_strip_to_all_four_original_gate_bodies():
             return self.generic_visit(node)
         def visit_Call(self, node):
             node = self.generic_visit(node)
-            if isinstance(node.func, ast.Name) and node.func.id == '_entry_predicate': return node.args[0]
+            if isinstance(node.func, ast.Name) and node.func.id == '_entry_predicate':
+                return node.args[0]
             if (isinstance(node.func, ast.Name) and node.func.id == 'bool' and len(node.args) == 1
                     and isinstance(node.args[0], ast.Attribute) and node.args[0].attr == 'bars'):
                 return node.args[0]

@@ -25,12 +25,15 @@ def test_child_selects_explicit_reviewed_window_and_policy_without_new_provider(
         assert data=={'CONTROLLED_INPUT':True} and kwargs['route_packet']=={'CONTROLLED_ROUTE':True}
         assert kwargs['producer']['country_route_projection_status']=='CONTROLLED_DIRECT'
         return {'CONTROLLED_DOCUMENT':True}
-    monkeypatch.setattr(collection,'collect',collect);monkeypatch.setattr(models,'produce',produce)
+    monkeypatch.setattr(collection,'collect',collect)
+    monkeypatch.setattr(models,'produce',produce)
     monkeypatch.setattr(models,'combine',lambda values:values[0])
-    output=BytesIO();monkeypatch.setattr(cli.sys,'stdout',SimpleNamespace(buffer=output))
+    output=BytesIO()
+    monkeypatch.setattr(cli.sys,'stdout',SimpleNamespace(buffer=output))
     args=['--child','--source-manifest',str(tmp_path/'source.json'),'--dsn-env','DATABASE_URL']
     path=str(tmp_path/'policy.json') if with_policy else None
-    if with_policy:args+=['--policy',path]
+    if with_policy:
+        args+=['--policy',path]
     assert cli.main(args)==0
     assert calls==[('collect',path),('produce',path,'CONTROLLED_POLICY' if with_policy else None)]
     assert json.loads(output.getvalue())=={'CONTROLLED_DOCUMENT':True}
@@ -45,7 +48,8 @@ def test_new_loadbearing_window_or_kernel_helper_cannot_be_omitted(tmp_path,name
     import atrsimlive1 as cli
     assert name in cli.REQUIRED_SOURCE
     pins={member:'a'*64 for member in cli.REQUIRED_SOURCE if member!=name}
-    path=tmp_path/'source.json';path.write_text(json.dumps(dict(
+    path=tmp_path/'source.json'
+    path.write_text(json.dumps(dict(
         schema='ATRSIMLIVE1_REVIEWED_SOURCE_V1',head='a'*40,files=pins)))
     with pytest.raises(ValueError,match='all_loadbearing_source_pins_required'):
         cli.source_binding(path)

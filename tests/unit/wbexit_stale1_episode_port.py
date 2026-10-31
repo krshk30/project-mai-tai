@@ -4,7 +4,7 @@ Only an explicitly supplied, hash-pinned local export is accepted. Source rows
 are deduplicated by actual primary key; no fills, prices or bindings are seeded.
 """
 from copy import deepcopy
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 import hashlib
 import json
@@ -37,7 +37,8 @@ TABLES = (BrokerAccount, Strategy, TradeIntent, BrokerOrder, BrokerOrderEvent,
 def pairs(items):
     result = {}
     for key, value in items:
-        if key in result: raise ValueError('duplicate export key')
+        if key in result:
+            raise ValueError('duplicate export key')
         result[key] = value
     return result
 
@@ -59,10 +60,14 @@ def row_values(model, original):
         prop = columns[name]
         dtype = prop.columns[0].type
         if value is not None:
-            if isinstance(dtype, Uuid): value = UUID(value)
-            elif isinstance(dtype, DateTime): value = datetime.fromisoformat(value)
-            elif isinstance(dtype, Numeric): value = Decimal(str(value))
-            else: value = deepcopy(value)
+            if isinstance(dtype, Uuid):
+                value = UUID(value)
+            elif isinstance(dtype, DateTime):
+                value = datetime.fromisoformat(value)
+            elif isinstance(dtype, Numeric):
+                value = Decimal(str(value))
+            else:
+                value = deepcopy(value)
         result[prop.key] = value
     return result
 
@@ -80,7 +85,8 @@ def source_rows(export):
     for model, rows in groups.items():
         unique = {}
         for row in rows:
-            if row['id'] in unique: assert unique[row['id']] == row
+            if row['id'] in unique:
+                assert unique[row['id']] == row
             unique[row['id']] = row
         result[model] = list(unique.values())
     return result
@@ -123,8 +129,10 @@ def seed_episode(tmp_path):
     async def run_db(unit, *, commit=False):
         with factory() as db:
             result = unit(db)
-            if commit: db.commit()
-            else: db.rollback()
+            if commit:
+                db.commit()
+            else:
+                db.rollback()
             return result
     service._run_db = run_db
     # A replay clock AFTER retained row clocks, never a fabricated 13:36 receipt.

@@ -3,7 +3,6 @@
 Separate OMS/private DB/native book from the pending case, SAME event loop and
 executor. SDK transport is controlled; no native capability or live result claim.
 """
-import asyncio
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 from decimal import Decimal

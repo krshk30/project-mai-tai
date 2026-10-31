@@ -190,11 +190,16 @@ def test_exact_section_geometry_and_scope_refuse(monkeypatch, tmp_path, mutation
     cache, container, store = setup(monkeypatch, tmp_path)
     store.save(population())
     _, doc, header = index(store, container)
-    if mutation == 'gap': doc['sections'][0]['offset'] += 1
-    elif mutation == 'overlap': doc['sections'][1]['offset'] -= 1
-    elif mutation == 'foreign-path': doc['sections'][0]['path'][0] = 'EXECUTABLE'
-    elif mutation == 'duplicate-path': doc['sections'][1]['path'] = doc['sections'][0]['path']
-    else: doc['sections'][0]['sha256'] = 'not-a-sha'
+    if mutation == 'gap':
+        doc['sections'][0]['offset'] += 1
+    elif mutation == 'overlap':
+        doc['sections'][1]['offset'] -= 1
+    elif mutation == 'foreign-path':
+        doc['sections'][0]['path'][0] = 'EXECUTABLE'
+    elif mutation == 'duplicate-path':
+        doc['sections'][1]['path'] = doc['sections'][0]['path']
+    else:
+        doc['sections'][0]['sha256'] = 'not-a-sha'
     replace_index(store, container, doc, header)
     with pytest.raises(cache.CacheRefusal):
         store.load()

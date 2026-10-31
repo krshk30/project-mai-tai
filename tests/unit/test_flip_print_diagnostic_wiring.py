@@ -7,7 +7,6 @@ import json
 import logging
 from types import MethodType, SimpleNamespace
 
-import pytest
 
 from project_mai_tai.settings import Settings
 from project_mai_tai.services import schwab_1m_v2_bot as service

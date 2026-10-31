@@ -3842,9 +3842,6 @@ def build_app(
     today_simulation_read_port: Any | None = None,
 ) -> FastAPI:
     active_settings = settings or get_settings()
-    from project_mai_tai.atr_simulation.today_file import read_today_file
-
-    active_today_reader = read_today_file if today_simulation_read_port is None else today_simulation_read_port
     active_session_factory = session_factory or build_timed_session_factory(active_settings, service="control", profile="slow")
     from project_mai_tai.atr_simulation.firstbar_ui_reader import FirstBarSeedUIReader
     from project_mai_tai.services.atr_firstbar_routes import (

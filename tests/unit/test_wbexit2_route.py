@@ -18,7 +18,6 @@ from project_mai_tai.broker_adapters.protocols import ExitPairReleaseResult
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter, WebullPositionsUnavailable
 from project_mai_tai.db.models import AccountPosition, BrokerOrder, Fill, OmsManagedPosition, SystemIncident, TradeIntent, VirtualPosition
 from project_mai_tai.oms import service as oms, wbexit2
-from project_mai_tai.oms import webull_attach_riskoff as wb
 from project_mai_tai.settings import Settings
 from tests.unit.test_wbattach1_riskoff import Broker, make_case as make_case, closes, restarted
 

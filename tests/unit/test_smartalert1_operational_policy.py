@@ -2,8 +2,6 @@
 open window, output is byte-identical on rerun, operands are never invented."""
 
 from datetime import date
-import hashlib
-import json
 
 import pytest
 

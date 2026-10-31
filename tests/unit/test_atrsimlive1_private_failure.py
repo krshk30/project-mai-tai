@@ -89,7 +89,7 @@ def test_real_source_dataclass_attribute_message_never_represents_object_values(
 def test_only_last_twenty_frame_locations_no_locals_or_values(monkeypatch, tmp_path):
     failure, _, _ = modules(monkeypatch)
     def recurse(depth):
-        secret_local = 'PRIVATE_SECRET_LOCAL'
+        _secret_local = 'PRIVATE_SECRET_LOCAL'
         if depth:
             return recurse(depth - 1)
         raise KeyError('source_asof')

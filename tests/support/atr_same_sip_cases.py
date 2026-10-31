@@ -4,7 +4,7 @@ from decimal import Decimal
 import json
 
 from project_mai_tai.atr_simulation.types import (
-    Boundary, Coverage, EntryFact, EpisodeInput, EventKey, EvidenceKind,
+    Boundary, Coverage, EpisodeInput, EventKey, EvidenceKind,
     FillModel, FlipIdentity, LiveFacts, SimOrder, SourceRef, TradePrint,
 )
 from project_mai_tai.atr_simulation.execution_eligibility import classify_execution

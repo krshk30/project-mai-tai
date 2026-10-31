@@ -65,9 +65,12 @@ def test_empty_suffix_never_hides_full_certificate_changes(monkeypatch, fault):
     change, reads, cache = modules(monkeypatch)
     old_rows = [row(1, 10), row(2, 20)]
     old = previous(reads, cache, old_rows)
-    if fault == 'delete': current = old_rows[1:]
-    elif fault == 'unobserved-correction': current = [dict(old_rows[0], price=Decimal('9.00')), old_rows[1]]
-    else: current = [*old_rows, row(3, 15, 30)]
+    if fault == 'delete':
+        current = old_rows[1:]
+    elif fault == 'unobserved-correction':
+        current = [dict(old_rows[0], price=Decimal('9.00')), old_rows[1]]
+    else:
+        current = [*old_rows, row(3, 15, 30)]
     full, _ = certificate(reads, cache, current, end=240, asof=300, snapshot='NEW')
     result = change.merge_since(old, [], {}, current_full=full, current_asof=full['asof'], current_snapshot='NEW')
     assert result == dict(action='FRESH_WINDOW', reason='SINCE_MERGE_FULL_CERTIFICATE_MISMATCH')
@@ -91,10 +94,14 @@ def test_since_invalid_scope_or_candidate_cannot_become_a_merge(monkeypatch, fau
     candidate = row(2, 180, 250)
     full, _ = certificate(reads, cache, [old['rows'][0], candidate], end=240, asof=300, snapshot='NEW')
     candidates = [candidate]
-    if fault == 'foreign-snapshot': full['snapshot_id'] = 'FOREIGN'
-    elif fault == 'future-old': old['certificate']['asof'] = LEFT + timedelta(seconds=400)
-    elif fault == 'stale-arrival': candidates = [row(2, 180, 170)]
-    else: candidates = [candidate, deepcopy(candidate)]
+    if fault == 'foreign-snapshot':
+        full['snapshot_id'] = 'FOREIGN'
+    elif fault == 'future-old':
+        old['certificate']['asof'] = LEFT + timedelta(seconds=400)
+    elif fault == 'stale-arrival':
+        candidates = [row(2, 180, 170)]
+    else:
+        candidates = [candidate, deepcopy(candidate)]
     hashes = {(item['symbol'], item['id']): cache.fingerprint(item) for item in candidates}
     with pytest.raises(cache.CacheRefusal):
         change.merge_since(old, candidates, hashes, current_full=full, current_asof=full['asof'], current_snapshot='NEW')
@@ -114,9 +121,12 @@ def test_connected_collector_uses_suffix_only_when_useful_and_falls_back_exactly
         dict(day=LEFT.date(), start=LEFT, end=LEFT + timedelta(seconds=300), asof=LEFT + timedelta(seconds=300)), ('CONTROLLED',))
     old_rows = [row(1, 10), row(2, 20)]
     old = previous(reads, cache, old_rows)
-    if case == 'append': current, suffix, end = [*old_rows, row(3, 180, 250)], [row(3, 180, 250)], 240
-    elif case == 'unchanged-closed': current, suffix, end = old_rows, [], 120
-    else: current, suffix, end = old_rows[1:], [], 240
+    if case == 'append':
+        current, suffix, end = [*old_rows, row(3, 180, 250)], [row(3, 180, 250)], 240
+    elif case == 'unchanged-closed':
+        current, suffix, end = old_rows, [], 120
+    else:
+        current, suffix, end = old_rows[1:], [], 240
     full, _ = certificate(reads, cache, current, end=end, asof=300, snapshot='NEW')
     calls = []
     def fetch(sql, bound, label):

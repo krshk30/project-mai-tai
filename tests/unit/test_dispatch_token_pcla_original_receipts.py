@@ -21,7 +21,7 @@ from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.brokerdecides1_sync import local_evidence
 from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot
 from project_mai_tai.oms.store import OmsStore
-from tests.unit.test_brokerdecides1_local_census import census
+from tests.unit.test_brokerdecides1_local_census import census as census
 
 
 PACKET = Path("/Users/velkris/.codex/task-queues/analysis/OCT29-C6-ORIGINAL-CASE-RECEIPTS/"

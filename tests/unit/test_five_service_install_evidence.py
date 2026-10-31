@@ -51,7 +51,8 @@ def test_plan_requires_literal_reviewed_source_env_hook_and_service_flags():
         ('updates', {'MOMLIVE_SEC_APPROVED_HEAD': TARGET, 'UNRELATED_SECRET': 'changed'}),
         ('remove', ['MOMLIVE_SEC_APPROVED_HEAD']),
     ):
-        bad = plan(); bad[key] = value
+        bad = plan()
+        bad[key] = value
         with pytest.raises((ValueError, TypeError)):
             validate(bad)
 
@@ -114,14 +115,22 @@ def test_official_record_uses_complete_actual_snapshot_and_journal_population():
 @pytest.mark.parametrize('defect', ['missing-snapshot-service', 'duplicate', 'no-request', 'foreign', 'failure', 'before-snapshot', 'no-zone', 'consumer-before-oms'])
 def test_report_cannot_fabricate_or_reorder_installation_history(defect):
     before, events = journal()
-    if defect == 'missing-snapshot-service': before['services'].pop('market-data')
-    elif defect == 'duplicate': events.append(deepcopy(events[-1]))
-    elif defect == 'no-request': events.pop(0)
-    elif defect == 'foreign': events[0]['service'] = 'market-data'
-    elif defect == 'failure': events[1]['result'] = 'failed'
-    elif defect == 'before-snapshot': events[0]['at_utc'] = '2026-10-30T20:04:59+00:00'
-    elif defect == 'no-zone': events[0]['at_utc'] = '2026-10-30T20:05:01'
-    elif defect == 'consumer-before-oms': events[10:14] = events[12:14] + events[10:12]
+    if defect == 'missing-snapshot-service':
+        before['services'].pop('market-data')
+    elif defect == 'duplicate':
+        events.append(deepcopy(events[-1]))
+    elif defect == 'no-request':
+        events.pop(0)
+    elif defect == 'foreign':
+        events[0]['service'] = 'market-data'
+    elif defect == 'failure':
+        events[1]['result'] = 'failed'
+    elif defect == 'before-snapshot':
+        events[0]['at_utc'] = '2026-10-30T20:04:59+00:00'
+    elif defect == 'no-zone':
+        events[0]['at_utc'] = '2026-10-30T20:05:01'
+    elif defect == 'consumer-before-oms':
+        events[10:14] = events[12:14] + events[10:12]
     with pytest.raises(ValueError):
         LIB['record_payload'](before, events, SERVICES.split(','), '/private/actual-actions.jsonl')
 
@@ -135,7 +144,8 @@ def owner(name, pid=100, invocation='a' * 32):
 def fleet_pair():
     before = {name: owner(name) for name in PROOF.FLEET}
     current = deepcopy(before)
-    for name in SERVICES.split(','): current[name] = owner(name, 200, 'b' * 32)
+    for name in SERVICES.split(','):
+        current[name] = owner(name, 200, 'b' * 32)
     return before, current
 
 
@@ -149,28 +159,38 @@ def test_complete_eleven_fleet_requires_new_selected_and_identical_untouched():
 @pytest.mark.parametrize('defect', ['missing', 'untouched', 'old-pid', 'old-invocation', 'restart', 'inactive', 'future'])
 def test_owner_epoch_unknown_or_changed_untouched_stops(defect):
     before, current = fleet_pair()
-    if defect == 'missing': current.pop('trade-coach')
-    elif defect == 'untouched': current['market-data']['MainPID'] = '999'
-    elif defect == 'old-pid': current['oms']['MainPID'] = before['oms']['MainPID']
-    elif defect == 'old-invocation': current['oms']['InvocationID'] = before['oms']['InvocationID']
-    elif defect == 'restart': current['oms']['NRestarts'] = '1'
-    elif defect == 'inactive': current['oms']['ActiveState'] = 'inactive'
-    elif defect == 'future': current['oms']['ExecMainStartTimestamp'] = 'Thu 2099-10-29 20:00:00 UTC'
+    if defect == 'missing':
+        current.pop('trade-coach')
+    elif defect == 'untouched':
+        current['market-data']['MainPID'] = '999'
+    elif defect == 'old-pid':
+        current['oms']['MainPID'] = before['oms']['MainPID']
+    elif defect == 'old-invocation':
+        current['oms']['InvocationID'] = before['oms']['InvocationID']
+    elif defect == 'restart':
+        current['oms']['NRestarts'] = '1'
+    elif defect == 'inactive':
+        current['oms']['ActiveState'] = 'inactive'
+    elif defect == 'future':
+        current['oms']['ExecMainStartTimestamp'] = 'Thu 2099-10-29 20:00:00 UTC'
     with pytest.raises(ValueError):
         PROOF.verify_fleet(before, current, set(SERVICES.split(',')), changed=set(SERVICES.split(',')))
 
 
 def test_log_split_error_and_rotation_are_never_dropped(tmp_path):
-    path = tmp_path / 'oms.log'; path.write_bytes(b'')
+    path = tmp_path / 'oms.log'
+    path.write_bytes(b'')
     info = path.stat()
     cursor = dict(path=str(path), device=info.st_dev, inode=info.st_ino, offset=0, bytes=0, tail='')
     path.write_bytes(b'2026-10-30 20:10:00,000 ER')
     PROOF.consume(tmp_path, 'oms', cursor)
-    with path.open('ab') as stream: stream.write(b'ROR invalid\n')
+    with path.open('ab') as stream:
+        stream.write(b'ROR invalid\n')
     with pytest.raises(ValueError, match='error or traceback'):
         PROOF.consume(tmp_path, 'oms', cursor)
     assert (tmp_path / 'oms.startup-watch.log').read_bytes() == path.read_bytes()
-    path.rename(tmp_path / 'old.log'); path.write_bytes(b'new-file\n')
+    path.rename(tmp_path / 'old.log')
+    path.write_bytes(b'new-file\n')
     with pytest.raises(ValueError, match='rotation/truncation'):
         PROOF.consume(tmp_path, 'oms', cursor)
 
@@ -181,12 +201,15 @@ def test_publish_and_state_parser_require_exact_positive_evidence():
         assert not PROOF.PUBLISH.search(raw)
     raw = '\n'.join(key + '=' + value for key, value in owner('oms').items()).encode()
     assert PROOF.parse_state(raw) == owner('oms')
-    with pytest.raises(ValueError): PROOF.parse_state(raw + b'\nMainPID=123')
+    with pytest.raises(ValueError):
+        PROOF.parse_state(raw + b'\nMainPID=123')
 
 
 def test_real_root_input_guard_cannot_be_bypassed_by_private_fixture(tmp_path):
     assert os.geteuid() != 0, 'this control must run as the actual unprivileged Main'
-    path = tmp_path / 'plan.json'; path.write_bytes(json.dumps(plan()).encode()); path.chmod(0o600)
+    path = tmp_path / 'plan.json'
+    path.write_bytes(json.dumps(plan()).encode())
+    path.chmod(0o600)
     with pytest.raises(ValueError, match='root-owned'):
         LIB['secure_read'](path)
     with pytest.raises(ValueError, match='root600'):
@@ -221,16 +244,27 @@ def test_existing_native_census_and_latest_log_must_agree_without_new_provider()
     'account', 'generation', 'stale', 'future', 'wire', 'unknown-log', 'publisher-before-owner'])
 def test_native_census_unknown_never_becomes_flat_from_local_zero(defect):
     value, line, accounts, instance, now = native_case()
-    if defect == 'native-working': value['books'][0]['working'] = ['NCPL']
-    elif defect == 'manual-position': value['books'][1]['positions'] = ['MANUAL']
-    elif defect == 'local-inflight': value['inflight'] = ['NCPL']
-    elif defect == 'incomplete': value['books'][1]['complete'] = False
-    elif defect == 'account': value['books'][1]['account'] = 'live:foreign'
-    elif defect == 'generation': value['generation'] = 8
-    elif defect == 'stale': value['started_ms'] -= 60000
-    elif defect == 'future': value['completed_ms'] += 2000
-    elif defect == 'wire': value['books'][0]['wire_started_ms'] = value['started_ms'] - 1
-    elif defect == 'unknown-log': line = b'2026-10-30 20:05:29,001 WARNING [BROKERDECIDES1-PUBLISH] generation=7 UNKNOWN reason=read_failed'
-    elif defect == 'publisher-before-owner': instance['ExecMainStartTimestamp'] = 'Fri 2026-10-30 20:05:29 UTC'
+    if defect == 'native-working':
+        value['books'][0]['working'] = ['NCPL']
+    elif defect == 'manual-position':
+        value['books'][1]['positions'] = ['MANUAL']
+    elif defect == 'local-inflight':
+        value['inflight'] = ['NCPL']
+    elif defect == 'incomplete':
+        value['books'][1]['complete'] = False
+    elif defect == 'account':
+        value['books'][1]['account'] = 'live:foreign'
+    elif defect == 'generation':
+        value['generation'] = 8
+    elif defect == 'stale':
+        value['started_ms'] -= 60000
+    elif defect == 'future':
+        value['completed_ms'] += 2000
+    elif defect == 'wire':
+        value['books'][0]['wire_started_ms'] = value['started_ms'] - 1
+    elif defect == 'unknown-log':
+        line = b'2026-10-30 20:05:29,001 WARNING [BROKERDECIDES1-PUBLISH] generation=7 UNKNOWN reason=read_failed'
+    elif defect == 'publisher-before-owner':
+        instance['ExecMainStartTimestamp'] = 'Fri 2026-10-30 20:05:29 UTC'
     with pytest.raises(ValueError):
         PROOF.native_census_evidence(json.dumps(value).encode(), line, accounts, instance, now)
