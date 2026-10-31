@@ -144,9 +144,12 @@ async def test_same_day_prepare_uses_corrected_saved_cache_without_API(audit, mo
     await service._prepare_session(DAY)
     assert service._engine.prior_closes['TPC'] == Decimal('83.49')
     assert service._engine.prior_closes['BCPC'] == Decimal('81.12')
-    assert len(service._completed_from_store) == 1
-    assert service._completed_from_store[0]['logical_id'].endswith(':2')
+    # #1168 (10-27) restores completed rows from the warning strategies only; these audited
+    # rows are retired legacy momentum_30s/60s, so the corrected FINAL is proven in the store.
+    assert service._completed_from_store == []
     restored = audit[2].load_session(DAY)
+    final, = [row for row in restored if row.event_type == 'FINAL']
+    assert final.logical_id.endswith(':2')
     assert len([row for row in restored if row.event_type == 'INVALIDATED']) == 2
     assert len([row for row in restored if row.event_type == 'FINAL']) == 1
 
