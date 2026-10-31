@@ -45,6 +45,7 @@ def build_test_session_factory() -> sessionmaker:
 def _bare_service() -> OmsRiskService:
     """A service instance with __init__ bypassed — set only what a test needs."""
     svc = OmsRiskService.__new__(OmsRiskService)
+    svc.settings = SimpleNamespace()  # WBEXIT2/3 read service.settings since 10-28; absent switch = off
     svc.logger = SimpleNamespace(
         info=lambda *a, **k: None,
         warning=lambda *a, **k: None,
