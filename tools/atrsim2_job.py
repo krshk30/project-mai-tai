@@ -448,14 +448,14 @@ def stock_features(conn, symbol, flip_bar, at, price, previous):
     si = max((i for i in range(fi) if rows[i]["flip"] == "SELL"), default=None)
     out = {"decision_at": at.astimezone(ET).strftime("%H:%M:%S"), "decision_price": round(price, 4)}
     # 1. the earlier trade on this stock today (same table) that started before this decision.
-    # Coach 10-31: NONE / OPEN (still held at the decision) / UNKNOWN (exit unknown) / closed WIN-LOSS-FLAT.
+    # Coach 10-31: NONE / OPEN (still held at the decision) / closed WIN-LOSS-FLAT.
     if previous is None:
         out["previous_trade"] = {"result": "none"}
     else:
         p_entry, p_exit, p_status, p_pct = previous
-        if p_status == "EXIT UNKNOWN":
-            out["previous_trade"] = {"result": "unknown", "reason": "earlier trade exit UNKNOWN"}
-        elif p_exit is None or p_exit > at:
+        # As of the decision only (codex 10-31): no exit yet = still held, whatever the row's final status
+        # becomes later (an eventual EXIT UNKNOWN is end-of-day information, not known at the buy).
+        if p_exit is None or p_exit > at:
             out["previous_trade"] = {"result": "open", "minutes_since_entry": round((at - p_entry).total_seconds() / 60, 1)}
         else:
             out["previous_trade"] = {"result": "loss" if p_pct < 0 else "win" if p_pct > 0 else "flat",
