@@ -1,0 +1,9 @@
+{
+  "pr_number": 1173,
+  "range_base": "25f752289e437cedecb6484a6be954584abcdfed",
+  "range_head": "aeed7cc28597ec18a508d2b21a7586529c73f32d",
+  "reviewed_at": "2026-10-31T17:27:37Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed C1 momentum/page stale fixture corrections and relative-import detector; six inert findings remain explicitly deferred. Owner-phone source hash matches unchanged health source and literal; parser and transport guards unchanged. Related tests passed; no device or runtime claim."
+}
