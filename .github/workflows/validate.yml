@@ -19,12 +19,33 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Operator 10-31 (three-tier process): a PR that changes only docs/** skips the
+      # heavy steps; this job still runs and reports, so the required check passes.
+      - name: Detect docs-only pull request
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          docs_only=false
+          if [ "$EVENT" = "pull_request" ]; then
+            files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+            if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qv '^docs/'; then
+              docs_only=true
+            fi
+          fi
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "docs_only=$docs_only"
+
       - name: Set up Python
+        if: steps.scope.outputs.docs_only != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Start runner PostgreSQL 16
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           test -x /usr/lib/postgresql/16/bin/postgres
           sudo systemctl start postgresql.service
@@ -42,20 +63,24 @@ jobs:
           PGPASSWORD=postgres /usr/lib/postgresql/16/bin/psql -X -h 127.0.0.1 -p 5432 -U postgres -d project_mai_tai_test -v ON_ERROR_STOP=1 -c 'SELECT 1'
 
       - name: Install package and dev dependencies
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
       - name: Migrate test database
+        if: steps.scope.outputs.docs_only != 'true'
         env:
           MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
         run: |
           alembic upgrade head
 
       - name: Check log marker isolation
+        if: steps.scope.outputs.docs_only != 'true'
         run: python ops/health/check_log_marker_collisions.py
 
       - name: Run unit tests
+        if: steps.scope.outputs.docs_only != 'true'
         env:
           KILLSW1_TEST_PG_DSN: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
         run: python -m pytest -p no:cacheprovider tests/unit -m "not timing"
@@ -70,9 +95,11 @@ jobs:
         run: python -m pytest -p no:cacheprovider tests/unit -m timing --deselect=tests/unit/test_momlatch1_gateway_integration.py::test_gateway_A_240_per_second_60s_original_budget_and_TQ_progress
 
       - name: Run integration, replay, and backtest golden gate
+        if: steps.scope.outputs.docs_only != 'true'
         env:
           MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
         run: python -m pytest -p no:cacheprovider tests/integration tests/replay tests/backtest
 
       - name: Run Ruff
+        if: steps.scope.outputs.docs_only != 'true'
         run: python -m ruff check src tests

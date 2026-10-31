@@ -45,7 +45,23 @@ jobs:
           path: review-pin-ledger
           fetch-depth: 0
 
+      # Operator 10-31: a PR whose every changed path is under docs/ needs no
+      # independent pin. Paths are read from the fetched head as data only.
+      - name: Detect docs-only pull request
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          files="$(git diff --name-only "$BASE_SHA" refs/review-pin/pr-head)"
+          if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qv '^docs/'; then
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+            echo "DOCS_ONLY: every changed path is under docs/ -> no independent pin required"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Require complete independent review coverage
+        if: steps.scope.outputs.docs_only != 'true'
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
