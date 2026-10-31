@@ -30,7 +30,7 @@ jobs:
         run: |
           docs_only=false
           if [ "$EVENT" = "pull_request" ]; then
-            files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+            files="$(git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA")"
             if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qv '^docs/'; then
               docs_only=true
             fi
