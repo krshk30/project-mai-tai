@@ -1,10 +1,12 @@
-"""UNRUN bounded CURRENT UI successor proposal; not a C1 approval assertion.
+"""Preserve historical UI evidence and the explicit installed source successor.
 
 Literal9c historical fixture/history and original55-file set remain intact.
-No arbitrary HEAD, branch lookup, accepted-descendant or content wildcard.
+Current source is installed6ddb plus reviewed Ruff and owner-phone changes;
+neither arbitrary HEAD nor a new content inventory selects that successor.
 """
 
 from copy import deepcopy
+from functools import lru_cache
 import hashlib
 import json
 from pathlib import Path
@@ -21,6 +23,60 @@ ADDED = "src/project_mai_tai/atr_simulation/cp_sim_display.py"
 MODIFIED = {"src/project_mai_tai/atr_simulation/aggregate_entry_display.py",
     "src/project_mai_tai/services/atr_simulation_legacy_routes.py",
     "src/project_mai_tai/services/control_plane.py"}
+INSTALLED = "6ddb3e6b0dc8295ba35419cee817d86ba0f97fba"
+RUFF = "25f752289e437cedecb6484a6be954584abcdfed"
+PHONE = "aeed7cc28597ec18a508d2b21a7586529c73f32d"
+CURRENT_TREES = {
+    INSTALLED: "c54e907d085b0df5fba362168e1ecedc6accbff7",
+    RUFF: "ab41a50339dbfa44a4ed028e94cb5eec1deda12b",
+    PHONE: "86f6caeb2d4fad53d851a9883809a343180dc664",
+}
+RUFF_SOURCE_PATHS = {
+    "src/project_mai_tai/atr_simulation/firstbar_binding.py",
+    "src/project_mai_tai/atr_simulation/firstbar_live_baseline.py",
+    "src/project_mai_tai/atr_simulation/firstbar_study.py",
+    "src/project_mai_tai/atr_simulation/models.py",
+    "src/project_mai_tai/atr_simulation/same_sip_binding.py",
+    "src/project_mai_tai/atr_simulation/same_sip_firstbar_live_baseline.py",
+    "src/project_mai_tai/atr_simulation/same_sip_types.py",
+    "src/project_mai_tai/brokerdecides1_sync.py",
+    "src/project_mai_tai/oms/wbexit3_stop.py",
+    "src/project_mai_tai/oms/webull_attach_riskoff.py",
+    "src/project_mai_tai/services/control_plane.py",
+}
+PHONE_SOURCE_PATH = "src/project_mai_tai/brokerdecides1_owner_phone.py"
+
+
+def validate_current_composition(installed_paths, ruff_paths, phone_paths,
+                                 ruff_changes, phone_changes):
+    assert len(installed_paths) == 642
+    assert installed_paths == ruff_paths == phone_paths
+    assert set(ruff_changes) == RUFF_SOURCE_PATHS
+    assert set(phone_changes) == {PHONE_SOURCE_PATH}
+
+
+@lru_cache(maxsize=1)
+def installed_successor_paths():
+    paths = {}
+    for revision, tree in CURRENT_TREES.items():
+        assert history.git_read("rev-parse", revision + "^{tree}").decode().strip() == tree
+        paths[revision] = frozenset(history.git_read(
+            "ls-tree", "-r", "--name-only", revision, "--", "src", "sql", "ops",
+        ).decode().splitlines())
+    changes = [history.git_read(
+        "diff", "--no-renames", "--name-only", before, after, "--", "src", "sql", "ops",
+    ).decode().splitlines() for before, after in ((INSTALLED, RUFF), (RUFF, PHONE))]
+    validate_current_composition(paths[INSTALLED], paths[RUFF], paths[PHONE], *changes)
+    return paths[INSTALLED]
+
+
+def assert_current_bytes(name, actual):
+    # Literal reviewed source objects provide postimages; current files never pin themselves.
+    assert actual == history.git_read("cat-file", "blob", PHONE + ":" + name), name
+
+
+def assert_current_membership(actual):
+    assert actual == installed_successor_paths()
 
 
 def validate_bounds(value):
@@ -57,42 +113,59 @@ def assert_current_protected_l14_successor():
     for name in sorted(protected):
         # All55 immutable historical preimages remain asserted against original fixture.
         assert hashlib.sha256(blobs[name]).hexdigest() == original[name], name
-        path = ROOT / name
-        assert not path.is_symlink() and path.resolve() == path
         if name in MODIFIED:
             row = value["changes"][name]
             assert row["before_sha256"] == original[name]
-            assert hashlib.sha256(path.read_bytes()).hexdigest() == row["after_sha256"], name
-        else:
-            assert path.read_bytes() == blobs[name], name
+        path = ROOT / name
+        assert not path.is_symlink() and path.resolve() == path
+        assert_current_bytes(name, path.read_bytes())
     path = ROOT / ADDED
     assert ADDED not in history.tree_paths(history.FALLBACK)
     assert ADDED not in history.tree_paths(history.COMBINED)
     assert not path.is_symlink() and path.resolve() == path
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == value["additions"][ADDED]["after_sha256"]
+    assert_current_bytes(ADDED, path.read_bytes())
     package = "src/project_mai_tai/atr_simulation/"
     historical_package = {name for name in protected if name.startswith(package)}
     assert len(historical_package) == 48
-    assert {name for name in history.current_runtime_paths() if name.startswith(package)} == historical_package | {ADDED}
+    expected_package = {name for name in installed_successor_paths() if name.startswith(package)}
+    assert historical_package | {ADDED} <= expected_package
+    assert {name for name in history.current_runtime_paths() if name.startswith(package)} == expected_package
     assert (ROOT / "src/project_mai_tai/settings.py").read_bytes().count(history.SETTINGS_ADDITION.encode("ascii")) == 1
 
 
 def assert_current_runtime_membership_successor():
     lineage()
-    # C12133: exact separately reviewed B1 component; historical UI pins stay intact.
+    # B1 bytes and historical UI pins stay intact; membership follows installed6ddb.
     reference = "src/project_mai_tai/services/scanner_reference_recovery.py"
     path = ROOT / reference
     assert not path.is_symlink() and path.resolve() == path
     assert hashlib.sha256(path.read_bytes()).hexdigest() == "d23cc6304794453c26dc1ceaf4e94728ed7b66bfb060a3defcac013cc9f28570"
-    assert history.current_runtime_paths() == history.tree_paths(history.COMBINED) | {ADDED, reference}
+    assert_current_membership(history.current_runtime_paths())
 
 
-def test_exact_current_UI_postimages_preserve_all55_historical_preimages():
+def test_installed_successor_postimages_preserve_all55_historical_preimages():
     assert_current_protected_l14_successor()
 
 
-def test_only_exact_added_UI_module_enters_current_runtime_membership():
+def test_only_installed_successor_paths_enter_current_runtime_membership():
     assert_current_runtime_membership_successor()
+
+
+@pytest.mark.parametrize("fault", ["extra_path", "missing_path", "protected_bytes", "ruff_path", "phone_path"])
+def test_installed_successor_rejects_unreviewed_source_changes(fault):
+    paths = installed_successor_paths()
+    with pytest.raises(AssertionError):
+        if fault == "extra_path":
+            assert_current_membership(paths | {"src/project_mai_tai/unreviewed.py"})
+        elif fault == "missing_path":
+            assert_current_membership(paths - {ADDED})
+        elif fault == "protected_bytes":
+            protected = "src/project_mai_tai/atr_simulation/firstbar_binding.py"
+            assert_current_bytes(protected, history.git_read("cat-file", "blob", PHONE + ":" + protected) + b"\n")
+        elif fault == "ruff_path":
+            validate_current_composition(paths, paths, paths, RUFF_SOURCE_PATHS | {ADDED}, {PHONE_SOURCE_PATH})
+        else:
+            validate_current_composition(paths, paths, paths, RUFF_SOURCE_PATHS, {PHONE_SOURCE_PATH, ADDED})
 
 
 @pytest.mark.parametrize("fault", ["head", "new_path", "protected_count"])
