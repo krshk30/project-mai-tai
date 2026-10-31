@@ -10,18 +10,31 @@ from dataclasses import replace
 from datetime import UTC, datetime
 import json
 import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from project_mai_tai.services import schwab_1m_v2_bot as service
 from project_mai_tai.services.keepwatch_bar_owner import BarInbox, OwnedBar
+from project_mai_tai.settings import Settings
 from tests.unit.test_keepwatch_central_boot_retry import controlled_bot
 from tests.unit.test_keepwatch_session_producer_pin import ANCHOR, candle, response
 
 
 async def repaired(monkeypatch, *, symbols=("AHT",)):
-    bot = controlled_bot(symbols=symbols)
+    # This control exercises unreadable flip ownership, so enable that feature
+    # at construction rather than relying on a former enabled default.
+    bot = service.SchwabV2BotService(Settings(_env_file=None,
+        strategy_schwab_1m_v2_keepwatch1_enabled=True,
+        strategy_schwab_1m_v2_cw_armed_segment_safety_enabled=True,
+        strategy_schwab_1m_v2_line_chart_restoration_enabled=True,
+        strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True))
+    bot._watchlist = set(symbols)
+    bot._boot_scanner_selected = set(symbols)
+    bot._boot_exclusion_sources_readable = True
+    for symbol in symbols:
+        bot.strategy.watchlist_state(symbol)
     bot.session_factory = None  # Real constructor no-store mode, not readable/flat evidence.
     bot._configure_flip_entry_ownership_store({})  # Real no-factory UNKNOWN initialization.
     bot.strategy.configure_falseflip({}, readable=False)
@@ -283,7 +296,9 @@ async def test_timer_proof_revalidation_adds_no_provider_or_database_operation(m
 
     monkeypatch.setattr(bot, "_read_keepwatch_history_owned", forbidden_io)
     monkeypatch.setattr(bot, "_read_line_session_bars", forbidden_io)
-    monkeypatch.setattr(bot.rest_client, "fetch_session_history", forbidden_io)
+    # The isolated constructor has no live REST client; keep an explicit
+    # forbidden transport port rather than dereferencing None.
+    monkeypatch.setattr(bot, "rest_client", SimpleNamespace(fetch_session_history=forbidden_io))
     clock[0] = 60.0
     bot._retry_keepwatch_boot_exclusions()
     assert not bot._keepwatch_boot_excluded_symbols()

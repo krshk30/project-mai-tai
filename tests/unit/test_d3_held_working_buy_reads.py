@@ -49,7 +49,7 @@ def book(symbols):
     return bot, entries, factory.kw["bind"]
 
 
-def test_original_held_and_unknown_books_keep_three_selects():
+def test_held_and_unknown_books_still_check_working_buys_for_each_symbol():
     bot, entries, engine = book(("DHELD", "DUNKNOWN"))
     statements = []
 
@@ -59,7 +59,8 @@ def test_original_held_and_unknown_books_keep_three_selects():
     try:
         event.listen(engine, "before_cursor_execute", count)
         assert bot._closed_confirmation_entry_ids(entries) == set()
-        assert len(statements) == 3
+        # Three own-book reads plus three working-BUY evidence reads per symbol.
+        assert len(statements) == 9
         assert all(statement.lstrip().upper().startswith("SELECT") for statement in statements)
         event.remove(engine, "before_cursor_execute", count)
         with bot.session_factory() as session:
@@ -74,7 +75,7 @@ def test_original_held_and_unknown_books_keep_three_selects():
         engine.dispose()
 
 
-def test_mixed_books_read_working_buys_only_for_potential_flat_symbol(monkeypatch):
+def test_mixed_books_read_working_buys_once_for_every_symbol(monkeypatch):
     bot, entries, engine = book(("DHELD", "DUNKNOWN", "DFLAT"))
     actual = cancelack1.working_buy_present
     checked = []
@@ -87,7 +88,8 @@ def test_mixed_books_read_working_buys_only_for_potential_flat_symbol(monkeypatc
     try:
         flat = bot._closed_confirmation_entry_ids(entries)
         assert flat == {entry.order_id for entry in entries if entry.symbol == "DFLAT"}
-        assert checked == ["DFLAT"]
+        assert set(checked) == {"DFLAT", "DHELD", "DUNKNOWN"}
+        assert len(checked) == 3
     finally:
         engine.dispose()
 

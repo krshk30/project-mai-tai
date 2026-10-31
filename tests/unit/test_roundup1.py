@@ -465,11 +465,13 @@ def test_restart_restores_recorded_accepted_wire_not_new_calculation_and_never_d
 
 def test_subdollar_default_dollars_still_meet_webull_hundred_share_minimum():
     strategy, state = strategy_for()
-    strategy._queue_resting_place(state, 0.9950)
+    # A sub-dollar ATR line is allowed only when its raw offset trigger meets
+    # PRICE1 before rounding. .9950 * 1.005 would remain below $1 and refuse.
+    strategy._queue_resting_place(state, 0.9951)
     mirror, = strategy.drain_webull_direct_intents()
-    assert Decimal(mirror.metadata["stop_price"]) == Decimal("1.0000")
-    assert Decimal(mirror.metadata["limit_price"]) == Decimal("1.01")
-    assert mirror.quantity == 297 and mirror.quantity >= 100
+    assert Decimal(mirror.metadata["stop_price"]) == Decimal("1.01")
+    assert Decimal(mirror.metadata["limit_price"]) == Decimal("1.02")
+    assert mirror.quantity == 294 and mirror.quantity >= 100
 
 
 @pytest.mark.parametrize("wire", [None, {}, {"stop_price": "NaN", "limit_price": "1.07"},
