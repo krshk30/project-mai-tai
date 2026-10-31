@@ -156,10 +156,29 @@ def test_slow_aggregate_read_does_not_block_unrelated_http(configured):
 
 
 def test_shared_atr_mount_preserves_realized_live_rows_and_input(configured, monkeypatch):
+    from project_mai_tai.atr_simulation import sim2_display
+
     monkeypatch.setattr(cp, 'utcnow', lambda: datetime(2026, 10, 23, 20, tzinfo=UTC))
     data = page_data([fill('buy', 10, 4, 'CONTROLLED-entry'),
         fill('sell', 10, 5, 'CONTROLLED-entry-ocoexit-native')])
     before = deepcopy(data)
+    # The shared ATR page now reads today's stored ATRSIM2 document. The legacy
+    # aggregate API remains covered above, but no longer supplies this mount.
+    simulated = dict(symbol='CONTROLLED-SIM', signal='10:00', trigger=4.0,
+        status='CLOSED', quantity=10, entry_time='10:00:01', entry_price=4.0,
+        exit_time='10:01:00', exit_price=4.2, reason='target', pnl=2.0, pnl_pct=5.0)
+    document = dict(schema='ATRSIM2_DAY_V1', trading_day='2026-10-23',
+        generated_at='2026-10-23T20:00:00+00:00', notional_usd=600,
+        tables={'FIRSTBAR': [simulated], 'FIRSTBAR+2min': [dict(simulated)]})
+    original_document = deepcopy(document)
+    reads = []
+
+    def stored_today(factory, day):
+        assert factory is sessions
+        reads.append(day)
+        return deepcopy(document)
+
+    monkeypatch.setattr(sim2_display, 'load_day', stored_today)
     original_render = cp._render_bot_detail_page
     preserved = []
     def observed_render(snapshot, strategy_code, **kwargs):
@@ -174,8 +193,9 @@ def test_shared_atr_mount_preserves_realized_live_rows_and_input(configured, mon
         return rendered
     monkeypatch.setattr(cp, '_render_bot_detail_page', observed_render)
     engine = sa.create_engine('sqlite:///:memory:')
+    sessions = sessionmaker(engine)
     app = cp.build_app(Settings(_env_file=None, trade_coach_enabled=False, bot_control_enabled=False),
-        session_factory=sessionmaker(engine), firstbar_read_port=FirstbarRecorder(),
+        session_factory=sessions, firstbar_read_port=FirstbarRecorder(),
         aggregate_simulation_read_port=configured)
     async def dashboard():
         return deepcopy(data)
@@ -187,13 +207,15 @@ def test_shared_atr_mount_preserves_realized_live_rows_and_input(configured, mon
     try:
         response = asyncio.run(request())
         assert response.status_code == 200
-        assert 'data-aggregate-entry-sim="true"' in response.text
-        assert '<span>Live replay</span>' in response.text
-        assert '<h3>FIRSTBAR</h3>' in response.text and 'partial timing UNKNOWN' in response.text
-        assert '$+12,650.00' in response.text and data == before
-        assert 'data-pnl-label="$+12,650.00"' in response.text
-        assert '<span>Live replay</span><strong>+$12,650.00</strong>' in response.text
+        assert 'data-atrsim2="day"' in response.text
+        assert 'data-aggregate-entry-sim="true"' not in response.text
+        assert 'data-sim-mode="FIRSTBAR"' in response.text
+        assert 'data-sim-mode="FIRSTBAR+2min"' in response.text
+        assert 'total $+2.00' in response.text and 'CONTROLLED-SIM' in response.text
+        assert '$+12,650.00' not in response.text
         assert '$+10.00' in response.text
+        assert data == before and document == original_document
+        assert reads == ['2026-10-23'] and not configured.reader.calls
         assert preserved == [True]
     finally:
         engine.dispose()

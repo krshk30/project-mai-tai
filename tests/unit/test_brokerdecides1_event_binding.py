@@ -16,6 +16,7 @@ from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.brokerdecides1 import AdmissionMemory, AdmissionSnapshot, NativeAccountBook
 from project_mai_tai.brokerdecides1_sync import local_evidence
 from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent, DashboardSnapshot, TradeIntent
+from project_mai_tai.fanout_segment_store import current_session_anchor
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2Strategy
@@ -117,6 +118,11 @@ def selected_census(census, monkeypatch, *, preserve=False, binding=False):
                 payload=deepcopy(event['payload'])))
     session.flush()
     monkeypatch.setattr(sync,'now_ms',lambda:NOW)
+    # Both independently read clocks must describe the retained Oct29 episode.
+    # Patching only observation time makes the real current-day anchor discard
+    # these same-day links once the wall calendar advances.
+    monkeypatch.setattr(sync, 'current_session_anchor',
+        lambda: current_session_anchor(datetime.fromtimestamp(NOW / 1000, UTC)))
     inflight,fills,terminals=local_evidence(session,ACCOUNTS,prior_session_attempts_final=True, same_day_event_binding=binding)
     return links,inflight,fills,terminals
 
