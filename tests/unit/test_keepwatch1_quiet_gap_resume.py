@@ -273,7 +273,7 @@ def test_mark_unknown_sets_fence_even_if_diagnostic_fails(monkeypatch, fault):
     assert "NCPL" in bot._keepwatch_unknown and bot.strategy._entries_held
 
 
-CASE_ROOT = Path("/Users/velkris/.codex/task-queues/analysis/OCT29-C6-ORIGINAL-CASE-RECEIPTS")
+CASE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "ci1174_retained"
 ORIGINAL_PRINT_CASES = (
     ("NCPL", "2026-10-29T10:04:00+00:00", "ncpl_trades_0602_0617_oddlot.jsonl",
      "5b8e86ef2cc3a58be6cd21be9ba11d47ae79221e46d0ec9b3a48d1aafeb5e4b1", 9),

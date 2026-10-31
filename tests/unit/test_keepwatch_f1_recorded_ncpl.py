@@ -15,7 +15,8 @@ import pytest
 from tests.unit import test_keepwatch1_quiet_gap_resume as gap
 
 
-PACKET = Path('/Users/velkris/.codex/task-queues/analysis/OCT29-C6-ORIGINAL-CASE-RECEIPTS/f1_ncpl_blip_cancels_1238_1245.log')
+PACKET = (Path(__file__).resolve().parents[1] / 'fixtures' / 'ci1174_retained'
+          / 'f1_ncpl_blip_cancels_1238_1245.log')
 PACKET_SHA = '27fcc58080a061854b0a472b443bc2420d9e0fa4a11e1a9a4f83e480b75cb93c'
 
 

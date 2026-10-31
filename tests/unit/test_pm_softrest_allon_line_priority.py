@@ -1,12 +1,17 @@
 """SOURCE UNRUN: C1 02:33 paired live LINE-first stale-bar priority."""
 from project_mai_tai import pm_softrest_quote_log as diagnostic
-from tests.unit.oct30_allon_control import assert_allon
+from project_mai_tai.settings import Settings
+from tests.unit.oct30_allon_control import assert_allon, settings_for_allon
+from tests.unit import test_pm_softrest_quote_log_integration as integration
 from tests.unit.test_pm_softrest_quote_log_integration import (
     Logger, NOW, armed, clock as clock, observation,
 )
 
 
-def test_ALLON_same_cleared_bars_refuses_LINE_before_downstream_bar_reason(clock, record_property):
+def test_ALLON_same_cleared_bars_refuses_LINE_before_downstream_bar_reason(clock, record_property, monkeypatch):
+    # Supply the full profile before the real strategy/line reader is constructed.
+    monkeypatch.setattr(integration, "Settings",
+                        lambda *args, **kwargs: settings_for_allon(Settings(*args, **kwargs)))
     strategy, state = armed()
     assert_allon(strategy.settings)
     assert strategy.line_buy_ready("NCPL") and strategy._line_version_reader("NCPL")

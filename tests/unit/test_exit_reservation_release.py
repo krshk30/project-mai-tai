@@ -46,6 +46,39 @@ _EXPLICIT_NON_PROTECTIVE_REASONS = {
 _REASON_FORWARDING_ROUTINES = {"_webull_cancel_then_sell"}
 
 
+# C1 2026-10-31: exact replay sites, not permission for another dynamic emitter.
+PASS_THROUGH = {
+    # Re-emits the earlier intent.reason after its proven-not-sent audit/binding checks.
+    ("oms/webull_attach_riskoff.py", "retry_atr_proven_unsent_exit", "reason"): "earlier audited intent.reason",
+    # begin_exit stores the OMS managed path's reason; quote resume only replays it.
+    ("oms/wbexit3.py", "resume_on_quote", "state['reason']"): "reason stored by begin_exit",
+}
+
+
+def _pass_through_reason(path: str, function: str, operand: ast.expr) -> bool:
+    for (expected_path, expected_function, expression) in PASS_THROUGH:
+        if path == expected_path and function == expected_function:
+            expected = ast.parse(expression, mode="eval").body
+            if ast.dump(operand, include_attributes=False) == ast.dump(expected, include_attributes=False):
+                return True
+    return False
+
+
+def _call_function_scopes(tree: ast.Module) -> dict[int, str]:
+    scopes = {}
+
+    def visit(node: ast.AST, scope: tuple[str, ...] = ()) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            scope = (*scope, node.name)
+        if isinstance(node, ast.Call):
+            scopes[id(node)] = ".".join(scope)
+        for child in ast.iter_child_nodes(node):
+            visit(child, scope)
+
+    visit(tree)
+    return scopes
+
+
 def _bind_string_constants(target: ast.expr, value: ast.expr, out: dict[str, set[str]]) -> None:
     if isinstance(target, ast.Name) and isinstance(value, ast.Constant):
         if isinstance(value.value, str):
@@ -170,6 +203,7 @@ def _emitted_managed_exit_reasons(source_root: Path | None = None) -> set[str]:
     emitted: set[str] = set()
     for path in source_root.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        function_scopes = _call_function_scopes(tree)
         validated_retry_calls = _validated_retry_reason_calls(tree)
         bindings: dict[str, set[str]] = defaultdict(set)
         for node in ast.walk(tree):
@@ -207,6 +241,9 @@ def _emitted_managed_exit_reasons(source_root: Path | None = None) -> set[str]:
             if id(node) in validated_retry_calls:
                 emitted.update(value for value in validated_retry_calls[id(node)]
                                if value.startswith(_MANAGED_EXIT_PREFIX))
+            elif reason is not None and _pass_through_reason(
+                    path.relative_to(source_root).as_posix(), function_scopes[id(node)], reason):
+                continue
             elif isinstance(reason, ast.Constant) and isinstance(reason.value, str):
                 if reason.value.startswith(_MANAGED_EXIT_PREFIX):
                     emitted.add(reason.value)
@@ -245,6 +282,40 @@ def test_unbound_reason_name_remains_unresolved_not_silently_ignored(tmp_path):
     (tmp_path / "caller.py").write_text(
         "service._emit_v2_exit_on_loop(reason=UNKNOWN)\n", encoding="utf-8")
     assert _emitted_managed_exit_reasons(tmp_path) == {"unresolved:Name(id='UNKNOWN', ctx=Load())"}
+
+
+@pytest.mark.parametrize("path,function,operand,pass_through", [
+    ("oms/webull_attach_riskoff.py", "retry_atr_proven_unsent_exit", "reason", True),
+    ("oms/wbexit3.py", "resume_on_quote", "state['reason']", True),
+    ("other/webull_attach_riskoff.py", "retry_atr_proven_unsent_exit", "reason", False),
+    ("oms/webull_attach_riskoff.py", "another_retry", "reason", False),
+    ("oms/webull_attach_riskoff.py", "retry_atr_proven_unsent_exit", "other_reason", False),
+    ("other/wbexit3.py", "resume_on_quote", "state['reason']", False),
+    ("oms/wbexit3.py", "another_resume", "state['reason']", False),
+    ("oms/wbexit3.py", "resume_on_quote", "state['other_reason']", False),
+    ("oms/wbexit3.py", "resume_on_quote", "other_state['reason']", False),
+])
+def test_pass_through_requires_exact_file_function_and_operand(
+        tmp_path, path, function, operand, pass_through):
+    module = tmp_path / path
+    module.parent.mkdir(parents=True)
+    module.write_text(f"async def {function}():\n"
+                      f"    await service._emit_v2_exit_on_loop(reason={operand})\n", encoding="utf-8")
+    expected = (set() if pass_through else {
+        "unresolved:" + ast.dump(ast.parse(operand, mode="eval").body, include_attributes=False)})
+    assert _emitted_managed_exit_reasons(tmp_path) == expected
+
+
+def test_pass_through_name_in_nested_function_is_not_the_reviewed_site(tmp_path):
+    module = tmp_path / "oms/wbexit3.py"
+    module.parent.mkdir()
+    module.write_text("async def unrelated():\n"
+                      "    async def resume_on_quote():\n"
+                      "        await service._emit_v2_exit_on_loop(reason=state['reason'])\n",
+                      encoding="utf-8")
+    operand = ast.parse("state['reason']", mode="eval").body
+    assert _emitted_managed_exit_reasons(tmp_path) == {
+        "unresolved:" + ast.dump(operand, include_attributes=False)}
 
 
 @pytest.mark.parametrize("mutation", ["none", "unguarded", "rebound", "wrong_return", "wrong_transport",

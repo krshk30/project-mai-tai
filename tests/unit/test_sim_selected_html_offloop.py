@@ -109,7 +109,9 @@ def application(style, reader, *, formatter=None):
 
 
 def selected_path(style):
-    prefix = "/atr-firstbar" if style == "standalone" else "/bot/1m-schwab-v2"
+    # The legacy reader owns this route both standalone and mounted in CP.
+    # The live bot page now exclusively reads the separate ATRSIM2 day row.
+    prefix = "/atr-firstbar"
     return prefix + "?source_id=" + FIRST_SOURCE + "&day=" + DAY.isoformat() + "&days=1"
 
 
@@ -134,7 +136,7 @@ def _assert_shared_canonical_rows_except_approved_time_cells(panel, tables):
                 assert new_cells[index][0] == expected_open
 
 
-@pytest.mark.parametrize("style", ["standalone", "shared"])
+@pytest.mark.parametrize("style", ["standalone", "mounted"])
 def test_selected_actual_route_holds_formatter_offloop_while_unrelated_get_progresses(monkeypatch, style):
     reader = Reader(firstbar_page())
     started, release, threads = Event(), Event(), []
@@ -173,7 +175,7 @@ def test_selected_actual_route_holds_formatter_offloop_while_unrelated_get_progr
         assert data == before
 
 
-@pytest.mark.parametrize("style", ["standalone", "shared"])
+@pytest.mark.parametrize("style", ["standalone", "mounted"])
 def test_selected_html_exact_existing_formatter_bytes_and_controlled_live_panel_unchanged(monkeypatch, style):
     reader = Reader(firstbar_page())
     captured = []
@@ -188,21 +190,15 @@ def test_selected_html_exact_existing_formatter_bytes_and_controlled_live_panel_
     async def scenario(app):
         context = await firstbar.load_firstbar_display(Reader(firstbar_page()), source_id=FIRST_SOURCE,
             day=DAY, days=1)
-        action = "/atr-firstbar" if style == "standalone" else "/bot/1m-schwab-v2"
+        action = "/atr-firstbar"
         expected = firstbar.render_firstbar_page(context, render_row=cp._render_completed_position_row,
             form_action=action)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://controlled") as client:
             response = await client.get(selected_path(style))
         assert response.status_code == 200 and "CONTROLLED&lt;raw&gt;" in response.text
         assert "$+10.00" in response.text
-        if style == "standalone":
-            assert response.content == expected.encode("utf-8")
-        else:
-            snapshot, strategy, panel = captured[-1]
-            _assert_shared_canonical_rows_except_approved_time_cells(
-                panel, compact.firstbar_tables(context["view"]))
-            assert 'data-l14-ui="compact"' in panel and 'Exit reason' in panel
-            assert response.text.replace(panel, "", 1) == original(snapshot, strategy)
+        assert response.content == expected.encode("utf-8")
+        assert captured == []  # Legacy route never renders or mutates the live bot page.
         assert len(reader.calls) == 1
 
     with application(style, reader) as (app, data, before):
@@ -257,13 +253,13 @@ def test_firstbar_api_bytes_and_all_outcomes_remain_exact_without_html_render(mo
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("style", ["standalone", "shared"])
+@pytest.mark.parametrize("style", ["standalone", "mounted"])
 def test_selected_invalid_full_stored_tree_still_refuses_and_renders_unknown_offloop(monkeypatch, style):
     stored = firstbar_page()
     stored["rows"][0]["body_observations"][0]["invalid"] = float("inf")
     reader = Reader(stored)
-    target = firstbar if style == "standalone" else compact
-    renderer = "render_firstbar_page" if style == "standalone" else "render_page"
+    target = firstbar
+    renderer = "render_firstbar_page"
     original, threads = getattr(target, renderer), []
 
     def observe(*args, **kwargs):
@@ -277,11 +273,7 @@ def test_selected_invalid_full_stored_tree_still_refuses_and_renders_unknown_off
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://controlled") as client:
             response = await client.get(selected_path(style))
         assert response.status_code == 200
-        if style == "standalone":
-            assert "Storage: UNAVAILABLE" in response.text and "First-bar-high" in response.text
-        else:
-            assert "read status UNAVAILABLE" in response.text and "FIRSTBAR" in response.text
-            assert "No recorded rows in this view; not evidence of zero trades." in response.text
+        assert "Storage: UNAVAILABLE" in response.text and "First-bar-high" in response.text
         assert "UNKNOWN" in response.text
         assert "SIMONLYCONTROLLED" not in response.text
         assert threads and all(thread != loop_thread for thread in threads)
@@ -291,13 +283,13 @@ def test_selected_invalid_full_stored_tree_still_refuses_and_renders_unknown_off
         asyncio.run(scenario(app))
 
 
-@pytest.mark.parametrize("style", ["standalone", "shared"])
+@pytest.mark.parametrize("style", ["standalone", "mounted"])
 def test_unselected_actual_route_keeps_no_executor_no_read_contract(monkeypatch, style):
     async def forbidden(*args, **kwargs):
         raise AssertionError("unselected empty local view must not use executor")
 
     reader = Reader(firstbar_page())
-    path = "/atr-firstbar" if style == "standalone" else "/bot/1m-schwab-v2"
+    path = "/atr-firstbar"
     with application(style, reader) as (app, _, _):
         monkeypatch.setattr(asyncio, "to_thread", forbidden)
 

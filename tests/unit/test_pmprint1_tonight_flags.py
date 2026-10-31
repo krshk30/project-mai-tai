@@ -133,13 +133,13 @@ def test_s6_catalog_matches_all_on_live_set_and_149_checks_with_restoration_on()
         assert Settings.model_fields[name].default is False
     legacy_entries = [entry for entry in entries
                       if entry["name"] not in {l11_name, l12_name, *group1_off}]
-    # The old bool-plus-numeric projection remains exact, not discarded.
+    # Exact current bool-plus-numeric projection, retaining the original owner checks.
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in legacy_entries
-               if entry["name"] != "momentum_live_enabled") == 161 + 2 + 3 + 3
-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in legacy_entries) == 164 + 2 + 3 + 3
+               if entry["name"] != "momentum_live_enabled") == 183
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in legacy_entries) == 186
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries
-               if entry["name"] != "momentum_live_enabled") == 173
-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 176
+               if entry["name"] != "momentum_live_enabled") == 187
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 190
     assert flags["webull_list_primary_reads_enabled"] is True
     assert flags["strategy_schwab_1m_v2_line_chart_restoration_enabled"] is True
 

@@ -65,14 +65,30 @@ def test_changed_empty_envelope_never_becomes_complete(change):
         pages(lambda cursor: (200, body))
 
 
-@pytest.mark.parametrize("rows", [[{}], [{"status": "FILLED"}], [
-    {"order_id": "private-manual", "client_order_id": "private-cursor", "status": "WORKING",
-     "items": [{"symbol": "STAK"}]}]])
+@pytest.mark.parametrize("rows", [[{}], [{"status": "FILLED"}]])
 def test_nonempty_model_stays_unknown_even_when_status_looks_terminal(rows):
     body = actual()
     body["orders"] = rows
-    with pytest.raises(ValueError, match="nonempty_item_model_UNKNOWN"):
+    with pytest.raises(ValueError, match="unlocated_symbol_UNKNOWN"):
         pages(lambda cursor: (200, body))
+
+
+def test_readable_nonempty_model_holds_symbol_instead_of_proving_empty():
+    body = actual()
+    body["orders"] = [{"order_id": "private-manual", "client_order_id": "private-cursor",
+        "status": "WORKING", "items": [{"symbol": "STAK"}]}]
+    observed = pages(lambda cursor: (200, body))
+    assert observed == [body]  # Request binding proves collection, not row semantics.
+    book = webull(order_pages=observed, order_request_account="wb123")
+    assert book.complete and book.reason == "Webull_symbol_scoped_UNKNOWN"
+    assert book.working == frozenset({"STAK"})
+    primary = NativeAccountBook("live:schwab", "schwab", 1000, 1100,
+        frozenset(), frozenset(), True, "CONTROLLED-flat")
+    snapshot = AdmissionSnapshot("CONTROLLED", 1, 1000, 1200, (primary, book),
+        frozenset(), frozenset(), True, "CONTROLLED-current-book")
+    decision = assess(snapshot, accounts=("live:schwab", "live:webull"), symbol="STAK",
+        segment=900, now_ms=1300, max_age_ms=20_000)
+    assert not decision.allowed and decision.reason == "native_working_order"
 
 
 @pytest.mark.parametrize("status", [None, 503, True])
@@ -82,7 +98,7 @@ def test_observed_body_does_not_waive_http_proof(status):
 
 
 def test_duplicate_terminal_pages_are_not_a_proven_empty_read():
-    with pytest.raises(ValueError, match="empty_page_count_UNKNOWN"):
+    with pytest.raises(ValueError, match="continuation_UNKNOWN"):
         webull(order_pages=[actual(), actual()], order_request_account="wb123")
 
 

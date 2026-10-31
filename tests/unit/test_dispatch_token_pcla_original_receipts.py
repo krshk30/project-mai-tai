@@ -24,8 +24,8 @@ from project_mai_tai.oms.store import OmsStore
 from tests.unit.test_brokerdecides1_local_census import census as census
 
 
-PACKET = Path("/Users/velkris/.codex/task-queues/analysis/OCT29-C6-ORIGINAL-CASE-RECEIPTS/"
-              "bfull_pcla_orders_and_attempts_1029.jsonl")
+PACKET = (Path(__file__).resolve().parents[1] / "fixtures" / "ci1174_retained"
+          / "bfull_pcla_orders_and_attempts_1029.jsonl")
 PACKET_SHA = "666e1ae7c7d68c2cd90335af2765c463b1abfc50c55d0e5124bc93fb96479ac3"
 ORDER_LINES = {
     "5a204ec96e9e": (1, "a1033f783336a2bb43f5234bbad38eb30f6b23c2811f86fe1042ea4a4428f884"),

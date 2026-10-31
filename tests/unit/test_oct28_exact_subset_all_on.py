@@ -6,6 +6,7 @@ Only test Settings construction supplies the combined profile; no permission
 method is replaced here. The separate ORB combo exercises the real OMS guards.
 """
 
+import asyncio
 from datetime import date, datetime
 import json
 import logging
@@ -13,6 +14,7 @@ import logging
 import pytest
 
 from project_mai_tai.settings import Settings
+from project_mai_tai.momentum_live.actor import LiveActor
 from tests.unit import test_momlive1_runtime as mom_fixture
 from tests.unit import test_pomexitlog1_v4 as pom
 from tests.unit import test_postflip_nochase_hooks as nochase
@@ -82,6 +84,13 @@ def bind_profile(monkeypatch, module, *, capture_comparison=False):
 @pytest.mark.parametrize("hour", [12, 14], ids=["PM", "RTH"])
 @pytest.mark.parametrize("case", ["normal", "chase", "positions_error", "cancelled"])
 async def test_all_on_pom_conserves_complete_decisions_and_native_state(monkeypatch, hour, case):
+    async def controlled_cadence(_actor):
+        # This paired exit case supplies its owner work explicitly. Keep the
+        # unrelated 100 ms timer from adding different startup polls in each
+        # world; the real entry/workers, exit guards and complete capture remain.
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(LiveActor, "_cadence", controlled_cadence)
     profiles = bind_profile(monkeypatch, mom_fixture)
     before, quiet = await pom.controlled_exit(monkeypatch, diagnostics=False, hour=hour, case=case)
     after, lines = await pom.controlled_exit(monkeypatch, diagnostics=True, hour=hour, case=case)

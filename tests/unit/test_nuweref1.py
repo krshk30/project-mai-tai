@@ -250,7 +250,7 @@ def test_own_flag_default_off_and_original_nightly_builder_unchanged():
 
 
 def test_off_snapshot_body_retains_exact_20dc_statements():
-    # Remove ONLY our default-off branches and identity aliases, then compare
+    # Remove ONLY independent default-off hooks and identity aliases, then compare
     # exact original nonblank statement bytes (not a production-derived oracle).
     source = inspect.getsource(StrategyEngineState.process_snapshot_batch)
     kept = []
@@ -267,6 +267,11 @@ def test_off_snapshot_body_retains_exact_20dc_statements():
             skipped_indent = indent
             continue
         if line.strip() in {"scanner_snapshots = filtered_snapshots", "replay_alerts = list(self.recent_alerts)"}:
+            continue
+        # Independent session-day capture flag adds only these two operands
+        # inside its existing default-off observation hook (61a260785).
+        if line.strip() in {'session_day_enabled=getattr(',
+                'self.settings, "scanner_confirmed_capture_session_day_enabled", False),'}:
             continue
         line = line.replace("scanner_snapshots", "filtered_snapshots")
         if line.strip() == "replay_alerts,":

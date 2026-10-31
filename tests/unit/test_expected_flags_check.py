@@ -51,7 +51,7 @@ def _proc_reader(
 
 def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     entries = flags.load_catalog(CATALOG)
-    assert len(entries) == 146  # Includes L12, KEEPWATCH1 and NUWEREF1 OFF.
+    assert len(entries) == 157  # Installed catalog includes diagnostics and WBEXIT owners.
     assert {entry["name"] for entry in entries} == {
         name
         for name, field in Settings.model_fields.items()
@@ -73,8 +73,8 @@ def test_catalog_covers_every_settings_bool_exactly_once() -> None:
         for service in [entry["owning_service"], *entry.get("also_check_services", [])]
     ) == {
         "control": 14, "market-capture": 1, "market-data": 3,
-        "momentum-paper": 4, "oms": 56, "orb-schwab": 7,
-        "reconciler": 1, "schwab-1m-v2": 52, "strategy": 30,
+        "momentum-paper": 4, "oms": 61, "orb-schwab": 7,
+        "reconciler": 1, "schwab-1m-v2": 60, "strategy": 31,
     }
     country = by_name["strategy_schwab_1m_v2_country_route_enabled"]
     assert country["expected"] is True

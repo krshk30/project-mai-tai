@@ -1,6 +1,6 @@
-from types import SimpleNamespace
 """Real PG16 locking proofs; never use the application/production DSN."""
 
+from types import SimpleNamespace
 import importlib.util
 import asyncio
 import logging

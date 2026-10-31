@@ -22,7 +22,7 @@ from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2Strategy
 from tests.unit.test_brokerdecides1_local_census import census as census
 
-BASE = Path('/Users/velkris/.codex/task-queues/analysis/OCT29-C6-ORIGINAL-CASE-RECEIPTS')
+BASE = Path(__file__).resolve().parents[1] / 'fixtures' / 'ci1174_retained'
 ACCOUNTS = ('live:schwab_1m_v2', 'live:orb')
 NOW = 1793296323156  # Retained PCLA later SELL clock, not current NOW.
 PINS = {

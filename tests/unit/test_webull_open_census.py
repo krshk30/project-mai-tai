@@ -15,6 +15,11 @@ from project_mai_tai.brokerdecides1_native import webull_book
 from project_mai_tai.webull_open_orders import open_order_page
 
 ACCOUNT = "CONTROLLED-account"
+RETAINED = Path(__file__).parents[1] / "fixtures/ci1174_p0"
+
+
+def retained_path(environment, filename):
+    return Path(os.environ.get(environment, str(RETAINED / filename)))
 
 
 def row(symbol="PCLA", *, native_id="native-1", client_id="own-1", status="WORKING"):
@@ -172,7 +177,7 @@ def test_proven_terminal_single_leg_does_not_create_working_hold(status):
 
 
 def test_exact_retained_detail_rows_under_labelled_controlled_list_wrapper():
-    path = Path(os.environ["MAI_TAI_P0_REAL_ORDER_RECORDS"])
+    path = retained_path("MAI_TAI_P0_REAL_ORDER_RECORDS", "real_order_records.jsonl")
     data = path.read_bytes()
     assert hashlib.sha256(data).hexdigest() == "4451beda582a492a2371b84d07ffbf7b38107d8507f2a4c56b214988e69bbb1d"
     records = [json.loads(line) for line in data.splitlines()]
@@ -191,11 +196,11 @@ def test_exact_retained_detail_rows_under_labelled_controlled_list_wrapper():
 
 
 def test_real_pcla_row_controlled_working_status_fails_b2_collector_then_fixed_path_holds_symbol():
-    source = Path(os.environ["MAI_TAI_P0_BASELINE_COLLECTOR"])
+    source = retained_path("MAI_TAI_P0_BASELINE_COLLECTOR", "baseline_collector.txt")
     raw = source.read_bytes()
     assert hashlib.sha256(raw).hexdigest() == "37b94fbb3809fa5566a1c61b9d80604f83d1724e9b446392fc71b28715aa72a5"
     baseline = runpy.run_path(str(source))
-    records = Path(os.environ["MAI_TAI_P0_REAL_ORDER_RECORDS"]).read_bytes()
+    records = retained_path("MAI_TAI_P0_REAL_ORDER_RECORDS", "real_order_records.jsonl").read_bytes()
     assert hashlib.sha256(records).hexdigest() == "4451beda582a492a2371b84d07ffbf7b38107d8507f2a4c56b214988e69bbb1d"
     pcla = json.loads(records.splitlines()[1])
     assert pcla["items"][0]["symbol"] == "PCLA"

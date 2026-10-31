@@ -146,13 +146,14 @@ def test_late_finished_reader_cannot_claim_complete(monkeypatch, tmp_path, job):
     assert Path(options.destination).read_bytes() == b'CONTROLLED_LASTGOOD'
 
 
-def test_reviewed_service_priority_hard_cap_and_exact_five_minute_timer(job):
-    # Main applies the external unit proposal before this source control.
+def test_active_sim2_service_priority_hard_cap_and_exact_five_minute_timer(job):
+    # The live timer now owns ATRSIM2. The old refresh job retains its independent
+    # 150-second deadline controls above; it is no longer this unit's executable.
     service = (job.ROOT / 'ops/systemd/project-mai-tai-atr-sim-today.service').read_text()
     timer = (job.ROOT / 'ops/systemd/project-mai-tai-atr-sim-today.timer').read_bytes()
-    required = ('Type=oneshot', 'Nice=19', 'IOSchedulingClass=idle', 'TimeoutStartSec=150',
+    required = ('Type=oneshot', 'Nice=19', 'IOSchedulingClass=idle', 'TimeoutStartSec=120',
                 'TimeoutStopSec=4', 'KillMode=control-group', 'Restart=no',
-                'ExecStart=/usr/bin/ionice -c 3 ', 'tools/atrsimlive1_refresh_job.py')
+                'ExecStart=/usr/bin/ionice -c 3 ', 'tools/atrsim2_job.py')
     assert all(value in service for value in required)
     assert 'RuntimeMaxSec=260' not in service
     assert 'Environment=' + job.FLAG + '=true' not in service

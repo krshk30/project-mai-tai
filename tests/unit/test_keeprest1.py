@@ -304,8 +304,8 @@ def test_all_on_effective_catalog_zero_with_controlled_process_environments():
     control, = [entry for entry in entries if entry["name"] == "bot_control_enabled"]
     assert control["expected"] is True
     assert [control["owning_service"], *control["also_check_services"]] == ["oms", "control"]
-    # Retained174 consumer checks plus the KEEPWATCH1 strategy owner.
-    assert lines[-1] == "Final call: PASS; checked=176/176 mismatches=0 unknown=0"
+    # Current boolean + numeric consumers; no missing owner or fallback is waived.
+    assert lines[-1] == "Final call: PASS; checked=190/190 mismatches=0 unknown=0"
     assert len(environments) == 9  # ALERTS1 adds the reconciler
 
 

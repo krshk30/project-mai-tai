@@ -373,10 +373,24 @@ def test_idle_sell_does_not_clear_a_non_seed_cap_slot_claim() -> None:
 
 def _loaded_state_fields(method: object) -> set[str]:
     tree = ast.parse(textwrap.dedent(inspect.getsource(method)))
+    # The passive post-flip annotation reads anchor/cache fields after the
+    # decision has already been computed. It is not an admission predicate.
+    annotations = [node for node in ast.walk(tree) if isinstance(node, ast.Try)
+        and any(isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "observed_line" for call in ast.walk(node))]
+    ignored = set()
+    for annotation in annotations:
+        assert not any(isinstance(node, (ast.Return, ast.Break, ast.Continue, ast.Await))
+            for node in ast.walk(annotation))
+        assert not any(isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store)
+            and isinstance(node.value, ast.Name) and node.value.id == "state"
+            for node in ast.walk(annotation))
+        ignored.update(ast.walk(annotation))
     return {
         node.attr
         for node in ast.walk(tree)
         if isinstance(node, ast.Attribute)
+        and node not in ignored
         and isinstance(node.ctx, ast.Load)
         and isinstance(node.value, ast.Name)
         and node.value.id == "state"
