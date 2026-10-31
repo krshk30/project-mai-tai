@@ -1,7 +1,8 @@
-"""UNRUN bounded CURRENT UI successor proposal; not a C1 approval assertion.
+"""Preserve historical UI evidence and the explicit installed source successor.
 
 Literal9c historical fixture/history and original55-file set remain intact.
-No arbitrary HEAD, branch lookup, accepted-descendant or content wildcard.
+Current source is installed6ddb plus reviewed Ruff and owner-phone changes,
+bound by content so a squash-only checkout does not need branch Git objects.
 """
 
 from copy import deepcopy
@@ -21,6 +22,76 @@ ADDED = "src/project_mai_tai/atr_simulation/cp_sim_display.py"
 MODIFIED = {"src/project_mai_tai/atr_simulation/aggregate_entry_display.py",
     "src/project_mai_tai/services/atr_simulation_legacy_routes.py",
     "src/project_mai_tai/services/control_plane.py"}
+CONTENT_PATH = ROOT / "tests/fixtures/atr_simulation/l14_installed_successor_content_20261031.json"
+CONTENT_SHA = "820c9259fcbc125a84e8493511d35d70571bfc78d6011bc9aa91d7ea57b70ee8"
+RUFF_SOURCE_PATHS = {
+    "src/project_mai_tai/atr_simulation/firstbar_binding.py",
+    "src/project_mai_tai/atr_simulation/firstbar_live_baseline.py",
+    "src/project_mai_tai/atr_simulation/firstbar_study.py",
+    "src/project_mai_tai/atr_simulation/models.py",
+    "src/project_mai_tai/atr_simulation/same_sip_binding.py",
+    "src/project_mai_tai/atr_simulation/same_sip_firstbar_live_baseline.py",
+    "src/project_mai_tai/atr_simulation/same_sip_types.py",
+    "src/project_mai_tai/brokerdecides1_sync.py",
+    "src/project_mai_tai/oms/wbexit3_stop.py",
+    "src/project_mai_tai/oms/webull_attach_riskoff.py",
+    "src/project_mai_tai/services/control_plane.py",
+}
+PHONE_SOURCE_PATH = "src/project_mai_tai/brokerdecides1_owner_phone.py"
+BUILD_METADATA_PATHS = {
+    "src/project_mai_tai.egg-info/PKG-INFO",
+    "src/project_mai_tai.egg-info/SOURCES.txt",
+    "src/project_mai_tai.egg-info/dependency_links.txt",
+    "src/project_mai_tai.egg-info/entry_points.txt",
+    "src/project_mai_tai.egg-info/requires.txt",
+    "src/project_mai_tai.egg-info/top_level.txt",
+}
+
+
+def current_runtime_paths():
+    # Editable installs/wheel builds generate these six nonruntime files.
+    # Keep all other untracked paths, including code inside the same directory.
+    return history.current_runtime_paths() - BUILD_METADATA_PATHS
+
+
+def validate_current_content(value):
+    assert value["scope"] == "installed6ddb_plus_reviewed_G2_Ruff_and_C1_owner_phone"
+    assert value["runtime_path_count"] == 642
+    assert set(value["changed_source_sha256"]) == RUFF_SOURCE_PATHS | {PHONE_SOURCE_PATH}
+    assert len(value["runtime_paths_sha256"]) == 64
+    assert len(value["cp_sim_display_sha256"]) == 64
+    assert all(len(digest) == 64 for digest in value["changed_source_sha256"].values())
+
+
+def current_content():
+    # Materialized once from reviewed source objects, never from the tested checkout.
+    raw = CONTENT_PATH.read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == CONTENT_SHA, "literal_installed_successor_content_required"
+    value = json.loads(raw)
+    validate_current_content(value)
+    return value
+
+
+def expected_current_hashes():
+    value = lineage()
+    expected = {item["path"]: item["sha256"]
+        for group in ("copied_files", "shared_files") for item in history.CONTRACT[group]}
+    expected.update({name: row["after_sha256"] for name, row in value["changes"].items()})
+    content = current_content()
+    expected.update(content["changed_source_sha256"])
+    expected[ADDED] = content["cp_sim_display_sha256"]
+    return expected
+
+
+def assert_current_bytes(name, actual):
+    assert hashlib.sha256(actual).hexdigest() == expected_current_hashes()[name], name
+
+
+def assert_current_membership(actual):
+    value = current_content()
+    assert len(actual) == value["runtime_path_count"]
+    raw = ("\n".join(sorted(actual)) + "\n").encode("utf-8")
+    assert hashlib.sha256(raw).hexdigest() == value["runtime_paths_sha256"]
 
 
 def validate_bounds(value):
@@ -47,7 +118,7 @@ def lineage():
 
 
 def assert_current_protected_l14_successor():
-    value, blobs = lineage(), history.historical_blobs()
+    value = lineage()
     protected = {item["path"] for item in history.CONTRACT["copied_files"]
         if item["path"].startswith(("src/", "sql/"))}
     protected.add("src/project_mai_tai/services/control_plane.py")
@@ -55,44 +126,95 @@ def assert_current_protected_l14_successor():
     original = {item["path"]: item["sha256"] for group in ("copied_files", "shared_files")
         for item in history.CONTRACT[group]}
     for name in sorted(protected):
-        # All55 immutable historical preimages remain asserted against original fixture.
-        assert hashlib.sha256(blobs[name]).hexdigest() == original[name], name
-        path = ROOT / name
-        assert not path.is_symlink() and path.resolve() == path
+        # Original historical blob proofs remain in the historical-only tests.
         if name in MODIFIED:
             row = value["changes"][name]
             assert row["before_sha256"] == original[name]
-            assert hashlib.sha256(path.read_bytes()).hexdigest() == row["after_sha256"], name
-        else:
-            assert path.read_bytes() == blobs[name], name
+        path = ROOT / name
+        assert not path.is_symlink() and path.resolve() == path
+        assert_current_bytes(name, path.read_bytes())
+    # Cover all twelve explicitly reviewed source changes, including modules
+    # outside the original55; no branch-only Git objects or fallback skips.
+    for name in current_content()["changed_source_sha256"]:
+        path = ROOT / name
+        assert not path.is_symlink() and path.resolve() == path
+        assert_current_bytes(name, path.read_bytes())
     path = ROOT / ADDED
-    assert ADDED not in history.tree_paths(history.FALLBACK)
-    assert ADDED not in history.tree_paths(history.COMBINED)
     assert not path.is_symlink() and path.resolve() == path
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == value["additions"][ADDED]["after_sha256"]
+    assert_current_bytes(ADDED, path.read_bytes())
     package = "src/project_mai_tai/atr_simulation/"
     historical_package = {name for name in protected if name.startswith(package)}
     assert len(historical_package) == 48
-    assert {name for name in history.current_runtime_paths() if name.startswith(package)} == historical_package | {ADDED}
+    actual_paths = current_runtime_paths()
+    assert historical_package | {ADDED} <= actual_paths
+    assert_current_membership(actual_paths)
     assert (ROOT / "src/project_mai_tai/settings.py").read_bytes().count(history.SETTINGS_ADDITION.encode("ascii")) == 1
 
 
 def assert_current_runtime_membership_successor():
     lineage()
-    # C12133: exact separately reviewed B1 component; historical UI pins stay intact.
+    # B1 bytes and historical UI pins stay intact; membership follows installed6ddb.
     reference = "src/project_mai_tai/services/scanner_reference_recovery.py"
     path = ROOT / reference
     assert not path.is_symlink() and path.resolve() == path
     assert hashlib.sha256(path.read_bytes()).hexdigest() == "d23cc6304794453c26dc1ceaf4e94728ed7b66bfb060a3defcac013cc9f28570"
-    assert history.current_runtime_paths() == history.tree_paths(history.COMBINED) | {ADDED, reference}
+    assert_current_membership(current_runtime_paths())
 
 
-def test_exact_current_UI_postimages_preserve_all55_historical_preimages():
+def test_installed_successor_protected_postimages_are_content_addressed():
     assert_current_protected_l14_successor()
 
 
-def test_only_exact_added_UI_module_enters_current_runtime_membership():
+def test_only_installed_successor_paths_enter_current_runtime_membership():
     assert_current_runtime_membership_successor()
+
+
+@pytest.mark.parametrize("fault", ["extra_path", "missing_path", "substituted_path", "untracked_source",
+    "protected_bytes", "ruff_path", "phone_path"])
+def test_installed_successor_rejects_unreviewed_source_changes(fault, tmp_path, monkeypatch):
+    paths = current_runtime_paths()
+    assert_current_membership(paths)
+    with pytest.raises(AssertionError):
+        if fault == "extra_path":
+            assert_current_membership(paths | {"src/project_mai_tai/unreviewed.py"})
+        elif fault == "missing_path":
+            assert_current_membership(paths - {ADDED})
+        elif fault == "substituted_path":
+            assert_current_membership((paths - {ADDED}) | {"src/project_mai_tai/unreviewed.py"})
+        elif fault == "untracked_source":
+            source = tmp_path / "src/project_mai_tai/unreviewed.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("# unreviewed source\n")
+            monkeypatch.setattr(history, "ROOT", tmp_path)
+            assert_current_membership(paths | current_runtime_paths())
+        elif fault == "protected_bytes":
+            protected = "src/project_mai_tai/atr_simulation/firstbar_binding.py"
+            assert_current_bytes(protected, (ROOT / protected).read_bytes() + b"\n")
+        else:
+            value = deepcopy(current_content())
+            name = ADDED if fault == "ruff_path" else PHONE_SOURCE_PATH
+            value["changed_source_sha256"][name + ".unreviewed"] = "0" * 64
+            validate_current_content(value)
+
+
+@pytest.mark.parametrize("unreviewed", [None, "unreviewed.py", "arbitrary_metadata.txt"])
+def test_current_census_excludes_only_exact_generated_build_metadata(tmp_path, monkeypatch, unreviewed):
+    accepted_paths = current_runtime_paths()
+    assert_current_membership(accepted_paths)
+    for name in BUILD_METADATA_PATHS:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("generated package metadata\n")
+    monkeypatch.setattr(history, "ROOT", tmp_path)
+    assert current_runtime_paths() == set()
+    if unreviewed is None:
+        assert_current_membership(accepted_paths | current_runtime_paths())
+    else:
+        path = tmp_path / "src/project_mai_tai.egg-info" / unreviewed
+        path.write_text("# unreviewed source or metadata\n")
+        assert current_runtime_paths() == {path.relative_to(tmp_path).as_posix()}
+        with pytest.raises(AssertionError):
+            assert_current_membership(accepted_paths | current_runtime_paths())
 
 
 @pytest.mark.parametrize("fault", ["head", "new_path", "protected_count"])
