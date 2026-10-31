@@ -17,7 +17,7 @@ from project_mai_tai.atr_simulation.firstbar_study import StudyTapePacket
 from project_mai_tai.atr_simulation.types import Coverage
 from tests.support.atr_simulation_eligibility import POLICY
 from tests.unit.test_atr_firstbar_live_baseline import BASE, DAY, END, NS, SOURCE, item, trade
-from tests.unit.test_atr_simulation_aggregate_entry_publication import operands
+from tests.unit.test_atr_simulation_aggregate_entry_publication import operands as operands
 from tests.unit.test_atr_simulation_aggregate_entry_read_model import independent, bound, port, project
 
 

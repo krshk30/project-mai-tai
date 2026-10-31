@@ -21,6 +21,10 @@ or flips the enable flag.
 from __future__ import annotations
 
 from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+from project_mai_tai.line_entry_receipt import (
+    branch as _entry_branch, capture as _entry_receipt,
+    predicate as _entry_predicate,
+)
 
 import asyncio
 import gc
@@ -31,6 +35,7 @@ import os
 import signal
 import threading
 import time
+from project_mai_tai.pm_softrest_quote_log import make_log as _make_pm_quote_log, observe as _observe_pm_quote
 from collections import deque
 from contextvars import ContextVar, copy_context
 from copy import deepcopy
@@ -450,7 +455,10 @@ class SchwabV2BotService:
         self._keepwatch_enabled = self.settings.strategy_schwab_1m_v2_keepwatch1_enabled
         self._keepwatch = KeepWatchSession()
         self._keepwatch_unknown: set[str] = set()
+        self._keepwatch_unknown_episodes: dict[str, dict] = {}
         self._keepwatch_cancel_requested: set[str] = set()
+        from project_mai_tai.services.keepwatch_rest_hold import RestHoldPolicy
+        self._keepwatch_rest_hold = RestHoldPolicy()
         self._keepwatch_proven: dict[str, object] = {}
         self._keepwatch_current_recoveries: dict[str, object] = {}
         self._line_pg_poll_fallbacks: dict[str, dict] = {}
@@ -646,6 +654,7 @@ class SchwabV2BotService:
         # Use only a recently received streamed ask for the pre-market cross.
         self._eh_stream_ask_by_symbol: dict[str, tuple[float, int]] = {}
         self._eh_stream_ask_max_age_ms = 10_000
+        self._pm_softrest_quote_log = _make_pm_quote_log(self.settings, logger)
         self._gap_hold_detect_seconds = max(
             0.001,
             float(
@@ -1246,6 +1255,8 @@ class SchwabV2BotService:
             for proof in proofs:
                 if not proof.clear and not request_only_retirement(proof):
                     continue
+                if self.strategy._retry_request_fresh_sell_handoff_pending(proof.request):
+                    continue  # Keep durable request until the fresh-SELL owner plan is staged.
                 failure = failures.get(proof.request)
                 if request_only_retirement(proof) and failure and (
                         failure["attempts"] >= 5 or self.strategy._now_ms() < failure["next_ms"]):
@@ -1264,6 +1275,10 @@ class SchwabV2BotService:
                     continue
                 self.strategy.stage_removed_wait_clear(proof, retire_owner=retire)
             for request, plan in tuple(self.strategy.__dict__.get("_removed_wait_pending_clears", {}).items()):
+                if (not plan.retirements
+                        and self.strategy._retry_request_fresh_sell_handoff_pending(request)):
+                    self.strategy._removed_wait_pending_clears.pop(request, None)
+                    continue
                 def valid(plan=plan):
                     return (emit_valid(plan.proof.request.symbol)
                             and self.strategy.removed_wait_clear_valid(plan))
@@ -2025,7 +2040,7 @@ class SchwabV2BotService:
             "last_retry_at": self._keepwatch_boot_retry_clock(), "retry_count": 0,
             "entry_allowed": False, "status": "UNKNOWN"}
         self._keepwatch_boot_deferrals.pop(symbol, None)
-        self._keepwatch_unknown.add(symbol)
+        self._keepwatch_mark_unknown(symbol, "boot_excluded")
         logger.warning("[V2-BOOT-EXCLUDE] symbol=%s reason=%s elapsed_seconds=%.3f "
                        "bound_seconds=%d fleet_excluded=1 entry_allowed=0 status=UNKNOWN",
                        symbol, reason, elapsed, KEEPWATCH_BOOT_DEFERRAL_SECONDS)
@@ -3356,31 +3371,38 @@ class SchwabV2BotService:
                     and symbol in self._keepwatch.first_seen_ms)))
 
     def _keepwatch_entry_allowed(self, symbol: str) -> bool:
+        if (getattr(self.settings, "strategy_schwab_1m_v2_keepwatch_transient_rest_hold_enabled", False)
+                and self._keepwatch_rest_hold.deferring(symbol)):
+            # Only an active F1 deferral adds a new-entry fence. Ordinary
+            # per-minute UNKNOWN marks retain the current-publication path.
+            return _entry_predicate(False, "rest_hold_deferring")
         if symbol in self._keepwatch_boot_excluded_symbols():
-            return False
+            return _entry_predicate(False, "boot_excluded")
         if self._keepwatch_current_publication(symbol) is not None:
-            return (self._keepwatch.anchor_ms == session_start_ts_ms(self.strategy._now_ms())
-                    and self._keepwatch_bar_quarantine.get(symbol) != self._keepwatch.anchor_ms
+            return (_entry_predicate(self._keepwatch.anchor_ms == session_start_ts_ms(self.strategy._now_ms()), "anchor_mismatch")
+                    and _entry_predicate(self._keepwatch_bar_quarantine.get(symbol) != self._keepwatch.anchor_ms, "quarantine")
                     and self._keepwatch.allows_entry(symbol))
         fallback = self._line_pg_poll_fallback_current(symbol)
         if fallback is not None:
-            # OLD scanner membership for this failed poll only. Retained-only
-            # membership cannot be invented by a database exception.
-            return (symbol not in self.settings.protected_symbol_set
-                    and (symbol in self._watchlist or (
-                        fallback["retained_entry_before"] and self._keepwatch.allows_entry(symbol))))
-        return (self._keepwatch.anchor_ms == session_start_ts_ms(self.strategy._now_ms())
-                and self._keepwatch_bar_quarantine.get(symbol) != self._keepwatch.anchor_ms
-                and symbol not in self._keepwatch_unknown
-                and symbol in self._keepwatch_proven
-                and self._keepwatch_proven[symbol].anchor_ms == self._keepwatch.anchor_ms
+            # Current scanner membership for this failed poll only (not _watchlist,
+            # which also carries held/in-flight names). Retained-only membership
+            # cannot be invented by a database exception.
+            return (_entry_predicate(symbol not in self.settings.protected_symbol_set, "protected_symbol")
+                    and (symbol in getattr(self, "_entry_watch_symbols", set()) or (
+                        _entry_predicate(fallback["retained_entry_before"], "not_retained_entry")
+                        and self._keepwatch.allows_entry(symbol))))
+        return (_entry_predicate(self._keepwatch.anchor_ms == session_start_ts_ms(self.strategy._now_ms()), "anchor_mismatch")
+                and _entry_predicate(self._keepwatch_bar_quarantine.get(symbol) != self._keepwatch.anchor_ms, "quarantine")
+                and _entry_predicate(symbol not in self._keepwatch_unknown, "history_unknown")
+                and _entry_predicate(symbol in self._keepwatch_proven, "history_proof_missing")
+                and _entry_predicate(self._keepwatch_proven[symbol].anchor_ms == self._keepwatch.anchor_ms, "history_anchor_mismatch")
                 and self._keepwatch.allows_entry(symbol))
 
     def _entry_membership_allowed(self, symbol: str) -> bool:
         if not getattr(self, "_keepwatch_enabled", False):
-            return symbol in self._watchlist
-        return (symbol not in self.settings.protected_symbol_set
-                and getattr(self, "_boot_exclusion_sources_readable", False)
+            return _entry_predicate(symbol in self._watchlist, "not_watchlist")
+        return (_entry_predicate(symbol not in self.settings.protected_symbol_set, "protected_symbol")
+                and _entry_predicate(getattr(self, "_boot_exclusion_sources_readable", False), "boot_exclusion_sources_unreadable")
                 and self._keepwatch_entry_allowed(symbol))
 
     def _keepwatch_history_window_open(self, current_ms: int) -> bool:
@@ -4619,11 +4641,19 @@ class SchwabV2BotService:
 
         terminal: dict[str, set[int]] = {}
         for (symbol, opportunity_id), by_account in grouped.items():
+            required_accounts = expected_accounts
             if not expected_accounts.issubset(by_account):
-                continue
+                from project_mai_tai.entry_rejected_closure import historical_country_rejected_accounts
+                observed_ms = int((terminal_cutoff + timedelta(
+                    milliseconds=FLIP_OWNER_ROW_SETTLE_MS)).timestamp() * 1000)
+                historical = historical_country_rejected_accounts(
+                    session, symbol, opportunity_id, expected_accounts, observed_ms)
+                if not historical or not historical.issubset(by_account):
+                    continue
+                required_accounts = historical
             if all(
                 _terminal_unfilled(intent)
-                for account in expected_accounts
+                for account in required_accounts
                 for intent in by_account[account]
             ):
                 terminal.setdefault(symbol, set()).add(opportunity_id)
@@ -5254,14 +5284,17 @@ class SchwabV2BotService:
                 {sym: (str(state.atr_state) if self._line_snapshot_current(sym) and state.bars
                        and state.bars[-1].timestamp_ms == now_ms // 60_000 * 60_000 - 60_000
                        else "unknown") for sym, state in self.strategy._symbol_states.items()},
-                retain_entries=True, excluded=frozenset(protected_exclude | ineligible_exclude),
+                # Card 10-22: off the scanner list = watched, but no new buys.
+                retain_entries=False, excluded=frozenset(protected_exclude | ineligible_exclude),
             )
             if old_anchor != self._keepwatch.anchor_ms:
                 self._keepwatch_proven = {
                     sym: proof for sym, proof in self._keepwatch_proven.items()
                     if proof.anchor_ms == self._keepwatch.anchor_ms}
                 self._keepwatch_unknown.intersection_update(scanner_selected)
+                self._keepwatch_forget_unknown_episode()
                 self._keepwatch_cancel_requested.intersection_update(scanner_selected)
+                self._keepwatch_rest_hold.retain_members(scanner_selected)
                 self._keepwatch_bar_locks = {
                     sym: lock for sym, lock in self._keepwatch_bar_locks.items()
                     if lock.locked() or sym in selected}
@@ -5314,6 +5347,8 @@ class SchwabV2BotService:
             departed_symbols |= revoked_retained
         for sym in new_symbols | departed_symbols:
             self._eh_stream_ask_by_symbol.pop(sym, None)
+            if getattr(self, "_pm_softrest_quote_log", None) is not None:
+                _observe_pm_quote(self._pm_softrest_quote_log, "forget", sym)
         # ⭐ Stamp WHEN we started watching each symbol. This is the reference
         # `_cap_reconstructed_segment` uses to decide whether an armed segment was observed LIVE or
         # merely reconstructed from warmup history — see that method for the full rationale.
@@ -5760,17 +5795,117 @@ class SchwabV2BotService:
         protected.update(self._fetch_open_positions())
         return protected
 
-    def _keepwatch_hold_unknown(self, symbol: str, reason: str) -> None:
+    def _keepwatch_mark_unknown(self, symbol: str, reason: str, *, was_unknown: bool | None = None) -> None:
+        """Set the original fence BEFORE any best-effort diagnostic operation."""
+        if was_unknown is None:
+            was_unknown = symbol in self._keepwatch_unknown
+        self._keepwatch_unknown.add(symbol)
+        try:
+            self._keepwatch_log_unknown(symbol, reason, was_unknown=was_unknown)
+        except Exception:
+            # A broken clock/logger/diagnostic record cannot undo or interrupt
+            # an original UNKNOWN transition. Never invent a fallback age.
+            pass
+
+    def _keepwatch_log_unknown(self, symbol: str, reason: str, *, was_unknown: bool) -> None:
+        """Observe the existing fence only; no retry, cancellation or permission.
+
+        First WARNING per episode; reason changes are INFO with the same age.
+        An older silent set member has UNKNOWN onset, never an invented age.
+        No provider/DB calls; repeated holds of the same reason are silent.
+        """
+        now_ms = self.strategy._now_ms()
+        anchor = session_start_ts_ms(now_ms)
+        episode = self._keepwatch_unknown_episodes.get(symbol)
+        if not was_unknown or episode is None or episode["anchor_ms"] != anchor:
+            episode = {"anchor_ms": anchor, "since_ms": None if was_unknown else now_ms,
+                       "warned": False, "reason": None}
+            self._keepwatch_unknown_episodes[symbol] = episode
+        since = episode["since_ms"]
+        age = "UNKNOWN" if since is None or now_ms < since else f"{(now_ms - since) / 1000:.3f}"
+        receipt = self._keepwatch_proven.get(symbol)
+        completed = getattr(receipt, "completed_ns", None)
+        proven_age = (f"{(now_ms - completed // 1_000_000) / 1000:.3f}"
+                      if type(completed) is int and 0 < completed <= now_ms * 1_000_000 else "UNKNOWN")
+        ledger = self._line_sessions.get(symbol)
+        incomplete = ledger.incomplete_reason if ledger is not None else "observation_epoch_missing"
+        if not episode["warned"]:
+            logger.warning("[V2-KEEPWATCH1] sym=%s outcome=UNKNOWN reason=%s age_s=%s "
+                           "last_proven_age_s=%s incomplete_reason=%s entry_allowed=0 line_reset=0",
+                           symbol, reason, age, proven_age, incomplete)
+            episode["warned"] = True
+        elif episode["reason"] != reason:
+            logger.info("[V2-KEEPWATCH1-HOLD] sym=%s outcome=UNKNOWN reason=%s age_s=%s "
+                        "last_proven_age_s=%s incomplete_reason=%s entry_allowed=0 line_reset=0",
+                        symbol, reason, age, proven_age, incomplete)
+        episode["reason"] = reason
+
+    def _keepwatch_forget_unknown_episode(self, symbol: str | None = None) -> None:
+        try:
+            if symbol is None:
+                self._keepwatch_unknown_episodes.clear()
+            else:
+                self._keepwatch_unknown_episodes.pop(symbol, None)
+        except Exception:
+            # Diagnostic cleanup is never a condition of actual proof recovery.
+            pass
+
+    def _keepwatch_transient_rest_proof(self, symbol, *, ledger, epoch, state,
+            source_identity, expected_work, trade_through, trade_token, anchor):
+        """Reverify the existing owned attempt; no clock grace or new placement."""
+        from project_mai_tai.services.keepwatch_rest_hold import RestHoldProof
+
+        operation = self._keepwatch_history_context.get()
+        if (not operation or len(operation) != 2
+                or self._keepwatch_history_scopes.get(operation[0]) != (symbol, anchor, epoch)
+                or operation[1] != (symbol, anchor, epoch)
+                or self._stop_event.is_set() or not self._line_sized_trade_policy_enabled()
+                or self._line_sessions.get(symbol) is not ledger or ledger.epoch != epoch
+                or ledger.anchor_ms != anchor or ledger.incomplete_reason != "stale_rebuild"
+                or self.strategy._symbol_states.get(symbol) is not state
+                or source_identity is None or self._line_source_identity.get(symbol) != source_identity
+                or not self._keepwatch_work_current(symbol, expected_work)
+                or trade_token is None or ledger.trade_evidence_token(trade_through) != trade_token
+                or session_start_ts_ms(self.strategy._now_ms()) != anchor
+                or symbol not in self._subscription_symbols()
+                or symbol in self._line_readd_needs_live
+                or self._keepwatch_bar_quarantine.get(symbol) == anchor):
+            return None
+        primary, mirror = state.resting_active, state.webull_resting_active
+        if (type(primary) is not bool or type(mirror) is not bool or not (primary or mirror)
+                or (primary and (state.resting_is_broker_order is not True
+                    or not (state.resting_schwab_generation or state.resting_webull_generation)))
+                or (mirror and not state.webull_resting_generation_id)):
+            return None
+        rest_identity = (primary, state.resting_is_broker_order,
+            state.resting_schwab_generation, state.resting_webull_generation,
+            state.resting_schwab_quantity, state.resting_webull_quantity,
+            mirror, state.webull_resting_generation_id, state.fanout_segment_id)
+        return RestHoldProof(symbol, anchor, epoch, ledger, state, source_identity,
+                             expected_work, trade_token, rest_identity, operation[0])
+
+    def _keepwatch_hold_unknown(self, symbol: str, reason: str, *, transient_scope=None) -> None:
         was_unknown = symbol in self._keepwatch_unknown
         self._keepwatch_unknown.add(symbol)
         state = self.strategy._symbol_states.get(symbol)
+        cancel_required = True
+        if getattr(self.settings, "strategy_schwab_1m_v2_keepwatch_transient_rest_hold_enabled", False):
+            # Policy state is independent of best-effort diagnostic episodes. A
+            # hard reason latches even before a delayed rest acknowledgement.
+            try:
+                proof = (self._keepwatch_transient_rest_proof(symbol, **transient_scope)
+                         if reason == "prefix_publication_unproven" and transient_scope else None)
+                cancel_required = self._keepwatch_rest_hold.cancel_required(symbol, proof)
+            except Exception:
+                try:
+                    self._keepwatch_rest_hold.cancel_required(symbol)
+                except Exception:
+                    pass  # Policy failure cannot prevent the immediate cancel.
         if (symbol not in self._keepwatch_cancel_requested and state is not None
-                and (state.resting_active or state.webull_resting_active)):
+                and (state.resting_active or state.webull_resting_active) and cancel_required):
             self.strategy._queue_resting_cancel(state, reason="keepwatch_history_unknown")
             self._keepwatch_cancel_requested.add(symbol)
-        if not was_unknown:
-            logger.warning("[V2-KEEPWATCH1] sym=%s outcome=UNKNOWN reason=%s entry_allowed=0 "
-                           "line_reset=0", symbol, reason)
+        self._keepwatch_mark_unknown(symbol, reason, was_unknown=was_unknown)
 
     def _keepwatch_pins_for(self, symbol: str, anchor: int):
         from project_mai_tai.market_data.keepwatch_producer import SessionProducerPins
@@ -5822,21 +5957,21 @@ class SchwabV2BotService:
                         if ledger._seed_invalidated:
                             self._line_reconcile_pending.add(symbol)
             except ValueError:
-                # No provider I/O/log write on the receiver. Unknown identity is
-                # refused, never guessed from the generic REST transport name.
+                # No provider I/O on the receiver. The first UNKNOWN episode
+                # is visible; identity is never guessed from the transport name.
                 inbox.received += 1
                 inbox.rejected += 1
                 self._keepwatch_bar_quarantine[symbol] = anchor
-                self._keepwatch_unknown.add(symbol)
+                self._keepwatch_mark_unknown(symbol, "bar_ingress_producer_unproven")
                 return
         admitted = inbox.offer(OwnedBar(
             bar, source, anchor, epoch, observed_ms=self.strategy._now_ms()))
         if not admitted:
-            # Receiver work is memory-only. Cancellation/logging belongs to the owner,
-            # not the WebSocket reader. This quarantine cannot be auto-cleared by a
+            # Cancellation belongs to the owner. Only the first episode warning
+            # is added here. This quarantine cannot be auto-cleared by a
             # later successful provider read that did not retain this rejected frame.
             self._keepwatch_bar_quarantine[symbol] = anchor
-            self._keepwatch_unknown.add(symbol)
+            self._keepwatch_mark_unknown(symbol, "bar_inbox_overflow")
         event = self._keepwatch_bar_events.setdefault(symbol, asyncio.Event())
         event.set()
         task = self._keepwatch_bar_tasks.get(symbol)
@@ -5855,7 +5990,7 @@ class SchwabV2BotService:
                     failed = completed.exception() is not None
                 if failed:
                     self._keepwatch_bar_quarantine[symbol] = anchor
-                    self._keepwatch_unknown.add(symbol)
+                    self._keepwatch_mark_unknown(symbol, "bar_owner_stopped_unexpectedly")
                     logger.error("[V2-KEEPWATCH1-BAR-OWNER] sym=%s outcome=UNKNOWN "
                                  "owner_stopped_unexpectedly=1 pending_retained=1", symbol)
             task.add_done_callback(owner_done)
@@ -5877,12 +6012,13 @@ class SchwabV2BotService:
     async def _run_keepwatch_bar_owner(self, symbol: str) -> None:
         inbox = self._keepwatch_bar_inboxes[symbol]
         event = self._keepwatch_bar_events[symbol]
-        overflow_logged = 0
         try:
             while inbox.pending and not self._stop_event.is_set():
                 event.clear()
-                if inbox.rejected != overflow_logged:
-                    overflow_logged = inbox.rejected
+                # The logged count lives on the inbox: each owner run is a new task,
+                # and a local counter re-held UNKNOWN every minute for one old rejection.
+                if inbox.rejected != inbox.rejected_logged:
+                    inbox.rejected_logged = inbox.rejected
                     self._keepwatch_hold_unknown(symbol, "bar_inbox_overflow")
                     logger.error("[V2-KEEPWATCH1-BAR-OWNER] sym=%s outcome=UNKNOWN "
                                  "rejected=%d first_rejected_ms=%d last_rejected_ms=%d "
@@ -6273,7 +6409,7 @@ class SchwabV2BotService:
                 or session_start_ts_ms(self.strategy._now_ms()) != work.anchor_ms
                 or self.strategy._symbol_states.get(symbol) is not state
                 or self._line_source_identity.get(symbol) != identity):
-            self._keepwatch_unknown.add(symbol)
+            self._keepwatch_mark_unknown(symbol, "bar_consumption_superseded")
             raise BarConsumptionSuperseded(symbol)
 
     async def _keepwatch_prepare_bar(
@@ -6293,6 +6429,8 @@ class SchwabV2BotService:
         # Historical REST warmup is not a current provider query or permission.
         cutoff_ms = bar.timestamp_ms if history is None else history.through_ms
         if now_ms - cutoff_ms > 180_000:
+            if symbol in self._keepwatch_unknown:
+                self._keepwatch_mark_unknown(symbol, "history_cutoff_stale")
             return False
         if now_ms < bar.timestamp_ms + 60_000:
             self._keepwatch_hold_unknown(symbol, "minute_not_closed")
@@ -6310,9 +6448,11 @@ class SchwabV2BotService:
                 and not ledger._seed_invalidated
                 and previous_ms and previous_ms <= bar.timestamp_ms <= previous_ms + 60_000):
             return True
-        self._keepwatch_unknown.add(symbol)
+        self._keepwatch_mark_unknown(symbol, "bar_history_read_pending")
         epoch = ledger.epoch
         source_identity = self._line_source_identity.get(symbol)
+        trade_through = bar.timestamp_ms if history is None else history.through_ms
+        trade_token = ledger.trade_evidence_token(trade_through) if self._line_sized_trade_policy_enabled() else None
         try:
             # Shared REST clients have one worker owner; independent symbols' trade/quote
             # callbacks remain runnable while this gap/boot-only I/O awaits completion.
@@ -6321,6 +6461,9 @@ class SchwabV2BotService:
             if not current_history_response(history, symbol=symbol, anchor_ms=anchor,
                     through_ms=bar.timestamp_ms, now_ms=self.strategy._now_ms()):
                 raise ValueError("foreign KEEPWATCH1 history window")
+            if trade_token is not None and ledger.trade_evidence_token(trade_through) != trade_token:
+                self._keepwatch_hold_unknown(symbol, "positive_trade_arrived_during_history")
+                return False
             if (self._stop_event.is_set()
                     or not self._keepwatch_work_current(symbol, expected_work)
                     or self._line_source_identity.get(symbol) != source_identity
@@ -6329,6 +6472,8 @@ class SchwabV2BotService:
                     or symbol not in self._subscription_symbols()
                     or self.strategy._now_ms() - history.through_ms > 180_000
                     or self.strategy._symbol_states.get(symbol) is not state):
+                if symbol in self._keepwatch_unknown:
+                    self._keepwatch_mark_unknown(symbol, "bar_history_result_superseded")
                 return False
             pins = self._keepwatch_pins_for(symbol, anchor)
             projected = project_history(history, pins, now_ms=self.strategy._now_ms())
@@ -6356,6 +6501,9 @@ class SchwabV2BotService:
             for row in prefix:
                 ledger.observe(row)
             ledger.attest(history_coverage(history, prefix, canonical=True))
+            if self._line_sized_trade_policy_enabled() and ledger.has_uncovered_trade(history.through_ms, merged):
+                self._keepwatch_hold_unknown(symbol, "empty_provider_conflicts_with_trade")
+                return False
             if ledger.has_unrecovered_traded_gap():
                 self._keepwatch_hold_unknown(symbol, "empty_provider_conflicts_with_trade")
                 self._keepwatch_refresh_current_recovery(symbol)
@@ -6380,7 +6528,10 @@ class SchwabV2BotService:
             # replace live indicator/arm/owner state to recover OLD behaviour.
             if prefix:
                 if state.bars and state.bars[-1].timestamp_ms > prefix[-1].timestamp_ms:
-                    self._keepwatch_hold_unknown(symbol, "prefix_publication_unproven")
+                    self._keepwatch_hold_unknown(symbol, "prefix_publication_unproven", transient_scope=dict(
+                        ledger=ledger, epoch=epoch, state=state, source_identity=source_identity,
+                        expected_work=expected_work, trade_through=trade_through,
+                        trade_token=trade_token, anchor=anchor))
                     return False
                 reconciled = await self._reconcile_line_store(
                     symbol, ledger, state, prefix[-1].timestamp_ms,
@@ -6399,15 +6550,21 @@ class SchwabV2BotService:
             # This preserves the next real flip without replaying a recovered BUY.
             if prefix and not await self._rebuild_session_line(
                     symbol, ledger, prefix_through_ms=prefix[-1].timestamp_ms):
-                self._keepwatch_hold_unknown(symbol, "prefix_publication_unproven")
+                self._keepwatch_hold_unknown(symbol, "prefix_publication_unproven", transient_scope=dict(
+                    ledger=ledger, epoch=epoch, state=state, source_identity=source_identity,
+                    expected_work=expected_work, trade_through=trade_through,
+                    trade_token=trade_token, anchor=anchor))
                 return False
             if (self._stop_event.is_set()
                     or not self._keepwatch_work_current(symbol, expected_work)
                     or self._line_source_identity.get(symbol) != source_identity
                     or self.strategy._symbol_states.get(symbol) is not state
+                    or (trade_token is not None and ledger.trade_evidence_token(trade_through) != trade_token)
                     or self._line_sessions.get(symbol) is not ledger or ledger.epoch != epoch
                     or session_start_ts_ms(self.strategy._now_ms()) != anchor
                     or symbol not in self._subscription_symbols()):
+                if symbol in self._keepwatch_unknown:
+                    self._keepwatch_mark_unknown(symbol, "bar_prefix_result_superseded")
                 return False
             ledger.observe_closed_live(bar)
             ledger.attest(history_coverage(history, bars, canonical=True))
@@ -6436,7 +6593,9 @@ class SchwabV2BotService:
             self._keepwatch_proven[symbol] = history
             self._keepwatch_record_halt_binding(symbol, ledger, history)
             self._keepwatch_unknown.discard(symbol)
+            self._keepwatch_forget_unknown_episode(symbol)
             self._keepwatch_cancel_requested.discard(symbol)
+            self._keepwatch_rest_hold.clear_proven(symbol)
             self._db_seeded.add(symbol)
             self._line_source_waiting.pop(symbol, None)
             self._line_dirty.add(symbol)
@@ -6453,10 +6612,7 @@ class SchwabV2BotService:
                         history.completed_ns, history.massive_sha256, history.schwab_sha256)
             return True
         except Exception as exc:
-            self._keepwatch_hold_unknown(symbol, type(exc).__name__)
-            logger.warning("[V2-KEEPWATCH1] sym=%s outcome=UNKNOWN "
-                           "reason=provider_or_publication_error error_type=%s entry_allowed=0",
-                           symbol, type(exc).__name__)
+            self._keepwatch_hold_unknown(symbol, "provider_or_publication_error_" + type(exc).__name__)
             return False
 
     async def _keepwatch_history_loop(self) -> None:
@@ -6509,7 +6665,8 @@ class SchwabV2BotService:
                     epoch = ledger.epoch
                     source_identity = self._line_source_identity.get(symbol)
                     source_state = self.strategy._symbol_states.get(symbol)
-                    self._keepwatch_unknown.add(symbol)
+                    trade_token = ledger.trade_evidence_token(current) if self._line_sized_trade_policy_enabled() else None
+                    self._keepwatch_mark_unknown(symbol, "closed_minute_history_pending")
                     operation = object()
                     context_token = self._keepwatch_history_context.set(
                         (operation, (symbol, anchor, epoch)))
@@ -6518,6 +6675,9 @@ class SchwabV2BotService:
                         if not current_history_response(history, symbol=symbol, anchor_ms=anchor,
                                 through_ms=current, now_ms=self.strategy._now_ms()):
                             raise ValueError("unproven KEEPWATCH1 history availability")
+                        if trade_token is not None and ledger.trade_evidence_token(current) != trade_token:
+                            self._keepwatch_hold_unknown(symbol, "positive_trade_arrived_during_history")
+                            continue
                         if (self._stop_event.is_set()
                                 or self._line_sessions.get(symbol) is not ledger or ledger.epoch != epoch
                                 or self._line_source_identity.get(symbol) != source_identity
@@ -6525,6 +6685,8 @@ class SchwabV2BotService:
                                 or session_start_ts_ms(self.strategy._now_ms()) != anchor
                                 or symbol not in self._subscription_symbols()
                                 or self.strategy._now_ms() - current > 180_000):
+                            if symbol in self._keepwatch_unknown:
+                                self._keepwatch_mark_unknown(symbol, "closed_minute_history_superseded")
                             continue
                         state = self.strategy.watchlist_state(symbol)
                         previous = state.bars[-1].timestamp_ms if state.bars else 0
@@ -6550,12 +6712,17 @@ class SchwabV2BotService:
                                     await self._handle_bar(symbol, bar, observation_phase="replay")
                                     self._try_complete_boot_state_restoration(
                                         self._watchlist, new_symbols=set())
+                            elif symbol in self._keepwatch_unknown:
+                                self._keepwatch_mark_unknown(symbol, "closed_minute_prepare_refused")
                         elif not recovered:
                             # No new candle exists. Attest empty intervals without manufacturing
                             # a bar, moving the last-real-bar clock, or resetting the indicator.
                             known = {bar.timestamp_ms: bar for bar in projected}
                             known.update(ledger._bars)
                             rows = tuple(pins.current(stamp) for stamp in sorted(known))
+                            if self._line_sized_trade_policy_enabled() and ledger.has_uncovered_trade(current, known):
+                                self._keepwatch_hold_unknown(symbol, "empty_provider_conflicts_with_trade")
+                                continue
                             for row in rows:
                                 ledger.observe(row)
                             ledger.attest(history_coverage(history, rows, canonical=True))
@@ -6565,7 +6732,9 @@ class SchwabV2BotService:
                             self._keepwatch_proven[symbol] = history
                             self._keepwatch_record_halt_binding(symbol, ledger, history)
                             self._keepwatch_unknown.discard(symbol)
+                            self._keepwatch_forget_unknown_episode(symbol)
                             self._keepwatch_cancel_requested.discard(symbol)
+                            self._keepwatch_rest_hold.clear_proven(symbol)
                             left_ms = state.gap_line_left_bar_ms or previous
                             if (state.gap_hold_active
                                     and left_ms + 60_000 <= state.gap_hold_detected_at_ms
@@ -6584,10 +6753,7 @@ class SchwabV2BotService:
                                         symbol, current, history.completed_ns, int(state.gap_hold_active),
                                         history.massive_sha256, history.schwab_sha256)
                     except Exception as exc:
-                        self._keepwatch_hold_unknown(symbol, type(exc).__name__)
-                        logger.warning("[V2-KEEPWATCH1] sym=%s outcome=UNKNOWN "
-                                       "reason=closed_minute_read_error error_type=%s",
-                                       symbol, type(exc).__name__)
+                        self._keepwatch_hold_unknown(symbol, "closed_minute_read_error_" + type(exc).__name__)
                     finally:
                         self._keepwatch_history_scopes.pop(operation, None)
                         self._keepwatch_history_context.reset(context_token)
@@ -7891,25 +8057,32 @@ class SchwabV2BotService:
         )
 
     def _line_buy_ready(self, symbol: str) -> bool:
+        _entry_branch("ordinary")
         self._line_pg_poll_fallback_current(symbol)
         if self._keepwatch_current_publication(symbol) is not None:
+            _entry_branch("current_publication")
             return self._entry_membership_allowed(symbol)
         state = self.strategy._symbol_states.get(symbol)
         if state is not None and state.line_live_fallback:
+            _entry_branch("line_live_fallback")
             ledger = self._line_sessions.get(symbol)
-            return bool(self._entry_membership_allowed(symbol) and state.bars
-                        and ledger is not None and not ledger.has_unrecovered_traded_gap()
-                        and state.bars[-1].timestamp_ms == self.strategy._now_ms() // 60_000 * 60_000 - 60_000
-                        and session_start_ts_ms(state.bars[-1].timestamp_ms)
-                        == session_start_ts_ms(self.strategy._now_ms())
-                        and state.atr_state in {"long", "short"}
-                        and state.atr_trail is not None and math.isfinite(state.atr_trail)
-                        and state.atr_trail > 0 and not self.strategy.gap_hold_active(symbol))
+            return bool(self._entry_membership_allowed(symbol)
+                        and _entry_predicate(bool(state.bars), "bars_missing")
+                        and _entry_predicate(ledger is not None, "ledger_missing")
+                        and _entry_predicate(not ledger.has_unrecovered_traded_gap(), "traded_gap_unrecovered")
+                        and _entry_predicate(state.bars[-1].timestamp_ms == self.strategy._now_ms() // 60_000 * 60_000 - 60_000, "current_bar_stale")
+                        and _entry_predicate(session_start_ts_ms(state.bars[-1].timestamp_ms)
+                            == session_start_ts_ms(self.strategy._now_ms()), "bar_session_mismatch")
+                        and _entry_predicate(state.atr_state in {"long", "short"}, "atr_not_ready")
+                        and _entry_predicate(state.atr_trail is not None, "atr_not_ready")
+                        and _entry_predicate(math.isfinite(state.atr_trail), "atr_not_ready")
+                        and _entry_predicate(state.atr_trail > 0, "atr_not_ready")
+                        and _entry_predicate(not self.strategy.gap_hold_active(symbol), "gap_hold"))
         if symbol in self._line_readd_needs_live:
-            return False
+            return _entry_predicate(False, "readd_needs_live")
         ledger = self._line_sessions.get(symbol)
         if ledger is not None and self._line_source_waiting.get(symbol) == ledger.epoch:
-            return False
+            return _entry_predicate(False, "source_waiting")
         state = self.strategy._symbol_states.get(symbol)
         result = self._line_published.get(symbol)
         clean = True
@@ -7923,11 +8096,15 @@ class SchwabV2BotService:
             live = self._line_live_bars.get(symbol, set())
             clean = all(current - offset * 60_000 in live
                         for offset in range(2 * self.strategy._atr_period))
-        return bool(self._entry_membership_allowed(symbol) and self._line_snapshot_current(symbol)
-                    and ledger.current_bar_ms == self.strategy._now_ms() // 60_000 * 60_000 - 60_000
-                    and state.atr_state in {"long", "short"}
-                    and state.atr_trail is not None and math.isfinite(state.atr_trail)
-                    and state.atr_trail > 0 and clean and not self.strategy.gap_hold_active(symbol))
+        return bool(self._entry_membership_allowed(symbol)
+                    and _entry_predicate(self._line_snapshot_current(symbol), "snapshot_not_current")
+                    and _entry_predicate(ledger.current_bar_ms == self.strategy._now_ms() // 60_000 * 60_000 - 60_000, "current_bar_stale")
+                    and _entry_predicate(state.atr_state in {"long", "short"}, "atr_not_ready")
+                    and _entry_predicate(state.atr_trail is not None, "atr_not_ready")
+                    and _entry_predicate(math.isfinite(state.atr_trail), "atr_not_ready")
+                    and _entry_predicate(state.atr_trail > 0, "atr_not_ready")
+                    and _entry_predicate(clean, "spanning_unclean")
+                    and _entry_predicate(not self.strategy.gap_hold_active(symbol), "gap_hold"))
 
     def _note_line_live_bar(self, symbol: str, bar: ChartBar) -> None:
         if (not getattr(self, "_line_restoration_enabled", False)
@@ -8442,13 +8619,15 @@ class SchwabV2BotService:
                 )
             finally:
                 self.strategy._bar_observation_phase = old_phase
+        entry_receipt = _entry_receipt(self._line_buy_ready, symbol)
         logger.info(
             "[V2-LINE-RESTORE] sym=%s epoch=%d revision=%d current_bar_ms=%d bars=%d "
             "outcome=published live_append=%d entry_allowed=%d spanning_pairs=%d "
-            "clean_live_required=%d",
+            "clean_live_required=%d first_false_predicate=%s branch=%s",
             symbol, ledger.epoch, ledger.revision, ledger.current_bar_ms, len(result.request.bars),
-            int(adjacent_live), int(self._line_buy_ready(symbol)),
+            int(adjacent_live), int(entry_receipt.allowed),
             len(result.request.spanning_pairs), 2 * period if result.request.spanning_pairs else 0,
+            entry_receipt.first_false_predicate, entry_receipt.branch,
         )
         await self._retire_previous_confirmation_entries()
         # Issued evaluations have already left the tracker's one-shot registry.
@@ -8531,6 +8710,17 @@ class SchwabV2BotService:
             raw_codes = "COALESCE(t.raw->'conditions', t.raw->'c')"
             tick_filter = condition_filter(f"""CASE WHEN jsonb_typeof({raw_codes}) = 'array'
                 THEN ARRAY(SELECT jsonb_array_elements_text({raw_codes})) ELSE NULL END""")
+            if self._line_sized_trade_policy_enabled():
+                # C1 09:26 bot policy: positive size and NOT explicit37.
+                # Same existing query/SETs/timeouts; no added read or provider I/O.
+                capture_filter += """ AND t.size >= 100 AND NOT COALESCE(
+                    t.provider IN ('massive','polygon','schwab')
+                    AND '37' = ANY(string_to_array(t.conditions, ',')), FALSE)"""
+                tick_filter += f""" AND t.size >= 100 AND NOT COALESCE(
+                    t.provider IN ('massive','polygon','schwab') AND
+                    CASE WHEN jsonb_typeof({raw_codes}) = 'array'
+                    THEN {raw_codes} ? '37' OR {raw_codes} @> '[37]'::jsonb
+                    ELSE FALSE END, FALSE)"""
         query = text(f"""
             WITH gaps(lo, hi) AS (VALUES {values})
             SELECT lo, hi FROM gaps WHERE
@@ -8548,13 +8738,35 @@ class SchwabV2BotService:
             session.execute(text("SET LOCAL lock_timeout = '500ms'"))
             return tuple((int(row[0]), int(row[1])) for row in session.execute(query, params))
 
+    def _line_sized_trade_policy_enabled(self) -> bool:
+        return bool(getattr(self, "_keepwatch_enabled", False) and
+                    getattr(self.settings, "strategy_schwab_1m_v2_keepwatch_sized_trade_gap_enabled", False) and
+                    self.settings.strategy_schwab_1m_v2_gap_trade_conditions_filter_enabled)
+
+    @staticmethod
+    def _line_print_eligibility(*, size=None, conditions=None) -> bool:
+        """C1 09:26 BOT policy, not SEC/instrument round-lot identity.
+
+        A barrier requires positive sized >=100 and no explicit condition37.
+        Small/unsized observations alone cannot create it. Complete current
+        two-provider candle coverage is STILL required before spanning EMPTY.
+        """
+        if type(size) is not int or size < 100:
+            return False
+        if type(conditions) is str:
+            conditions = conditions.split(",")
+        if type(conditions) in {tuple, list}:
+            if any(type(code) in {str, int} and str(code) == "37" for code in conditions):
+                return False
+        return True
+
     def _observe_line_trade(self, symbol: str, timestamp_ms: int) -> None:
         if not getattr(self, "_line_restoration_enabled", False):
             return
         ledger = self._line_sessions.get(symbol.upper())
         if ledger is not None and 0 < timestamp_ms <= self.strategy._now_ms():
             revision = ledger.revision
-            ledger.observe_trade(timestamp_ms)
+            ledger.observe_trade(timestamp_ms, track_generation=self._line_sized_trade_policy_enabled())
             if ledger.revision != revision:
                 self._line_dirty.add(ledger.symbol)
                 self._line_rebuild_event.set()
@@ -9012,7 +9224,8 @@ class SchwabV2BotService:
         if not raw_symbol_is_uppercase(symbol) or not raw_symbol_is_uppercase(quote.symbol):
             return
         now = datetime.now(UTC)
-        self._observe_line_trade(symbol, int(getattr(quote, "trade_time_ms", 0) or 0))
+        if not self._line_sized_trade_policy_enabled():
+            self._observe_line_trade(symbol, int(getattr(quote, "trade_time_ms", 0) or 0))
         self._last_tick_at[symbol] = _format_eastern(now)
         # Watchdog: quotes flow whenever the market is actually trading
         # (holiday-safe), so this is the discriminator for whether a bar
@@ -9050,37 +9263,66 @@ class SchwabV2BotService:
     async def _handle_stream_tick(self, tick: SchwabTick) -> None:
         if not raw_symbol_is_uppercase(tick.symbol):
             return
-        if tick.kind == "trade":
-            self._observe_line_trade(tick.symbol, int(tick.event_ts_ms))
-        if self._eh_stream_cross_enabled and tick.service == "LEVELONE_EQUITIES":
-            raw_ask = tick.raw.get("2")
-            if raw_ask is not None:
-                symbol = str(tick.symbol).upper()
-                try:
-                    ask = float(raw_ask)
-                except (TypeError, ValueError, OverflowError):
-                    self._eh_stream_ask_by_symbol.pop(symbol, None)
-                else:
-                    if math.isfinite(ask) and ask > 0:
-                        self._eh_stream_ask_by_symbol[symbol] = (
-                            ask, self.strategy._now_ms()
-                        )
-                    else:
+        # Sample once at callback entry, ON only; not a socket receipt claim.
+        flip_print_received_ns = None
+        if tick.kind == "trade" and getattr(self.strategy, "_flip_print_enabled", False):
+            try:
+                flip_print_received_ns = time.time_ns()
+            except Exception:
+                pass
+        observation = (self._pm_softrest_quote_observation(tick)
+            if getattr(self, "_pm_softrest_quote_log", None) is not None else None)
+        try:
+            if tick.kind == "trade" and (not self._line_sized_trade_policy_enabled()
+                    or self._line_print_eligibility(size=tick.size,
+                        conditions=tick.raw.get("conditions", tick.raw.get("c")))):
+                self._observe_line_trade(tick.symbol, int(tick.event_ts_ms))
+                if flip_print_received_ns is not None:
+                    try:
+                        self.strategy._observe_flip_print_trade(tick, flip_print_received_ns)
+                    except Exception:
+                        pass  # Diagnostic-only; preserve original downstream work.
+            if self._eh_stream_cross_enabled and tick.service == "LEVELONE_EQUITIES":
+                raw_ask = tick.raw.get("2")
+                if raw_ask is not None:
+                    symbol = str(tick.symbol).upper()
+                    try:
+                        ask = float(raw_ask)
+                    except (TypeError, ValueError, OverflowError):
                         self._eh_stream_ask_by_symbol.pop(symbol, None)
-        if (
-            self._gap_hold_enabled
-            and tick.kind == "trade"
-            and self._halt_observation_time(tick.event_ts_ms) is not None
-        ):
-            normalized = str(tick.symbol).upper()
-            self._gap_last_print_at_ms[normalized] = max(
-                int(tick.event_ts_ms),
-                self._gap_last_print_at_ms.get(normalized, 0),
-            )
-        if self._eh_stream_cross_enabled and tick.kind == "trade" and tick.price:
-            self._offer_stream_trade_to_eh_rest(tick)
-        if self.tick_writer is not None:
-            await self.tick_writer.on_tick(tick)
+                        if observation is not None:
+                            _observe_pm_quote(observation, "ask_invalidated")
+                    else:
+                        if math.isfinite(ask) and ask > 0:
+                            self._eh_stream_ask_by_symbol[symbol] = (
+                                ask, self.strategy._now_ms()
+                            )
+                            if observation is not None:
+                                _observe_pm_quote(observation, "ask_updated", self._eh_stream_ask_by_symbol[symbol][1])
+                        else:
+                            self._eh_stream_ask_by_symbol.pop(symbol, None)
+                            if observation is not None:
+                                _observe_pm_quote(observation, "ask_invalidated")
+            if (
+                self._gap_hold_enabled
+                and tick.kind == "trade"
+                and self._halt_observation_time(tick.event_ts_ms) is not None
+            ):
+                normalized = str(tick.symbol).upper()
+                self._gap_last_print_at_ms[normalized] = max(
+                    int(tick.event_ts_ms),
+                    self._gap_last_print_at_ms.get(normalized, 0),
+                )
+            if self._eh_stream_cross_enabled and tick.kind == "trade" and tick.price:
+                if observation is None:
+                    self._offer_stream_trade_to_eh_rest(tick)
+                else:
+                    self._offer_stream_trade_to_eh_rest(tick, _pm_observation=observation)
+            if self.tick_writer is not None:
+                await self.tick_writer.on_tick(tick)
+        finally:
+            if observation is not None:
+                _observe_pm_quote(observation, "finish")
 
     def _stream_tick_callback(self):  # type: ignore[no-untyped-def]
         """The streamer's per-tick callback. GAPHOLD's print clock and the pre-market stream cross
@@ -9096,8 +9338,29 @@ class SchwabV2BotService:
 
     async def _clear_eh_stream_asks_on_disconnect(self) -> None:
         self._eh_stream_ask_by_symbol.clear()
+        if getattr(self, "_pm_softrest_quote_log", None) is not None:
+            _observe_pm_quote(self._pm_softrest_quote_log, "clear")
 
-    def _offer_stream_trade_to_eh_rest(self, tick: SchwabTick) -> None:
+    def _pm_softrest_quote_observation(self, tick: SchwabTick):
+        book = getattr(self, "_pm_softrest_quote_log", None)
+        if book is None:
+            return None
+        try:
+            state = self.strategy._symbol_states.get(tick.symbol)
+            if state is None or not state.resting_active or state.resting_is_broker_order:
+                _observe_pm_quote(book, "forget", tick.symbol)
+                return None
+            return book.begin(tick.symbol, received_at=datetime.now(UTC),
+                kind=tick.kind, service=tick.service,
+                bid=tick.raw.get("1"), ask=tick.raw.get("2"), last=tick.raw.get("3"),
+                message_ts_ms=getattr(tick, "message_ts_ms", None), trade_ts_ms=tick.raw.get("35"),
+                placed=dict(placed_wire_trigger=state.resting_schwab_wire_stop,
+                    placed_trigger=state.resting_trigger, placed_line=state.resting_level,
+                    placed_wire_cap=state.resting_schwab_wire_limit, placed_legacy_cap=state.resting_wire_cap))
+        except Exception:
+            return None
+
+    def _offer_stream_trade_to_eh_rest(self, tick: SchwabTick, *, _pm_observation=None) -> None:
         """PRE-MARKET ONLY. Hand one streamed print to the strategy's EH soft-rest cross check and
         emit what it returns through the SAME path a REST quote uses (`_maybe_emit`: entry window,
         ATR-only belt, EH routing; then the Webull fan-out legs). A failure here is logged and never
@@ -9111,6 +9374,8 @@ class SchwabV2BotService:
         try:
             trade_ms = int(tick.event_ts_ms)
             if trade_ms <= 0 or int(tick.raw.get("35") or 0) != trade_ms:
+                if _pm_observation is not None:
+                    _observe_pm_quote(_pm_observation, "note", "REFUSED", "native_trade_time_missing_or_mismatch")
                 return
             ask_entry = self._eh_stream_ask_by_symbol.get(str(tick.symbol).upper())
             now_ms = self.strategy._now_ms()
@@ -9119,17 +9384,26 @@ class SchwabV2BotService:
                 if ask_entry is not None and 0 <= now_ms - ask_entry[1] <= self._eh_stream_ask_max_age_ms
                 else None
             )
+            ask_age_ms = now_ms - ask_entry[1] if ask_entry is not None else None
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "values", effective_ask=ask,
+                                  ask_age_ms=ask_age_ms, decision_now_ms=now_ms)
+            options = {} if _pm_observation is None else {"_pm_observation": _pm_observation}
             draft = self.strategy.on_stream_trade(
                 str(tick.symbol).upper(), float(tick.price or 0.0), trade_ms,
                 ask_price=ask,
                 bid_price=tick.raw.get("1"), print_size=tick.raw.get("9"),
-                ask_age_ms=now_ms - ask_entry[1] if ask_entry is not None else None,
+                ask_age_ms=ask_age_ms, **options,
             )
         except Exception:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "ERROR", "strategy_error")
             del queued_legs[queued_before:]
             logger.exception("schwab_1m_v2 on_stream_trade failed for %s", tick.symbol)
             return
         if draft is None:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "none_if_unset")
             return
         # Only this cross's suffix is moved. Other callbacks may already have queued a leg
         # before yielding on their own emit; do not steal it from the shared strategy queue.
@@ -9138,8 +9412,12 @@ class SchwabV2BotService:
         try:
             task = asyncio.create_task(self._emit_eh_stream_draft(draft, legs))
         except Exception:
+            if _pm_observation is not None:
+                _observe_pm_quote(_pm_observation, "note", "ERROR", "schedule_error")
             logger.exception("schwab_1m_v2 stream-cross scheduling failed for %s", tick.symbol)
             return
+        if _pm_observation is not None:
+            _observe_pm_quote(_pm_observation, "note", "SCHEDULED", "draft_scheduled")
         self._eh_stream_emit_tasks.add(task)
         task.add_done_callback(self._eh_stream_emit_tasks.discard)
 

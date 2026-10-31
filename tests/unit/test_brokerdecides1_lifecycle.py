@@ -1,5 +1,4 @@
 """Actual OMS sync lifecycle, injected native/transport only; never a live service."""
-import asyncio
 import logging
 from types import SimpleNamespace
 

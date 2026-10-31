@@ -202,13 +202,33 @@ def run(conn, args: argparse.Namespace, *, now: datetime | None = None, monotoni
             incomplete |= remaining > 0
             _report(stage="deleted", target=name, deleted=deleted, eligible_remaining=remaining,
                     relation_bytes_before=before_bytes, relation_bytes_after=_size(conn, target.table))
+        deferred = []
         for table in dict.fromkeys(changed):
-            with conn.cursor() as cur:
-                cur.execute(f"VACUUM (ANALYZE) {table}")
-            _report(stage="vacuum-analyze", table=table, relation_bytes=_size(conn, table),
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(f"VACUUM (ANALYZE) {table}")
+            except psycopg.errors.LockNotAvailable as exc:
+                item = dict(operation="vacuum-analyze", table=table, sqlstate=exc.sqlstate)
+                deferred.append(item)
+                _report(stage="maintenance_deferred", **item)
+                continue
+            # Record the completed operation before optional telemetry can fail.
+            _report(stage="vacuum-analyze", table=table,
                     note="ordinary vacuum makes space reusable; OS file shrink is not promised")
-        _report(stage="bounded-incomplete" if incomplete else "complete", dry_run=not args.go,
-                rows_deleted=args.max_rows - budget)
+            try:
+                after_bytes = _size(conn, table)
+            except psycopg.errors.LockNotAvailable as exc:
+                item = dict(operation="relation-size", table=table, sqlstate=exc.sqlstate)
+                deferred.append(item)
+                _report(stage="maintenance_deferred", **item)
+                after_bytes = "UNKNOWN"
+            _report(stage="vacuum-size", table=table, relation_bytes=after_bytes)
+        stage = "bounded-incomplete" if incomplete else (
+            "pruning-complete-maintenance-deferred" if deferred else "complete")
+        _report(stage=stage, dry_run=not args.go, rows_deleted=args.max_rows - budget,
+                pruning_status="bounded-incomplete" if incomplete else "complete",
+                maintenance_status="DEFERRED" if deferred else "complete",
+                maintenance_deferred=deferred)
         return 3 if incomplete else 0
     finally:
         if locked:

@@ -1,0 +1,29 @@
+# Proposed related file roster. Main expands exact nodes/counts under the fence.
+# NEW literal ALLON consumer/strict-guard controls (2 nodes):
+tests/unit/test_oct30_package_allon.py::test_actual_three_ON_consumers_PM_refusal_flip_logs_and_owned_WB3_exit
+tests/unit/test_oct30_package_allon.py::test_ALLON_runner_strict_inflight_empty_refuses_five_CONTROLLED_holds
+
+# Diagnostics: original modules unchanged, intentional OFF comparator arms
+# remain OFF; helper defaults/parameter names must be reported honestly.
+tests/unit/test_pm_softrest_quote_log.py
+tests/unit/test_pm_softrest_quote_log_integration.py
+tests/unit/test_flip_print_diagnostic.py
+tests/unit/test_flip_print_diagnostic_wiring.py
+
+# Runner: original pure guards/private file controls; no installer invocation.
+tests/unit/test_five_service_install_evidence.py
+
+# WB3 directly related current route/quantity/named-child/boot controls.
+# Original OFF arms remain disclosed OFF. Main may preserve prior pins/counts
+# and choose the reviewed unchanged subset; no automatic repeat-rate work.
+tests/unit/test_wbexit3_obligation.py
+tests/unit/test_wbexit3_partial.py
+tests/unit/test_wbexit3_early_probe.py
+tests/unit/test_wbexit3_same_day_vp_zero.py
+tests/unit/test_wbexit3_named_prepare.py
+tests/unit/test_wbexit3_narrow_boot.py
+tests/unit/test_wbexit3_exact_off_contract.py
+tests/unit/test_wbexit3_stop_original_path.py
+tests/unit/test_wbexit3_stop_new_io_cancellation.py
+tests/unit/test_wbexit3_stop_retirement.py
+tests/unit/test_wbexit3_riskoff_rollover_frontier.py

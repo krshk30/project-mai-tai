@@ -1,0 +1,42 @@
+async def _handle_quote_tick_event(self, event: QuoteTickEvent) -> None:
+    symbol = str(event.payload.symbol).upper()
+    # Event-time, not processing-time: stamp with the producer's `produced_at` so the
+    # downstream staleness guard measures TRUE price age. (Same host as market-data →
+    # no clock skew.) Previously this was utcnow() at processing time, which made the
+    # guard blind to consumption lag and let the LNAI exit act on a 70s-old quote.
+    self._latest_quotes_by_symbol[symbol] = {
+        "bid": float(event.payload.bid_price),
+        "ask": float(event.payload.ask_price),
+        "received_at": self._event_time(event),
+    }
+    live_dispatch = self.__dict__.get("_momentum_live_quote_dispatch")
+    if live_dispatch is not None:
+        live_dispatch.on_quote(symbol)
+    if self._market_is_fillable():
+        for acct in self._v2_accounts():
+            if (acct, symbol) in self._managed_v2_symbols:
+                self._capture_cw_target_decision(acct, symbol, self._latest_quotes_by_symbol[symbol])
+    if self._armed_hard_stops:
+        await self._evaluate_hard_stop_market_event(symbol)
+    await self._cancel_drifted_working_orders(symbol)
+    self._schedule_webull_mirror_tick(symbol)
+    await self._evaluate_nfq_holds(symbol)
+    await self._evaluate_nfq2_holds(symbol)
+    # Slice-3: run the v2 exit ladder on this quote, but ONLY for symbols with an
+    # open v2 managed row (the in-memory guard keeps the hot path free of DB hits
+    # for everything else; empty set when the flag is OFF → no-op).
+    # Fillable-session gate: outside 7 AM–8 PM ET an exit cannot fill, so do not
+    # emit one — the refresh-loop MARKET_CLOSED abandon (sync_broker_orders) mops
+    # up any working exit, keeping v2 quiet when the market is closed instead of
+    # churning unfillable exits overnight. Management resumes when it reopens.
+    if not self._market_is_fillable():
+        return
+    accounts = [
+        acct for acct in self._v2_accounts()
+        if (acct, symbol) in self._managed_v2_symbols
+    ]
+    if not accounts:
+        return
+
+    for acct in accounts:
+        self._schedule_v2_quote_leg(acct, symbol)

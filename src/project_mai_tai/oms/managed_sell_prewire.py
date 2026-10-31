@@ -61,6 +61,24 @@ def read_managed_sell_quantity(service, session, *, managed_row_id, strategy_cod
     return managed_quantity, ledger_quantity, ""
 
 
+def read_managed_sell_exit_cap(service, session, **kwargs):
+    """Keep the raw ledger reader intact; only this invocation may prove an EXIT cap."""
+    managed, ledger, refusal = read_managed_sell_quantity(service, session, **kwargs)
+    if (not refusal and managed > 0 and ledger == 0
+            and getattr(getattr(service, "settings", None), "oms_webull_exit3_enabled", False) is True):
+        row = kwargs.get("locked_row") or service.store.get_open_managed_position(session,
+            broker_account_name=kwargs["broker_account_name"], symbol=kwargs["symbol"])
+        entry = session.get(BrokerOrder, row.entry_order_id) if row is not None and row.entry_order_id else None
+        account = session.get(BrokerAccount, entry.broker_account_id) if entry is not None else None
+        strategy = session.get(Strategy, entry.strategy_id) if entry is not None else None
+        if entry is not None and account is not None and strategy is not None:
+            from project_mai_tai.oms.wbexit3_vp_zero import exit_cap
+            cap = exit_cap(service, session, row, entry, account, strategy)
+            if cap is not None:
+                return managed, cap, ""  # Effective EXIT cap; never a new ledger balance.
+    return managed, ledger, refusal
+
+
 async def prepare_managed_sell(service, *, event, request, managed_row_id, now,
                                retry_intent_id=None, admitted_intent_id=None,
                                target_context=None, allow_pending_fill_writer=False):
@@ -83,6 +101,9 @@ async def prepare_managed_sell(service, *, event, request, managed_row_id, now,
         raise ValueError("managed_sell_prewire_event_changed")
     if retry_intent_id is not None and admitted_intent_id is not None:
         raise ValueError("managed_sell_prewire_ambiguous_intent")
+    if getattr(getattr(service, "settings", None), "oms_webull_exit3_enabled", False) is True:
+        from project_mai_tai.oms.wbexit3_vp_zero import require_preparation_actor
+        require_preparation_actor(service, request, managed_row_id)  # Exact parent-admitted joined preparation only.
 
     def prepare(unit):
         row = unit.scalar(select(OmsManagedPosition).where(
@@ -96,7 +117,9 @@ async def prepare_managed_sell(service, *, event, request, managed_row_id, now,
                 or row.symbol != request.symbol
                 or Decimal(row.current_quantity) < request.quantity):
             return None
-        managed_quantity, ledger_quantity, refusal = read_managed_sell_quantity(
+        cap_reader = (read_managed_sell_exit_cap
+            if getattr(getattr(service, "settings", None), "oms_webull_exit3_enabled", False) is True else read_managed_sell_quantity)
+        managed_quantity, ledger_quantity, refusal = cap_reader(
             service, unit, managed_row_id=managed_row_id, strategy_code=request.strategy_code,
             broker_account_name=request.broker_account_name, symbol=request.symbol,
             target_context=request.metadata if target_context is None else target_context,

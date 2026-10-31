@@ -1,0 +1,29 @@
+[Unit]
+Description=ATRSIM2: FIRSTBAR + FIRSTBAR+2min paper tables for today (operator 10-29; simulation only, no orders)
+After=network.target
+
+[Service]
+Type=oneshot
+User=trader
+Group=trader
+WorkingDirectory=/home/trader/project-mai-tai
+EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/ionice -c 3 /home/trader/project-mai-tai/.venv/bin/python /home/trader/project-mai-tai/tools/atrsim2_job.py
+# Type=oneshot uses TimeoutStartSec, not RuntimeMaxSec.
+TimeoutStartSec=120
+TimeoutStopSec=4
+KillMode=control-group
+Restart=no
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=100%
+MemoryMax=2G
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+StateDirectory=project-mai-tai/atr-simulation/today
+StateDirectoryMode=0750
+ReadWritePaths=/var/lib/project-mai-tai/atr-simulation/today
+UMask=0077

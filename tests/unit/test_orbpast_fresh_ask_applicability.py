@@ -9,6 +9,7 @@ import pytest
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.orb_pastlevel import assert_same_selection, select_entry
+from project_mai_tai.strategy_core.orb_schwab_bracket import build_orb_schwab_bracket_metadata
 from tests.unit.test_orb_pastlevel import NOW
 
 
@@ -20,6 +21,14 @@ from tests.unit.test_orb_pastlevel import NOW
 @pytest.mark.parametrize("age_ms", [None, 2001])
 def test_legacy_missing_or_stale_uses_same_pure_tick_cap(level, trigger, cap, age_ms):
     quote = None if age_ms is None else {"ask": "999", "received_at": NOW - timedelta(milliseconds=age_ms)}
+    if Decimal(level) < 1:
+        with pytest.raises(ValueError, match="^PRICE1-REFUSED$"):
+            select_entry(Decimal(level), quote, NOW, max_age_ms=2000)
+        # Price-plan arithmetic remains testable without admitting a subfloor BUY.
+        planned = build_orb_schwab_bracket_metadata(Decimal(level), tick_cap=True)
+        assert Decimal(planned["stop_price"]) == Decimal(trigger)
+        assert Decimal(planned["limit_price"]) == Decimal(cap)
+        return
     md = select_entry(Decimal(level), quote, NOW, max_age_ms=2000)
     assert md["order_type"] == md["bracket_entry_type"] == "STOP_LIMIT"
     assert Decimal(md["stop_price"]) == Decimal(trigger)

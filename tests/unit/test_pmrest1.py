@@ -334,14 +334,11 @@ def test_p10_cross_drafts_match_unchanged_rest_with_600_300_sizing(stream):
     assert left.quantity == (Decimal(600) / Decimal(left.metadata["limit_price"])).quantize(
         Decimal(1), rounding=ROUND_HALF_UP
     )
-    if stream:
-        # Existing #1054 stream Quote loses the ask before dollar fan-out sizing.
-        # This is a characterized defect, not a passing Webull delivery claim.
-        assert moved._pending_webull_fanout_intents == []
-    else:
-        webull = moved._pending_webull_fanout_intents[0]
-        assert webull.quantity == Decimal(85)
-        assert webull.metadata["entry_notional_target_usd"] == "300"
+    # Both ingress paths now retain the validated ask for dollar fan-out sizing.
+    webull, = moved._pending_webull_fanout_intents
+    assert webull.quantity == Decimal(85)
+    assert webull.metadata["entry_notional_target_usd"] == "300"
+    assert webull.metadata["entry_size_price"] == "3.55"
 
 
 def test_rth_move_places_both_brokers_same_evaluation_without_cancel(caplog):

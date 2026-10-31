@@ -24,6 +24,7 @@ from project_mai_tai.db.models import (
     WebullIneligibleToday,
 )
 from project_mai_tai.events import TradeIntentEvent
+from project_mai_tai.fanout_identity import replace_broker_order_payload
 from project_mai_tai.fanout_outcome_consumer import append_outcome_isolated, broker_outcome
 
 
@@ -435,7 +436,7 @@ class OmsStore:
         )
         order.status = status
         order.broker_order_id = identity
-        order.payload = payload
+        order.payload = replace_broker_order_payload(order.payload, payload)
         if order.submitted_at is None:
             order.submitted_at = utcnow()
         session.flush()
@@ -545,7 +546,7 @@ class OmsStore:
         payload = dict(metadata)
         if report.event_type == "rejected" and report.reason:
             payload["reject_reason"] = report.reason
-        order.payload = payload
+        order.payload = replace_broker_order_payload(order.payload, payload)
         if order.submitted_at is None:
             order.submitted_at = report.reported_at
         return order

@@ -881,3 +881,18 @@ def test_the_halt_downgrade_cannot_fire_on_a_REST_FAILURE() -> None:
     assert "REST fetch FAILED" in src, "the failure signal must be parsed at all"
     assert '[ "${REST_FAILED:-0}" -eq 0 ]' in src, "downgrade must require ZERO REST failures"
     assert "HALT_DOWNGRADE=0" in src, "must default to NOT downgrading"
+
+
+def test_stops_armed_counts_a_working_momentum_oco_as_armed(monkeypatch):
+    # CETX 10-29 09:35: momentum's exit-only OCO (stop 2.23) was working at Schwab, but the
+    # check only knew oms_armed_stops / oms_managed_positions and paged NAKED.
+    seen = []
+    monkeypatch.setattr(fhc, "_scalar_int", lambda sql: seen.append(sql) or 0)
+    fhc.check_stops_armed()
+    unprotected = seen[0]
+    assert "AND NOT EXISTS (SELECT 1 FROM broker_orders o" in unprotected
+    assert "s.code = 'momentum_warn_live'" in unprotected
+    assert "o.status IN ('pending', 'submitted', 'accepted', 'partially_filled')" in unprotected
+    assert "bracket_stop_price" in unprotected and "momlive_native_child" in unprotected
+    # The owned-open denominator is unchanged: only the unprotected count gains the exemption.
+    assert "broker_orders" not in seen[1]

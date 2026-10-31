@@ -6,8 +6,8 @@ scheduled target uses that same exact [00:00, next 00:00) shape.  The duplicate-
 its published historical incident interval, while its requested-window target is still the same
 calendar day.  The root cron invokes this file across the UTC hours that can be 00:17-01:17 ET. The runner
 skips weekends/full-closure holidays and writes one durable result per session day.  PASS is the
-only success marker. Real failed/unknown current metrics notify. UNEXERCISED and the obsolete
-cross-venue pairing requirement remain non-green in status without phone notifications.
+only success marker. Real failed/unknown current metrics notify. UNEXERCISED remains non-green;
+cross-venue comparisons are N/A only when the report proves sealed single-venue routing.
 """
 
 from __future__ import annotations
@@ -214,18 +214,10 @@ def actionable_nonpass(verdict: str, lines: Sequence[str], denominator_ok: bool)
     """Keep real failed/unknown outcomes visible even when another metric is unexercised."""
     if not denominator_ok:
         return True
-    current_metrics = [line for line in lines if line.startswith("metric=")
-                       and not line.startswith("metric=paired_legs ")]
+    current_metrics = [line for line in lines if line.startswith("metric=")]
     if any(" verdict=FAIL " in line or " verdict=COULD_NOT_TELL " in line
            for line in current_metrics):
         return True
-    # An otherwise healthy report whose only failure is the obsolete cross-venue
-    # pair requirement is also status-only under one-broker country routing.
-    if verdict == "FAIL" and len(current_metrics) == 3 and all(
-        " verdict=PASS " in line or " verdict=UNEXERCISED " in line
-        for line in current_metrics
-    ) and any(line.startswith("metric=paired_legs verdict=FAIL ") for line in lines):
-        return False
     return verdict not in {"PASS", "UNEXERCISED"}
 
 

@@ -124,14 +124,22 @@ def test_s6_catalog_matches_all_on_live_set_and_149_checks_with_restoration_on()
     assert l11["expected"] is True
     assert [l11["owning_service"], *l11.get("also_check_services", [])] == ["schwab-1m-v2"]
     assert Settings.model_fields[l11_name].default is False
-    legacy_entries = [entry for entry in entries if entry["name"] not in {l11_name, l12_name}]
+    group1_off = {"scanner_nuweref1_enabled": "strategy"}
+    for name, owner in group1_off.items():
+        entry, = [item for item in entries if item["name"] == name]
+        assert entry["expected"] is False
+        assert entry["owning_service"] == owner
+        assert entry.get("also_check_services", []) == []
+        assert Settings.model_fields[name].default is False
+    legacy_entries = [entry for entry in entries
+                      if entry["name"] not in {l11_name, l12_name, *group1_off}]
     # The old bool-plus-numeric projection remains exact, not discarded.
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in legacy_entries
                if entry["name"] != "momentum_live_enabled") == 161 + 2 + 3 + 3
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in legacy_entries) == 164 + 2 + 3 + 3
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries
-               if entry["name"] != "momentum_live_enabled") == 172
-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 175
+               if entry["name"] != "momentum_live_enabled") == 173
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 176
     assert flags["webull_list_primary_reads_enabled"] is True
     assert flags["strategy_schwab_1m_v2_line_chart_restoration_enabled"] is True
 

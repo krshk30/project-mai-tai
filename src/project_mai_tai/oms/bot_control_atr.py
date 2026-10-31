@@ -342,10 +342,18 @@ async def emit_owned_stop(service, session, row):
         now = datetime.now(UTC)
         order_type, market_session, limit = _session_plan(account.provider, now, _quote(service, row.symbol))
         coid = f"ks1-atr-{lease.command_id.hex[:16]}-{row.id.hex[:16]}"
+        wb3_retry_sequence = 0
+        if wbexit3_stop.selected(service, account, now):
+            from project_mai_tai.oms import wbexit3
+            coid, wb3_retry_sequence = await wbexit3._joined(service._run_db(lambda unit: wbexit3_stop.next_identity(
+                service, unit, lease, journal, unit.get(OmsManagedPosition, row.id),
+                unit.get(BrokerOrder, entry.id), unit.get(BrokerAccount, account.id), datetime.now(UTC)), commit=False))
         metadata = {"oms_v2_managed_exit": "true", "entry_order_id": str(entry.id),
                     "managed_row_id": str(row.id), "killsw1_command": str(lease.command_id),
                     "order_type": order_type, "session": market_session, "time_in_force": "day",
                     "reference_price": str(current.entry_price)}
+        if wbexit3_stop.selected(service, account, now):
+            metadata["wbexit3_stop_retry_sequence"] = str(wb3_retry_sequence)
         if limit is not None:
             metadata.update(limit_price=str(limit), price_source="bid", extended_hours="true")
         event = TradeIntentEvent(source_service="oms-risk", payload=TradeIntentPayload(
@@ -547,6 +555,14 @@ async def _record_sell(service, session, lease, journal, attempt, order, intent,
 
 
 async def _read_exit(service, lease, journal, order_id):
+    from project_mai_tai.oms import wbexit3
+    if wbexit3.enabled(service):
+        def wb3_scope(unit):
+            previous = unit.get(BrokerOrder, order_id)
+            account = unit.get(BrokerAccount, previous.broker_account_id) if previous is not None else None
+            return account is not None and wbexit3_stop.selected(service, account, datetime.now(UTC))
+        if await wbexit3._joined(service._run_db(wb3_scope, commit=False)):
+            return await wbexit3_stop.read_existing(service, lease, journal, order_id)
     def read(unit):
         order = unit.get(BrokerOrder, order_id)
         if (order is None or order.side != "sell" or order.strategy_id != lease.strategy_id
@@ -637,6 +653,9 @@ def _settled_census(service, unit, lease):
             "source": "exact_owned_fill_vp_order_conservation"})} for account in lease.account_ids}
 
 
+from project_mai_tai.oms import wbexit3_stop
+
+
 class AtrStopDriver:
     def __init__(self, service):
         self.service = service
@@ -704,7 +723,23 @@ class AtrStopDriver:
                 BrokerOrder.payload["killsw1_command"].as_string() == str(lease.command_id),
                 BrokerOrder.status.in_(("rejected", "expired", "cancelled", "canceled"))).limit(1))
             if refused is not None:
-                raise ControlConflict("atr_stop_refusal_persisted_no_retry")
+                from project_mai_tai.oms import wbexit3
+                if not wbexit3.enabled(service):
+                    raise ControlConflict("atr_stop_refusal_persisted_no_retry")
+                refusals = unit.scalars(select(BrokerOrder).where(
+                    BrokerOrder.strategy_id == lease.strategy_id,
+                    BrokerOrder.payload["killsw1_command"].as_string() == str(lease.command_id),
+                    BrokerOrder.status.in_(("rejected", "expired", "cancelled", "canceled"))).limit(BOUND + 1)).all()
+                if len(refusals) > BOUND:
+                    raise ControlConflict("wbexit3_stop_complete_refusal_inventory_over_bound")
+                for previous in refusals:
+                    account = unit.get(BrokerAccount, previous.broker_account_id)
+                    if account is None or not wbexit3_stop.selected(service, account, datetime.now(UTC)):
+                        raise ControlConflict("atr_stop_refusal_persisted_no_retry")
+                    if not wbexit3_stop.retired(service, unit, lease, journal, previous, datetime.now(UTC)):
+                        working.append(previous)  # Same original _read_exit; NEVER a second SELL on UNKNOWN.
+                if len(working) > BOUND:
+                    raise ControlConflict("wbexit3_stop_complete_working_inventory_over_bound")
             return tuple(str(row.id) for row in rows), tuple(
                 (order.id, order.side) for order in working if order.id not in known_native), tuple(original_errors)
         try:

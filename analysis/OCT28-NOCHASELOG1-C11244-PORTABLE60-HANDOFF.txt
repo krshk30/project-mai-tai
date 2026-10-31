@@ -1,0 +1,88 @@
+OCT28-1108-NOCHASELOG1-NEXT-BUILD — C11244 portable-controls checkpoint
+Original Galileo, SOURCE/FILE ONLY. Main alone integrates/tests/ships.
+Root /private/tmp/oct28-galileo-nochase-log-source-20261028.
+Current APP source is BYTE-IDENTICAL to672c8fbb5964d94fc89489b03c00785d85c225de.
+No Settings switch/field/env. All old marker/severity/decision paths unchanged.
+
+SEVERITY PART REMOVED ENTIRELY
+Deleted active ops/nochaselog1_recovery.py and its19test module. No classifier,
+ERROR->WARNING, threshold, timer, digest handler or severity parser ships in
+this proposal. Full prior672 source/history remains preserved for the separately
+deferred SMARTALERT digest follow-up. Withdrawn flag proposalec349 also remains
+history only. C11244 controls the active package; older handoffs are historical.
+
+ACTIVE CONTROL ROSTER —60 / NO SKIP / ALL AUTHOR-UNRUN
+1. tests/unit/test_postflip_nochase_log.py:16 pure annotation formatter cases.
+2. tests/unit/test_postflip_nochase_hooks.py:25 actual proposed/OLD core method
+cases including full-field decision/owner equality, PM/RTH/single-dual/live vs
+state_only8expansions, real SELL/newBUY, reset/rebuild/seed identity, missing
+BUY/no fiction, old ERROR unchanged, strict-ownerOFF/freshBUY exception, old
+marker/clock-call parity and7new annotation-failure isolation cases.
+3. tests/unit/test_postflip_nochase_lifecycle.py:19 meaningful replacements:
+   - SELL/reset/different session invalidation3;
+   - malformed observed transition bar/anchor6;
+   - same/older flip reconstruction dedup1;
+   - next SELL/BUY identity emits once1;
+   - same-symbol replacement lifetime/other-symbol independence1;
+   - observed BUY cannot invent missing/invalid retry identity4;
+   - supplied-state comparator refuses empty/mislabelled/unbound evidence3.
+These19 test actual annotation/helper/input refusal contracts; they are NOT
+retained historical POM/SPRC replay or substitutes for a required actual fixture.
+No private files, environment-selected OLD world, skip, xfail, source-download,
+git-history availability, native, database or provider access required by these
+60. No author tests/import/compile/model/parser/runtime occurred.
+
+PORTABLE LITERAL OLD32 — EXACT SOURCE, NOT MOCKED TARGET-OFF
+tests/fixtures/nochaselog1/old32_core.py.gz.b64 is the exact public repository
+32core545135bytes/9877lines, deterministic gzip -n128735bytes, base64text
+173436bytes. No private captured account/native data.
+Encoded SHA4902377cdbcc1ca412cead7fa0aba42f12f0ee331bb98560d40bbbb2e39cde0b.
+Decoded source SHAabf79c2b2fd8a0f9e9f946d6b461f44e924cfdc4d38e92ee4a08d1c7400414bc.
+Original commit32b0f6f6860bf6441363cddd91aa20709005f691/path
+src/project_mai_tai/strategy_core/schwab_1m_v2.py,
+blobd5102aa5dce8444c14fe6fd33a1980c43f8e6860.
+FILE-only base64/gzip/hash reconstruction checked the original source SHA;
+this is not Python execution. In CI the test verifies BOTH hashes then loads
+the real entire old module in a distinct namespace. All actual helper methods
+remain; no sliced admission rewrite/subclass/NEWfeatureOFF/behavior mock.
+Full baseline is necessary to avoid such a reconstructed OLD function. Compressed
+128735bytes is about126KiB and independent of private worktrees/shallow Git.
+Common dependencies still come from the CI checkout: OLD CORE proof only,
+not a whole old deployment/native/database snapshot. See OLD32-PROVENANCE.txt.
+
+STATIC COMPARISON-CONTRACT CORRECTION BEFORE FIRST EXECUTION
+asdict does not recurse inside deque; otherwise identical OLD OHLCVBar and NEW
+OHLCVBar would compare unequal because module namespaces differ. public_values
+now captures class qualname and EVERY dataclass field recursively, list/tuple
+shape, dictionary keys/values, deque maxlen/order and exact numeric/ID values.
+Only literal import namespace identity is excluded; no fields/prices/volume/
+clock/segment keys are dropped, rounded, aliased or tuned. Existing equality
+assertions remain, and original old-marker/clock-call assertions remain.
+This is source-caught fixture infrastructure, not a rerun/waiver/test PASS.
+
+REQUIRED SANITIZED ACTUAL POM/SPRC FIXTURE — MATERIAL INPUT BLOCKER
+C11244 requires exact existing v2 lines POM2026-10-28 10:54-11:05ET +SPRC,
+symbols/times/tags only, no keys/accounts except permitted live:orb, repository
+fixture with hash pin. Main requested C1's exact retained packet/path/hash.
+No such POM/SPRC raw packet/line binding has been delivered to this author.
+SPRC6+4 actual owner snapshot rows are NOT exact original v2 log lines/callback
+tape. C1 prose is NOT an original raw log. Earlier POM09:33-09:45 MOM/OMS and
+POM10-21 data have wrong scope. GCTK/ELPW are NOT substitutes; those severity
+tests were removed, not relabeled. No empty/guessed log fixture is committed.
+Do not call this required actual-fixture criterion met. Main/C1 must provide
+already-retained exact raw lines/hash, or explicitly amend/defer that criterion.
+No new query/capture/provider/export or fabricated receipt is authorized.
+Once delivered, source sanitizer/fixture binding estimate10-15min, no runtime.
+Full callback replay gap remains separately UNKNOWN/DEFERRED under12:16, not
+resolved by the portable old-source fixture or these controlled60.
+
+INTEGRATION/EXECUTION OPERANDS
+Active APP/external patch remains exactly
+/private/tmp/OCT28-NOCHASELOG1-EXEMPT-CORE-EXTERNAL-PROPOSAL.diff
+SHAcc7c16dc3fcf223f891da52f3505ba19dde69a162d153565344e92d48aecd7d0;
+core52add0delete against32 and full helper. Shared integration Main only.
+Proposed core SHA6445eeeec902659200c2a8c0899515daf5feb5099cfeeb14ba0a3a8d42aceb42.
+Main may review the three active modules/public fixture without any private
+dependency. No author runtime/CI/push/install; actual60 qualification remains
+OPEN. Existing producer ERROR levels and all refusals unchanged; no whole GO.
+Tonight source/L3 untouched; scannerABC queued pending its own interface review.

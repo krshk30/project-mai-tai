@@ -697,7 +697,9 @@ def _launder_target_buy_fill_time(sql: str) -> str:
         CROSS JOIN target_bounds b
     ) fbo ON fbo.order_id = bo.id
     CROSS JOIN target_bounds b"""
-    return _replace_once(sql, old, new)
+    # The installed SQL also joins fills in another CTE; mutate only the
+    # target BUY population while preserving the singular-site assertion.
+    return _replace_once_in_cte(sql, "target_buy_legs", old, new)
 
 
 def _launder_sell_fill_time(sql: str) -> str:

@@ -1,0 +1,103 @@
+OCT28-1108-NOCHASELOG1-NEXT-BUILD — cohesive external hook proposal
+2026-10-28 original Galileo; SOURCE ONLY / ALL CONTROLS UNRUN.
+Review this successor, not the initial e830 standalone formatter as integration.
+Dedicated future root /private/tmp/oct28-galileo-nochase-log-source-20261028.
+Tonight32, L3 4460 and shared/installed roots untouched. ScannerABC queued.
+
+EXACT SOURCE BOUNDARY
+Base32b0f6f6860bf6441363cddd91aa20709005f691.
+Literal old core SHAabf79c2b2fd8a0f9e9f946d6b461f44e924cfdc4d38e92ee4a08d1c7400414bc.
+Proposed core SHA66f6834d99c2b48e70eb1692f0f0b8476fed4fa2fb471672b1e229a953f2b6ec.
+One existing shared core changed ONLY as EXTERNAL proposal in this owned root;
+Main alone reviews/applies its actual shared integration. No service/Settings/
+country/router/guard edits. Core29additions0deletions. New helper only.
+/private/tmp/OCT28-NOCHASELOG1-CORE-HOOK-PROPOSAL.diff
+SHA122e32f283dd2c11ec8aa645c053cb192a01e24656bde9f7fcee822f4ae3b89f.
+Patch includes complete helper addition plus core import and all four seams.
+
+FOUR SEAMS / COMPLETE CALLER REVIEW
+1. Actual _update_atr_state BUY/SELL transition: observe exact cur.timestamp_ms
+and computed session anchor AFTER mathematical state transition, including
+state_only reconstructed history. No observation-now/retryID->BUY fabrication.
+2. Existing _reset_atr_indicator_state: clear CURRENT observed BUY only. Keep
+last emitted flip to suppress duplicate reconstruction of an earlier/same flip.
+3. Existing seeded-anchor temporary reset+restore: preserve observer.current
+alongside actual indicator restoration. Do not insert into economic snapshot.
+Without this seam a valid seeded BUY would lose diagnostic identity on the next
+live bar. Other reset/rebuild/session04 paths route through the existing reset;
+fresh SymbolState has no observer and cannot inherit another instance's log.
+4. _strict_first_rest_admitted AFTER final reason/allowed and existing watchdog
+but BEFORE per-minute admission-log early return: format from ALREADY computed
+short_segment/retry_segment/allowed/reason; exact mismatch/long/short0/known
+BUY-after-retry only. No repeated guard, clock, router, permission or queries.
+INFO new line; original ADMISSION and all COUNTRY catches remain unchanged.
+Country _country_entry_selection already invokes the real strict method at its
+existing site; we add no invocation/catch/exception rewriting there.
+
+OBSERVER STORAGE / TRADING INVARIANTS
+One small object attached to state.__dict__['_postflip_nochase_log']; not a
+SymbolState dataclass field, so asdict/field equality and durable owner record
+methods do not acquire it. Current observed tuple + one last-log timestamp;
+no growing per-flip/per-account cache, no tasks/timer/native/DB operations.
+Source search found no generic vars/asdict(state) economic consumer in APP;
+existing _resting_return_diagnostics uses the same dynamic diagnostic pattern.
+PM/RTH/both broker paths share the symbol observer, no per-leg duplicate.
+Order/draft/reserve/owner/position/retry/latch/refusal and persistence methods
+not edited. Existing UNKNOWN ERROR text/level left intact, no guessed N.
+This is static source scope, NOT a proven unchanged-runtime/outcome claim.
+
+CONTROLS / SELECTOR SCOPE — SOURCE ONLY / MAIN EXECUTES
+tests/unit/test_postflip_nochase_log.py:16 initial formatter controls UNRUN.
+tests/unit/test_postflip_nochase_hooks.py:18 new hook controls UNRUN:
+- literal32 versus proposed REAL strict/country methods, PM/RTH x single/dual
+  x live/state_only BUY transitions (8 expansions);
+- actual SELL/newBUY/reset, history reconstruction observer reuse/newState,
+  seeded-anchor temporary reset restoration, missing observed BUY identity,
+  UNKNOWN ERROR preserved, literal-source identity refusal, strictOFF,
+  fresh-BUY samebar override retains its later evidence refusal, original
+  marker level/text + business-clock-call-count parity, no delayed-error state.
+Total34, not original-case/native qualification. No tests/import/AST/compile run.
+Fixture controlled indicator/entry preimages are explicitly CONTROLLED_STATE;
+no fake historical flat/readability/book permission is asserted. Literal old
+loaded from frozen32core only after exact byteSHA check; never featureOFFnew.
+
+PURE SUPPLIED-STATE CALLER
+tools/nochaselog1_supplied_state_replay.py::compare_supplied_state
+No files/parser/I/O/clock/source loading. Two distinct real strategy classes,
+caller-supplied finite events/advance/capture delegates. Defensive copies per
+world; preserves exact Python numeric objects and returns explicit supplied-
+state equality. Rejects missing origin/ref and empty records/sameclassOLD.
+Always historical_replay_qualified=False/native_proof=False; cannot promote an
+incomplete owner packet to full causal callback replay. Fixture capture includes
+every SymbolState dataclass field, real durable owner-record values, owner
+counters and pending intents; real gate/country call results compared eachstep.
+Does not claim every APP publication path covered by these controlled checks.
+
+RETAINED INPUT CENSUS / IMMEDIATE FINITE GAPS
+analysis/OCT28-NOCHASELOG1-RETAINED-INPUT-MANIFEST.json pins exact existing
+SPRC owner packets/physical lines/SHAs, GCTK+ELPW severity sequence and excludes
+wrong-day POM10-21 bars + unrelated MOM09:33-09:45 packet. All read FILE only.
+SPRC first owner6rows second4rows are genuine snapshots, not received callback
+events. Transient08:56UNKNOWN reconciles/binds08:56:11; do not call permanent.
+POM10:54-11:05 exact V2 raw callback manifest NOTFOUND in scoped retained
+task-queue names/current C1 references. C1 11:03 prose provides known branch
+facts but NOT full state/prefix/membership/profile/availability operands.
+No original full POM/SPRC callback outcome replay may be claimed until Main
+binds already-retained exact input clock/profile/prefix/owner/event-order tape.
+No capture/provider/SQL/import/parser run was authorized or performed to fill it.
+Main can run bounded controlled34 after source review independently of this gap.
+
+DEFERRED SEVERITY / N
+Original raw ERROR retained everywhere, including unresolved/native ambiguity.
+Only supplied severity sequence GCTK935ms and ELPW10109ms;3UNKNOWNrecords but
+2episodes, BRAI missing, complete today count UNKNOWN, opportunity0 ambiguity.
+No N chosen, no proactive WARNING based on future recovery, no timeout task.
+Propose delayed STANDALONE digest classification after Main/C1 binds complete
+events/N/mechanics; raw evidence remains immutable. GCTK/ELPW recovered state
+need not mean entry_allowed1 (ELPW legitimately remains held after fill).
+Consumer inventory/old compatibility remains in initial source handoff.
+
+STATUS
+Source proposal ready for Main integration review. All34 UNRUN. Full historical
+POM/SPRC equality blocked on named retained operands. No activation/deployment/
+native/strategy-policy claim. No source integration beyond this private root.

@@ -197,7 +197,9 @@ async def test_actual_snapshot_lifecycle_handler_does_not_borrow_warning_epoch_o
         observed_at=datetime.fromtimestamp(sip / 1_000_000_000, UTC),
         payload={field: {"sip_ts_ms": START + 1000, "price": "10.1"}},
     )
-    service._engine = SimpleNamespace(ingest=lambda *args, **kwargs: (record,))
+    # #1168 gates the retired legacy snapshot path on strategy_windows; keep it on here.
+    service._engine = SimpleNamespace(strategy_windows={"momentum_30s": 30},
+                                      ingest=lambda *args, **kwargs: (record,))
     service._persist = AsyncMock()
     event = TradeTickEvent(source_service="market-data-gateway", payload=TradeTickPayload(
         symbol="TEST", price="10.1", size=100, timestamp_ns=sip,
@@ -270,7 +272,7 @@ async def test_queued_old_snapshot_after_new_warning_epoch_retains_original_enve
         strategy_code="momentum_30s", event_type="DETECTED", symbol="TEST", session_date=DAY,
         observed_at=original.produced_at, payload=summary,
     )
-    service._engine = SimpleNamespace(active_symbols=set(),
+    service._engine = SimpleNamespace(active_symbols=set(), strategy_windows={"momentum_30s": 30},
                                       detect_from_snapshots=lambda *args, **kwargs: ((record,), 0))
     service._condition_snapshot = _condition_snapshot()
     service._clock = lambda: datetime.fromtimestamp(received/1_000_000_000, UTC)

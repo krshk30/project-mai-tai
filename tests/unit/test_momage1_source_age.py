@@ -140,9 +140,12 @@ def test_shared_sixteen_cap_and_eligibility_unchanged(controlled_bound):
         item, observed_ns=observed, legacy_active={f"X{index}" for index in range(16)},
     )
     assert outcome.reason == "warning_cap_full" and not records
-    model = fresh_consumer()
-    model.engine.prior_closes.clear()
-    outcome, records = model.observe_aggregate(item, observed_ns=observed, legacy_active=set())
+    # #1168 (10-27) moved the $1 eligibility floor from the prior close to the bar close.
+    sub_dollar = replace(item, open=Decimal("0.5"), low=Decimal("0.5"),
+                         high=Decimal("0.9999"), close=Decimal("0.9999"))
+    outcome, records = fresh_consumer().observe_aggregate(
+        sub_dollar, observed_ns=observed, legacy_active=set(),
+    )
     assert outcome.reason == "warning_symbol_or_time_filter" and not records
 
 

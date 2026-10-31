@@ -14,7 +14,7 @@ from tools import l12_private_schema_evidence as schema
 from tools import l12_private_restore_main as caller
 from tools import l12_main_nonce_target as target_module
 from tools.l12_scoped_chunks_v2 import canonical
-from tests.unit.test_l12_nonce_restore_caller import nonce  # Explicit own-nonce fixture, no transitive fixture reliance.
+from tests.unit.test_l12_nonce_restore_caller import nonce as nonce  # Explicit own-nonce fixture, no transitive fixture reliance.
 from tools.l12_nonce_copy_lease import NonceCopyLease
 
 

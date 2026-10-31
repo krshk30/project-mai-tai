@@ -54,7 +54,7 @@ def test_existing_channel_source_is_pinned_and_read_not_executed():
     raw = b'NTFY_URL="https://ntfy.sh/CONTROLLED_NOT_SENT"\nraise RuntimeError("MUST_NOT_EXECUTE")\n'
     assert phone.existing_channel(raw, reviewed_sha=sha256(raw).hexdigest()) == "https://ntfy.sh/CONTROLLED_NOT_SENT"
     real = Path(__file__).resolve().parents[2] / "ops/health/armed_segments_check.py"
-    assert sha256(real.read_bytes()).hexdigest() == "ee8c3116635429e7ad2ed5453bcd8cb13ebc311f528bc46da2c5fa20cedbe1e2"
+    assert sha256(real.read_bytes()).hexdigest() == "72c1d3ed56f0e7f21f754c470ed7dfa0a0070af7a1527939bc51fbdd40366cff"
 
 
 @pytest.mark.parametrize("literal", ["http://ntfy.sh/topic", "https://foreign.example/topic", "https://ntfy.sh/",
@@ -112,7 +112,8 @@ async def test_cancellation_reaps_inflight_process_and_propagates():
     task = asyncio.create_task(send("RED", "body"))
     await asyncio.sleep(0)
     task.cancel()
-    with pytest.raises(asyncio.CancelledError): await task
+    with pytest.raises(asyncio.CancelledError):
+        await task
     assert len(calls) == 1 and process.killed and process.reaped
 
 
@@ -154,7 +155,9 @@ def test_flag_off_does_not_install_or_construct_sender(monkeypatch):
 def test_service_default_factory_is_installed_once_without_network(monkeypatch):
     calls = []
     injected = object()
-    def make(): calls.append(1); return injected
+    def make():
+        calls.append(1)
+        return injected
     monkeypatch.setattr(phone, "make_owner_phone", make)
     service = SchwabV2BotService(Settings(strategy_schwab_1m_v2_brokerdecides1_enabled=True))
     assert calls == [1] and service._brokerdecides1_owner_phone is injected

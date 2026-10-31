@@ -56,7 +56,7 @@ def test_explicit_non_boolean_legacy_value_refuses_instead_of_enabling(value):
 
 def test_catalog_registers_exact_optional_default_off_expected_on_owner():
     entries = flags.load_catalog(CATALOG)
-    assert len(entries) == len(flags.boolean_fields()) == 145
+    assert len(entries) == len(flags.boolean_fields()) == 154  # +NCPL fresh-SELL retry-request handoff
     entry = next(item for item in entries if item['name'] == KEY)
     assert entry['expected'] is True
     assert entry['owning_service'] == 'schwab-1m-v2'

@@ -492,3 +492,14 @@ def test_dangerous_wins_over_boot_hold(asc, monkeypatch):
     assert asc.main() == 2
     assert len(asc._pages) == 1
     assert "DANGEROUS" in asc._pages[0][0]
+
+
+def test_empty_watchlist_hold_past_grace_is_quiet_but_a_watched_stock_still_pages(asc, monkeypatch):
+    # Operator 10-30: the 06:35-07:05 pages fired every 5 min with watchlist=[] (cold pre-market).
+    snap = {"cw_armed_segments": [], "entries_held": True, "restoration_complete": False, "watchlist": []}
+    monkeypatch.setattr(asc, "latest_v2_snapshot", lambda: (dict(snap), 3.0))
+    monkeypatch.setattr(asc, "uptime_secs", lambda: 3600.0)
+    assert asc.main() == 0 and not asc._pages
+    snap["watchlist"] = ["JDZG"]
+    assert asc.main() == 2
+    assert "STATE RESTORATION INCOMPLETE" in asc._pages[0][0]

@@ -14,7 +14,8 @@ def scanner():
     # actual anchor method's documented existing clock input is exercised.
     value = object.__new__(StrategyEngineService)
     value.session_factory = object()
-    original = lambda: datetime(2026, 10, 24, 16, tzinfo=UTC)
+    def original():
+        return datetime(2026, 10, 24, 16, tzinfo=UTC)
     value.state = SimpleNamespace(alert_engine=SimpleNamespace(now_provider=original))
     return value, original
 

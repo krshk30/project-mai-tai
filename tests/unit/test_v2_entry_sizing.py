@@ -82,7 +82,9 @@ def _v2_event(account: str, quantity: int, price: str) -> TradeIntentEvent:
             quantity=Decimal(quantity),
             intent_type="open",
             reason="ATR Flip",
-            metadata={"order_type": "STOP_LIMIT", "limit_price": price},
+            # Production V2 drafts retain the raw entry price for PRICE1 before
+            # the OMS applies sizing/account policy to the wire limit.
+            metadata={"order_type": "STOP_LIMIT", "entry_price": price, "limit_price": price},
         ),
     )
 

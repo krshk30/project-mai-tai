@@ -18,7 +18,7 @@ from project_mai_tai.db.models import (
     BrokerDecidesDispatchEvidence as Evidence, BrokerDecidesDispatchRetirement as Retirement,
     BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill, TradeIntent,
 )
-from tests.unit.test_brokerdecides1_local_census import ACCOUNTS, attempt, census, order
+from tests.unit.test_brokerdecides1_local_census import ACCOUNTS, attempt, census as census, order
 from tests.unit.test_brokerdecides1_retirement import observed, seal_one
 
 

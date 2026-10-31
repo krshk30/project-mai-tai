@@ -1,0 +1,262 @@
+{
+  "schema": 1,
+  "scope": "SANITIZED_ACTUAL_LOG_MARKERS_NOT_CALLBACK_REPLAY",
+  "raw_source_name": "OCT28-C1-NOCHASE-FIXTURE-POM-SPRC.log",
+  "raw_source_sha256": "17efb9342d5bc0c3d6ab7a9159b6c8f7e9ee9ee5adffb7afd21b78ee4ccefe0b",
+  "raw_source_bytes": 71182,
+  "raw_source_lines": 217,
+  "fixture_name": "pom_sprc_actual.tsv",
+  "fixture_sha256": "3839690d7ab1610ac8e19b0185ce3851b7ddbbf1ee7fbf1a88c5692cc52577e9",
+  "fixture_bytes": 2984,
+  "fixture_rows": 57,
+  "columns": [
+    "original_utc_timestamp",
+    "symbol",
+    "original_marker_tag"
+  ],
+  "selection": "All original admission retry_segment_mismatch records and original country_owner_admission_unproven refusal records, plus the original POM V2-CW-ARM record; payloads/levels/logger names removed.",
+  "forbidden_in_fixture": "No reasons, counters, epochs, opportunity/order/client/native IDs, prices, quotes, positions, accounts, keys, tokens or paths.",
+  "counts": {
+    "POM": {
+      "admission": 12,
+      "country_refused": 12,
+      "arm": 1
+    },
+    "SPRC": {
+      "admission": 16,
+      "country_refused": 16,
+      "arm": 0
+    }
+  },
+  "limitation": "28 actual mismatch admission log records; the 29th textual retry_segment_mismatch match is the SPRC header, not an event. Counts do not prove guard invocations, orders, permission, fills, chronology outside selected context or complete callback outcomes.",
+  "line_map": [
+    {
+      "fixture_line": 1,
+      "raw_line": 5
+    },
+    {
+      "fixture_line": 2,
+      "raw_line": 16
+    },
+    {
+      "fixture_line": 3,
+      "raw_line": 18
+    },
+    {
+      "fixture_line": 4,
+      "raw_line": 23
+    },
+    {
+      "fixture_line": 5,
+      "raw_line": 25
+    },
+    {
+      "fixture_line": 6,
+      "raw_line": 30
+    },
+    {
+      "fixture_line": 7,
+      "raw_line": 32
+    },
+    {
+      "fixture_line": 8,
+      "raw_line": 37
+    },
+    {
+      "fixture_line": 9,
+      "raw_line": 39
+    },
+    {
+      "fixture_line": 10,
+      "raw_line": 44
+    },
+    {
+      "fixture_line": 11,
+      "raw_line": 46
+    },
+    {
+      "fixture_line": 12,
+      "raw_line": 51
+    },
+    {
+      "fixture_line": 13,
+      "raw_line": 53
+    },
+    {
+      "fixture_line": 14,
+      "raw_line": 58
+    },
+    {
+      "fixture_line": 15,
+      "raw_line": 60
+    },
+    {
+      "fixture_line": 16,
+      "raw_line": 65
+    },
+    {
+      "fixture_line": 17,
+      "raw_line": 67
+    },
+    {
+      "fixture_line": 18,
+      "raw_line": 72
+    },
+    {
+      "fixture_line": 19,
+      "raw_line": 74
+    },
+    {
+      "fixture_line": 20,
+      "raw_line": 79
+    },
+    {
+      "fixture_line": 21,
+      "raw_line": 81
+    },
+    {
+      "fixture_line": 22,
+      "raw_line": 86
+    },
+    {
+      "fixture_line": 23,
+      "raw_line": 88
+    },
+    {
+      "fixture_line": 24,
+      "raw_line": 93
+    },
+    {
+      "fixture_line": 25,
+      "raw_line": 95
+    },
+    {
+      "fixture_line": 26,
+      "raw_line": 101
+    },
+    {
+      "fixture_line": 27,
+      "raw_line": 103
+    },
+    {
+      "fixture_line": 28,
+      "raw_line": 108
+    },
+    {
+      "fixture_line": 29,
+      "raw_line": 110
+    },
+    {
+      "fixture_line": 30,
+      "raw_line": 115
+    },
+    {
+      "fixture_line": 31,
+      "raw_line": 117
+    },
+    {
+      "fixture_line": 32,
+      "raw_line": 123
+    },
+    {
+      "fixture_line": 33,
+      "raw_line": 125
+    },
+    {
+      "fixture_line": 34,
+      "raw_line": 131
+    },
+    {
+      "fixture_line": 35,
+      "raw_line": 133
+    },
+    {
+      "fixture_line": 36,
+      "raw_line": 138
+    },
+    {
+      "fixture_line": 37,
+      "raw_line": 140
+    },
+    {
+      "fixture_line": 38,
+      "raw_line": 145
+    },
+    {
+      "fixture_line": 39,
+      "raw_line": 147
+    },
+    {
+      "fixture_line": 40,
+      "raw_line": 152
+    },
+    {
+      "fixture_line": 41,
+      "raw_line": 154
+    },
+    {
+      "fixture_line": 42,
+      "raw_line": 159
+    },
+    {
+      "fixture_line": 43,
+      "raw_line": 161
+    },
+    {
+      "fixture_line": 44,
+      "raw_line": 167
+    },
+    {
+      "fixture_line": 45,
+      "raw_line": 169
+    },
+    {
+      "fixture_line": 46,
+      "raw_line": 175
+    },
+    {
+      "fixture_line": 47,
+      "raw_line": 177
+    },
+    {
+      "fixture_line": 48,
+      "raw_line": 183
+    },
+    {
+      "fixture_line": 49,
+      "raw_line": 185
+    },
+    {
+      "fixture_line": 50,
+      "raw_line": 191
+    },
+    {
+      "fixture_line": 51,
+      "raw_line": 193
+    },
+    {
+      "fixture_line": 52,
+      "raw_line": 199
+    },
+    {
+      "fixture_line": 53,
+      "raw_line": 201
+    },
+    {
+      "fixture_line": 54,
+      "raw_line": 207
+    },
+    {
+      "fixture_line": 55,
+      "raw_line": 209
+    },
+    {
+      "fixture_line": 56,
+      "raw_line": 215
+    },
+    {
+      "fixture_line": 57,
+      "raw_line": 217
+    }
+  ]
+}

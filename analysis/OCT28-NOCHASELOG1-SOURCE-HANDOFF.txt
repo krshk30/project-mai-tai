@@ -1,0 +1,125 @@
+OCT28-1108-NOCHASELOG1-NEXT-BUILD — source-only first checkpoint
+Owner: original Galileo. Main owns shared service/core hooks, integration and
+all execution. Parent 32b0f6f6860bf6441363cddd91aa20709005f691; tonight32 and
+SMARTL3 4460 remain unchanged. No test/import/replay/provider/query executed.
+
+SUPERSESSION
+Operator11:08 CANCELS11:05 late-entry rule study. No study/capture/late-entry
+rule change. The stale C11520 L12 audit is not an active assignment. ScannerABC
+proposal stays queued; L3 actual60PASS is Main-reported, not rerun here.
+
+CONSUMER INVENTORY — exact marker search of tracked32 tree and active fullscan
+Active production emitters:
+src/project_mai_tai/strategy_core/schwab_1m_v2.py: UNKNOWN1394;
+RECOVERY2383/2413/2449/2501/2525; ADMISSION3200;
+ATR-COUNTRY-REFUSED6753/6949.
+src/project_mai_tai/services/schwab_1m_v2_bot.py:1457 publish country refusal.
+Active readers:
+ops/health/known_defect_regression_watch.py:500-501 OWNERROLL1 detects both
+UNKNOWN and RECOVERY after roll; preserves symbol identity and both markers.
+tools/l12_original122_field_binding.py:310 and
+tools/l12_original122_retained_materialization.py:60 require exact ADMISSION,
+slot=first and retained callback clock/field syntax.
+tools/l12_worx_olox_replay.py:94 retains verbatim RECOVERY lines.
+/Users/velkris/.claude/tools/mai-tai-fullscan/run.sh:83 parses last ADMISSION
+allowed/slot/reason;97 uses UNKNOWN history to explain owner_phase_unknown.
+/Users/velkris/.claude/tools/mai-tai-fullscan/analyze.py:81-82 classifies UNKNOWN
+as loss of resting/leg state. New no-chase marker must not replace its evidence.
+Archived executable reader:
+docs/review-artifacts/rpg1/analyze_reprice_logs.py:66 reads ADMISSION allowed=0.
+Test consumers:
+tests/unit/test_known_defect_regression_watch.py:336/339;
+test_orbown1_native_admission.py:100/207; test_orbown1_strategy_reads.py:121;
+test_rpgstuck1.py:217 counts20 ADMISSION records;
+test_schwab_1m_v2_retry_one_recovery.py:132;
+test_v2_removed_wait_l1_replay.py:440 exact ADMISSION text.
+Documentation/immutable evidence matches (not active deployment readers):
+docs/design/reclaim1-flip-owned-first-entry.md
+docs/handoff-log.md
+docs/handoff-manifest/2026-09-13-known-defect-watch.md
+docs/handoff-manifest/2026-09-27-weekend-gaphold-unit-error-batch-of-eight-deployed-flag-audit-alert-split.md
+docs/review-artifacts/clearwait1/{evidence,released_evidence}.json
+docs/review-artifacts/nfq2-hotfix1-proof/focused-01/suite.txt
+docs/review-artifacts/retryleft1/{apus-own-read,artl-own-read}.json
+docs/review-artifacts/slotclear1/SELL_EVIDENCE_2026-10-07.json
+docs/review-artifacts/slotclear1/rebased-candidate-unit/output.txt
+docs/v2-live-evidence-2026-09-11.md
+Fullscan backup scripts/analyzers and full.txt/last_report.txt/box.txt also match;
+they are historical copies/results, not proof of active configuration. No claim
+of consumers outside this repository and the named fullscan tree being censused.
+
+BUILD DELIVERED / DELIBERATE INTEGRATION BOUNDARY
+New pure formatter strategy_core/postflip_nochase_log.py, with16 source-only
+controls in tests/unit/test_postflip_nochase_log.py (UNRUN).
+It consumes the ALREADY evaluated allowed/reason/short/retry/ATR state plus an
+actual observed BUY flip bar; returns additive exact INFO text at most once per
+successively observed flip per symbol instance. No guards recalled, no logger,
+wallclock, I/O or admission state changes. Missing/invalid flip identity remains
+unclassified. Monotone last-emitted bar suppresses replay of older history.
+This helper is NOT wired and NOT operational qualification.
+
+MAIN-OWNED HOOK PROPOSAL / review BEFORE shared source change
+1. At actual BUY transition _update_atr_state5637-5638, retain cur.timestamp_ms
+as an OBSERVATIONAL BUY flip identity. This must also cover causal history/state
+reconstruction; do not manufacture it from retry segment or observation time.
+Clear the observational current-BUY identity on actual SELL/session/state reset;
+do not clear trading owner/slot/retry state. Lifecycle storage must belong to the
+same SymbolState lifetime and remain excluded from economic persistence/proofs.
+2. At _strict_first_rest_admitted after reason/allowed are FINAL, before existing
+per-minute logging early return3196, feed formatter only the already-computed
+values. Required precise path: reason=retry_segment_mismatch, allowed=False,
+atr_state=long, short_segment=0, retry_segment>0, known BUY flip later than retry.
+Never classify other mismatches/UNKNOWNs. Emit returned line INFO. Keep original
+ADMISSION text/level/counters/return and watchdog call exactly unchanged.
+3. Country selection1058-1061 currently invokes the strict gate then raises
+country_owner_admission_unproven. It needs NO second guard invocation or catch
+rewrite: the same existing gate emits the new annotation; all country catches
+and existing warning/ERROR records stay byte-identical. Repeated sizing/publish
+calls must share symbol observer so they cannot duplicate the per-flip line.
+4. One per flip is symbol-level, not broker/account/session-path throttling;
+both PM and RTH and both brokers retain every original admission/refusal.
+No Settings flag, permission, order shape or threshold change is proposed.
+Because Main owns these shared hooks, no external shared-file patch is applied.
+
+09:27 SEVERITY — NO FABRICATED N / NO FUTURE KNOWLEDGE
+Source _set_flip_owner_unknown1391 changes phase then logs ERROR immediately.
+Actual retained packet OCT28-C1-FLIPOWNER-SEQ.txt SHA
+4a76d42275942213aa326343def92b93891b299e425d9eb9e8c9c55ddcf7a869:
+GCTK two UNKNOWN records at12:45:01.739Z, RECOVERY12:45:02.674Z =>935ms;
+ELPW UNKNOWN13:03:00.883Z, RECOVERY13:03:10.992Z =>10109ms,
+entry_allowed=0 (reconciled holding, NOT an admission release).
+This is3 UNKNOWN records/2 symbol episodes, not3 independent recovery samples.
+BRAI is absent from this42-line packet. No complete today denominator, no
+same-symbol multiple-opportunity disambiguation for GCTK opportunity_id0.
+N is UNQUALIFIED. Existing raw ERROR remains until C1 approves mechanics.
+Concrete review choice: keep raw producer ERROR and classify a delayed digest
+only after N and complete incident identity/coverage are qualified. Match by
+process epoch+symbol+opportunity/explicit sequence, not symbol+nearest-time;
+opportunity0 ambiguous matches UNKNOWN. Unresolved/incomplete/read gaps remain
+ERROR/UNKNOWN, never silently suppressed. Recoveries with entry_allowed0 count
+as evidence reconciliation, not trade permission. This changes no producer log
+severity until separate review. Alternate future producer WARN-then-ERROR at N
+requires timer/expiry/shutdown delivery guarantees, exceeds formatting-only hot
+path and is NOT implemented or implied approved by this checkpoint.
+
+RETAINED-INPUT REPLAY / FINITE MISSING OPERANDS
+Main must bind original POM2026-10-28 10:54-11:05ET and SPRC2026-10-26 packet
+manifests/source hashes to exact caller/head/profile, causal bars/membership/
+entry operands. No new capture or provider lookup is authorized to fill gaps.
+No exact POM interval manifest was delivered with11:08; prior SPRC named owner
+packets alone are not a complete callback tape. Main chooses existing retained
+executor and records missing operands explicitly. Replay must compare complete
+OLD/NEW admission returns, owner/slot/position/retry/persistence changes, draft
+bytes and country outcomes; only additive log record may differ. PM/RTH+both
+brokers, same flip repeated minute/country/leg calls, next SELL/BUY, fresh-same-
+BUYbar slotclear exception, strictOFF, missing/stale native/history, restart,
+unknown actual flip identity and second symbol are required control scopes.
+No hypothetical price/fill/target/stop study, no late-entry permission, no
+relabeling controlled helper controls as POM/SPRC replay/native proof.
+
+NEXT / ETA
+First source checkpoint is ready for Main hook/interface review. Actual shared
+hook source and retained replay eligibility remain OPEN. After Main fixes the
+shared-file ownership boundary and literal packet operands, estimate20-30min
+for one cohesive hook+control source batch; not a runtime/qualification promise.
+SMARTL3 and tonight32 untouched; scannerABC resumes only after this priority.

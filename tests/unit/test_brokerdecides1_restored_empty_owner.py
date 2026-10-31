@@ -33,17 +33,25 @@ def test_restored_note_cannot_replace_positive_or_uncertain_evidence(fault):
     strategy, state, writes = restored()
     memory = strategy._brokerdecides1_memory
     snapshot = memory.snapshot
-    if fault == "no_restore_provenance": state._brokerdecides1_restored_empty_owner = None
-    elif fault == "different_owner": state.fanout_segment_id = state.flip_owner_opportunity_id = OPPORTUNITY + 1
-    elif fault == "fill": state.flip_owner_fill_accounts.add(ACCOUNTS[0])
-    elif fault == "position": state.flip_owner_position_ids[ACCOUNTS[0]] = "managed"
-    elif fault == "retry_changed": state.flip_owner_retry_segment_id = SEGMENT
+    if fault == "no_restore_provenance":
+        state._brokerdecides1_restored_empty_owner = None
+    elif fault == "different_owner":
+        state.fanout_segment_id = state.flip_owner_opportunity_id = OPPORTUNITY + 1
+    elif fault == "fill":
+        state.flip_owner_fill_accounts.add(ACCOUNTS[0])
+    elif fault == "position":
+        state.flip_owner_position_ids[ACCOUNTS[0]] = "managed"
+    elif fault == "retry_changed":
+        state.flip_owner_retry_segment_id = SEGMENT
     elif fault in {"working", "native_position"}:
         field = "working" if fault == "working" else "positions"
         memory.apply(replace(snapshot, generation=2, books=(replace(snapshot.books[0],
             **{field: frozenset({"YMAT"})}), snapshot.books[1])))
-    elif fault == "inflight": memory.apply(replace(snapshot, generation=2, inflight=frozenset({"YMAT"})))
-    elif fault == "same_segment": state.atr_short_flip_bar_ts = OPPORTUNITY // 60000 * 60000
-    else: strategy._flip_owner_restore_readable = False
+    elif fault == "inflight":
+        memory.apply(replace(snapshot, generation=2, inflight=frozenset({"YMAT"})))
+    elif fault == "same_segment":
+        state.atr_short_flip_bar_ts = OPPORTUNITY // 60000 * 60000
+    else:
+        strategy._flip_owner_restore_readable = False
     assert not recover_unused_current_short(strategy, state)
     assert state.flip_owner_phase == "unknown" and not writes

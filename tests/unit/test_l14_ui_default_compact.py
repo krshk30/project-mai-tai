@@ -8,10 +8,12 @@ import asyncio
 from copy import deepcopy
 from datetime import UTC, date, datetime
 from html.parser import HTMLParser
+import re
 from threading import get_ident
 from types import SimpleNamespace
 
 import httpx
+
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
@@ -175,7 +177,9 @@ def test_metadata_hashes_and_required_caveat_are_tooltips_not_body_paragraphs():
     parser.feed(html)
     visible = ''.join(parser.visible)
     assert '<p>' not in html and '<h2>' not in html
-    assert html.count("SIMULATION - NOT REAL TRADES") == 7
+    # Six SIM tables carry the SIM badge; the one real recorded-trade table carries its own (operator 10-27).
+    assert html.count("SIMULATION - NOT REAL TRADES") == 6
+    assert html.count(ui.REAL_BADGE) == 1
     assert "in-sample replay; reference differences under review" in html
     assert "in-sample replay; reference differences under review" not in visible
     assert "a"*64 in html and "a"*64 not in visible
@@ -200,6 +204,11 @@ def test_untrusted_row_and_source_text_are_escaped_without_modifying_economics()
     value[0]["view"]["outcomes"][0]["row"]["summary"] = '<script>BAD</script>'
     value[0]["view"]["source"]["source_id"] = '<script>BAD</script>'
     html = rendered(value)
+    # Exactly one executable script: the trusted static day filter. Nothing from rows/sources executes.
+    assert re.findall(r'<script\b', html, re.I) == ['<script']
+    assert html.count(ui.DAY_FILTER_SCRIPT) == 1
+    assert '<script' not in html.replace(ui.DAY_FILTER_SCRIPT, '', 1).lower()
+    assert 'BAD' not in ui.DAY_FILTER_SCRIPT
     assert '<script>' not in html and '&lt;script&gt;BAD&lt;/script&gt;' in html
     assert "+$196.87" in html
 
