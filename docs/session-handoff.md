@@ -26,7 +26,7 @@ Written 2026-10-31 ~11:00 ET by claude-1. Supersedes the 10-27 page (PR #1169). 
 | e58e2497 | WBEXIT2 geometry accepts Webull working vocabulary (adapter `_ACCEPTED_STATUSES`, aliases must agree) |
 | 6ddb3e6b0 | passive `[OMS-V2-EOD-OCO-STEP]` log (no behaviour change) |
 
-## Root cause proven 10-30 (Webull exits refused: TNMG, ONEG, CHOW)
+## Root cause 10-30 — status defect proven conditionally (Webull exits refused: TNMG, ONEG, CHOW)
 
 WBEXIT2 (switched on in the 10-28 evening install) required the raw Webull `order_status` to equal the literal `WORKING`; Webull documents `SUBMITTED` for an open order and never `WORKING`. Evidence: CHOW's real bracket read after the close (already CANCELLED by DAY expiry) replayed through the installed `original_geometry` with ONLY the status (and event=accepted) varied — SUBMITTED/PENDING/ACCEPTED/QUEUED refused, WORKING passed; the remaining real operands passed. This proves the status defect conditionally; the original live WORKING-state payloads for TNMG/ONEG/CHOW were not retained, so other predicates on those exact replies are not excluded. WB2/WB3 fixtures used the invented `WORKING`. Last good old-path Webull exit: 10-28 13:31 ELPW. Fixed by e58e2497. Interim 10-30 18:42 install ran with both switches OFF; switched back ON with the fix 10-31.
 
