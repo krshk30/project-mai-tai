@@ -1,0 +1,9 @@
+{
+  "pr_number": 1176,
+  "range_base": "4cd00d6394dd403827db3d77fd7b674914106bee",
+  "range_head": "0a7582c2994e68504cc5be9dab088c64ab7b56c8",
+  "reviewed_at": "2026-10-31T22:16:43Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "simulation-only review; decision-time causality fix verified; 14 related tests and preserved mutation pass; retained 3-day OLD/NEW outputs hash-bound and compared: 14/52 filled LIVE purple inputs change, economics/status unchanged across 200 rows"
+}
