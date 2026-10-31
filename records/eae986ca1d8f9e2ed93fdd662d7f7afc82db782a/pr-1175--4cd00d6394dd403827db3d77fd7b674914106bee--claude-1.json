@@ -1,0 +1,9 @@
+{
+  "pr_number": 1175,
+  "range_base": "4cd00d6394dd403827db3d77fd7b674914106bee",
+  "range_head": "eae986ca1d8f9e2ed93fdd662d7f7afc82db782a",
+  "reviewed_at": "2026-10-31T21:16:19Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: tests+fixtures only; replaces branch-only git object reads with sha256-pinned content/fixtures (L14 successor, EOD 8159 preimage, WORX a823 core); no assertion weakened."
+}
