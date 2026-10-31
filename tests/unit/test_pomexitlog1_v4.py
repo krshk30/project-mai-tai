@@ -19,8 +19,10 @@ import pytest
 
 from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot
 from project_mai_tai.momentum_live.runtime import OmsLiveRuntime
+from project_mai_tai.positions_read_receipt import record_receipts
 from tests.unit.test_momlive1_actor import setup as actor_setup
-from tests.unit.test_momlive1_runtime import setup
+from tests.unit.test_momlive1_exit_recovery import fresh
+from tests.unit.test_momlive1_runtime import event, offer_and_drain, setup
 from tests.unit.test_momlive1_soft_exit_chase import advance_exit, exit_orders, prepared
 
 GATE = "[MOMLIVE1-EXIT-GATE]"
@@ -202,6 +204,38 @@ async def test_actor_observer_reuses_original_clock_and_cannot_change_exit(obser
     assert episode.remaining == 3 and position.quantity == 3
 
 
+async def prepared_paired_exit(hour):
+    """Earn equal owned-entry worlds before advancing either exit clock."""
+    now, broker, service, runtime = setup()
+    now[0] = now[0].replace(hour=hour)
+    with service.session_factory() as session:
+        service.store.ensure_broker_account(session, name=runtime.accounts[0],
+            provider="schwab", environment="live")
+        record_receipts(session, [(name, now[0], 0) for name in runtime.accounts], recorded_at=now[0])
+        session.commit()
+    fresh(now, service)
+    await runtime.start()
+    try:
+        await offer_and_drain(runtime, event(now[0], route="webull"))
+        identity = next(iter(runtime.book.episodes))
+        # A queue join alone can leave the pre-fill observation cached. Advance
+        # the controlled clock through its real one-second poll fence and await
+        # the actual owner, including its observation/save/protection work.
+        fresh(now, service, seconds=1)
+        await runtime.actor._service_owned(identity)
+        await asyncio.wait_for(runtime.actor.work.queue.join(), 10)
+        observation = await runtime._observe(identity)
+        assert observation.quantity == runtime.book.episodes[identity].filled == D(33)
+        assert observation.position is not None and not observation.exited
+        assert runtime.book.episodes[identity].state == "held"
+        assert not exit_orders(broker)
+    finally:
+        await runtime.close()
+    assert not runtime.actor.tasks  # No autonomous actor runs during the manual comparison.
+    fresh(now, service, seconds=300)  # Same original total: 301 seconds after entry.
+    return now, broker, service, runtime, identity
+
+
 async def controlled_exit(monkeypatch, *, diagnostics, hour, case):
     with monkeypatch.context() as patch:
         # Same entry identity inputs in each OFF/ON run; each call within a run
@@ -214,7 +248,7 @@ async def controlled_exit(monkeypatch, *, diagnostics, hour, case):
             # guard, clock, request, persistence or quantity function is replaced.
             for name in DIAGNOSTICS:
                 patch.setattr(OmsLiveRuntime, name, lambda *a, **k: None)
-        now, broker, service, runtime, identity = await prepared("webull", hour, send_exit=False)
+        now, broker, service, runtime, identity = await prepared_paired_exit(hour)
         original_logger = service.logger
         logger = Mock(wraps=original_logger)
         service.logger = logger

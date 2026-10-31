@@ -240,8 +240,10 @@ async def drain_recovery(svc):
 
 async def drain_quote_workers(svc):
     # Accepted B intake schedules its managed leg; handler return is not completion.
+    # This is a fixture cleanup bound, not a quote/exit latency acceptance limit.
+    # CI's one-second wrapper previously cancelled the real preparation DB read.
     while svc.__dict__.get("_symbol_tick_work", {}):
-        await asyncio.wait_for(asyncio.gather(*tuple(svc._symbol_tick_work.values())), 1)
+        await asyncio.wait_for(asyncio.gather(*tuple(svc._symbol_tick_work.values())), 10)
 
 
 @pytest.mark.asyncio
