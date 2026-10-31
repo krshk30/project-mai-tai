@@ -262,7 +262,7 @@ def test_round4_previous_trade_none_open_unknown_and_closed(monkeypatch):
     assert prev(None) == "none"
     assert prev((t(10), None, "OPEN", None)) == "open"
     assert prev((t(10), t(59) + timedelta(minutes=30), "CLOSED", -3.0)) == "open"  # exit after the decision
-    assert prev((t(10), None, "EXIT UNKNOWN", None)) == "unknown"
+    assert prev((t(10), None, "EXIT UNKNOWN", None)) == "open"  # final status is not known at the buy
     assert prev((t(10), t(20), "CLOSED", -3.0)) == "loss"
     assert prev((t(10), t(20), "CLOSED", 0.0)) == "flat"
     assert prev((t(10), t(20), "CLOSED", 5.1)) == "win"
