@@ -1,7 +1,7 @@
 """ATRSIM2 (operator 10-29): two tables, today only, one stored row per day, page never breaks."""
 import importlib.util
 import pathlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from project_mai_tai.atr_simulation.sim2_display import load_day, render_day
 from project_mai_tai.services.control_plane import _render_completed_position_row as render
@@ -204,20 +204,25 @@ class _TapeConn:
         return _Rows(self.tape if "market_capture_trades" in str(statement) else self.quotes)
 
 
-def test_round4_tape_pressure_classifies_against_fresh_quotes_and_locked_is_mid():
+def test_round4_tape_pressure_buckets_locked_and_stale_as_unknown_and_drops_odd_lots():
     at = datetime(2026, 10, 30, 13, 31, 34, tzinfo=timezone.utc)
     s = lambda sec: datetime(2026, 10, 30, 13, 31, sec, tzinfo=timezone.utc)  # noqa: E731
-    quotes = [(s(0), 4.30, 4.31), (s(10), 4.31, 4.31), (s(20), 4.30, 4.32)]
+    quotes = [(s(0), 4.30, 4.31), (s(10), 4.31, 4.31), (s(20), 4.30, 4.32), (s(25), 0, 4.32)]
     tape = [(s(1), 4.31, 100, ""),     # at the ask -> buyer
             (s(2), 4.30, 300, ""),     # at the bid -> seller
-            (s(11), 4.31, 200, ""),    # locked quote -> mid
-            (s(21), 4.31, 400, ""),    # inside the spread -> mid
-            (s(30), 4.32, 500, "")]    # last quote 10 s old -> unclassified
-    out = job.tape_pressure(_TapeConn(tape, quotes), "TNMG", at)
-    assert out["5m"] == {"buy_share": 0.1, "sell_share": 0.3, "mid_share": 0.6,
-                         "volume": 1500, "unclassified_volume": 500}
+            (s(3), 4.30, 50, ""),      # odd lot -> excluded
+            (s(11), 4.31, 200, ""),    # locked quote -> UNKNOWN (coach 10-31)
+            (s(21), 4.31, 400, ""),    # inside the spread -> between
+            (s(26), 4.31, 100, ""),    # zero bid -> invalid quote, UNKNOWN
+            (s(32), 4.32, 500, "")]    # last quote 7 s old -> UNKNOWN
+    out = job.tape_pressure(_TapeConn(tape, quotes), "TNMG", at)["5m"]
+    assert out["volume"] == {"buy": 100, "sell": 300, "between": 400, "unknown_no_fresh_quote": 500,
+                             "unknown_locked_crossed": 200, "unknown_invalid_quote": 100,
+                             "excluded_odd_lot": 50, "excluded_condition": 0}
+    assert out["eligible_volume"] == 1600 and out["coverage"] == 0.5
+    assert (out["buy_share"], out["sell_share"], out["between_share"]) == (0.125, 0.375, 0.5)
     assert job.tape_pressure(_TapeConn([], []), "TNMG", at)["5m"]["status"] == "UNKNOWN"
-    assert job.tape_pressure(_TapeConn(tape[:1], []), "TNMG", at)["5m"]["reason"] == "no quote <= 5 s old for any trade"
+    assert job.tape_pressure(_TapeConn(tape[:1], []), "TNMG", at)["5m"]["reason"] == "no trade had a valid quote <= 5 s old"
 
 
 def test_round4_provenance_names_engine_and_trade_source():
@@ -242,3 +247,22 @@ def test_round4_purple_stretch_uses_only_bars_completed_before_the_decision(monk
     early = job.stock_features(None, "TEST", series[-1], datetime(2026, 10, 30, 13, 10, 30, tzinfo=timezone.utc),
                                10.0, None)["purple"]
     assert early["status"] == "UNKNOWN"
+
+
+def test_round4_previous_trade_none_open_unknown_and_closed(monkeypatch):
+    base = int(datetime(2026, 10, 30, 14, 0, tzinfo=timezone.utc).timestamp() * 1000)
+    series = [job.Bar(base + i * 60_000, 5.0, 5.0, 5.0, 5.0, 100) for i in range(6)]
+    rows = [{"flip": None, "trail": 5.0, "state": "short"} for _ in series]
+    rows[0]["flip"], rows[-1]["flip"] = "SELL", "BUY"
+    monkeypatch.setitem(job.LINES, "TEST", (series, rows))
+    monkeypatch.setattr(job, "tape_pressure", lambda *a: {})
+    at = datetime(2026, 10, 30, 14, 6, tzinfo=timezone.utc)
+    t = lambda m: datetime(2026, 10, 30, 13, m, tzinfo=timezone.utc)  # noqa: E731
+    prev = lambda p: job.stock_features(None, "TEST", series[-1], at, 5.0, p)["previous_trade"]["result"]  # noqa: E731
+    assert prev(None) == "none"
+    assert prev((t(10), None, "OPEN", None)) == "open"
+    assert prev((t(10), t(59) + timedelta(minutes=30), "CLOSED", -3.0)) == "open"  # exit after the decision
+    assert prev((t(10), None, "EXIT UNKNOWN", None)) == "unknown"
+    assert prev((t(10), t(20), "CLOSED", -3.0)) == "loss"
+    assert prev((t(10), t(20), "CLOSED", 0.0)) == "flat"
+    assert prev((t(10), t(20), "CLOSED", 5.1)) == "win"
