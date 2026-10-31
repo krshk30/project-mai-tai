@@ -1,7 +1,7 @@
 """Exercise the real claimed emit's admission/commit boundary, with a paused sender."""
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import datetime
 from uuid import UUID, uuid4
 
 import pytest

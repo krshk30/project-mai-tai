@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 LOGGER = logging.getLogger(__name__)
-CHANNEL_SOURCE_SHA = "ee8c3116635429e7ad2ed5453bcd8cb13ebc311f528bc46da2c5fa20cedbe1e2"
+CHANNEL_SOURCE_SHA = "72c1d3ed56f0e7f21f754c470ed7dfa0a0070af7a1527939bc51fbdd40366cff"
 
 
 def existing_channel(raw, *, reviewed_sha=CHANNEL_SOURCE_SHA):

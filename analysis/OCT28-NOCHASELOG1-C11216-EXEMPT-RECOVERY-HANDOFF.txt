@@ -1,0 +1,113 @@
+OCT28-1108-NOCHASELOG1-NEXT-BUILD — C11216 successor / SOURCE ONLY
+Original Galileo; Main sole actual shared-source integrator and executor.
+Owned root /private/tmp/oct28-galileo-nochase-log-source-20261028.
+No imports/tests/compile/replay/parser/runtime/SSH/provider/SQL/capture/push.
+
+SUPERSESSION / EXACT AUTHORITY
+C11216 logging-only exemption relayed12:19 withdraws Main's defaultFalse flag
+request. NO Settings switch/field/env is applied or proposed for integration.
+Intermediateec349fd7c preserved UNRUN; both FLAGGED and SETTINGS external
+patches are WITHDRAWN, not integration operands.2ac remains historical source.
+POM late-entry study canceled11:08; no late-entry/trading change is built.
+Tonight32/L3 4460 unchanged; original SMARTL3 actual60PASS is unrelated to the
+new60 SOURCE controls below. ScannerABC stays queued for its interface review.
+
+ACTIVE EXTERNAL PROPOSAL
+/private/tmp/OCT28-NOCHASELOG1-EXEMPT-CORE-EXTERNAL-PROPOSAL.diff
+SHAcc7c16dc3fcf223f891da52f3505ba19dde69a162d153565344e92d48aecd7d0
+Against literal32b0f6f6860bf6441363cddd91aa20709005f691, core52add0delete
+plus full new postflip_nochase_log.py helper. No Settings/service/router edits.
+Proposed core SHA6445eeeec902659200c2a8c0899515daf5feb5099cfeeb14ba0a3a8d42aceb42
+Literal32core SHAabf79c2b2fd8a0f9e9f946d6b461f44e924cfdc4d38e92ee4a08d1c7400414bc
+Main alone applies shared integration after review; this root is proposal only.
+
+ANNOTATION / ECONOMIC AND FAILURE BOUNDARY
+Actual BUY/SELL transition bars, session/reset/history/seeding restoration and
+perSymbolState dynamic observer remain as2ac. No retryID/now->BUY inference.
+Already-evaluated allowed/reason only; no second guard/native/route read/clock.
+Old admission counters/markers/text/severity/return, country catch/refusal and
+producer UNKNOWN ERROR are unchanged. No future knowledge or severity timer.
+New helper import lazy on an actual transition. New annotation/reset/transition/
+diagnostic snapshot exceptions are isolated to their own small try blocks;
+original math/owner/guard/logger code remains OUTSIDE those blocks. Broken
+reset/transition diagnostic objects are discarded, never economic owner state.
+After a possibly partially-written annotation log raises, keep its attempted-
+flip marker to prevent retrying a possibly emitted line. No attempt to retry a
+log sink, clear trading latch or translate UNKNOWN into flat/readable.
+Exception catches are ordinary Exception only: process-control BaseException
+is not swallowed. Old logger failure still propagates exactly as before.
+Static scope is NOT proof of runtime equality; Main controlled execution needed.
+
+RETROSPECTIVE STANDALONE CLASSIFIER (NO PRODUCER HOOK)
+ops/nochaselog1_recovery.py:
+- OwnerLogEvent immutable supplied evidence; source SHA/ref/raw text/raw level.
+- classify_owner_recovery consumes source-ordered rows once; exact key
+  (process_epoch, coverage_ref, symbol, positive opportunity_id), complete
+  coverage ONLY. One later RECOVERY can classify earlier ERROR rows belonging
+  to that exact pending episode WARNING_RECOVERED in a DERIVED digest.
+- Raw records/producer ERROR never modified. Entry_allowed1 is NOT inferred;
+  ELPW reconciled holding can recover ownership and still block entry.
+- Missing/zero opportunity, missing epoch, incomplete/different coverage,
+  unmatched/wrongsymbol/wrongopportunity/prior recovery => ERROR_UNKNOWN.
+- Duplicate physical source ref and unordered records REFUSE; no sorting,
+  nearest-time pairing, fabricated opportunity, deadlines or threshold N.
+- Multiple UNKNOWN records in same proven episode remain separate raw rows;
+  no duplicate count called another independent case. n_seconds is alwaysNone.
+- Pure bind_retained_sequence hashes caller-supplied original bytes, parses
+  exact UTC day/ms using integer arithmetic, retains original line refs/text;
+  absent RECOVERY opportunity remainsNone; unparsed matching markers REFUSE.
+No file opening, logger/timer/queue/worker/provider/APP import in helper itself.
+
+ACTUAL RETAINED SEQUENCE / MATERIAL JOIN LIMITATION
+Existing packet /Users/velkris/.codex/task-queues/analysis/OCT28-C1-FLIPOWNER-SEQ.txt
+SHA4a76d42275942213aa326343def92b93891b299e425d9eb9e8c9c55ddcf7a869
+GCTK UNKNOWN lines6,7 12:45:01.739Z bothopportunity0; RECOVERYline15
+12:45:02.674Z has NOopportunity_id.935ms interval is a bound C1 observed
+sequence, NOT a fabricated positive-identity match.
+ELPW UNKNOWNline36 13:03:00.883Z opportunity1793191020891; RECOVERYline42
+13:03:10.992Z has NOopportunity_id.10109ms observed; entry_allowed0.
+Source _recover_unknown_flip_owner computes local opportunity_id but all
+current RECOVERY formats omit it. No source edit to those old formats proposed.
+Therefore packet binds2C1 candidate episodes/3UNKNOWNrecords/2RECOVERYrecords;
+strict helper must yield0certified WARNING rows/3ERROR_UNKNOWN absent exact
+same-opportunity/epoch+coverage binding. Do not relabel observed timing as such
+proof. BRAI/todaydenominator stillUNKNOWN; NNOTSET. C1 may supply already-
+retained identity witness or leave these joins UNKNOWN; no new collection asked.
+This conservative field gap is reported before execution, not hidden by matching
+symbol/time or treating opportunity0 as a unique economic identity.
+
+CONTROL ROSTER — ALL UNRUN / MAIN CLAIMS AFTER CURRENT RR ONLY
+test_postflip_nochase_log.py:16 original pure formatter cases.
+test_postflip_nochase_hooks.py:25 = original18 (literal32 versus proposed real
+methods PM/RTH/single-dual/live-state_only, reset/rebuild/seed snapshot, raw
+ERROR, strictOFF/freshBUYexception, log/clock parity) +7 failure-boundary cases
+(allocate/observe/format/new sink four; old sink propagates; real reset survives
+diagnostic error; real seed restore survives diagnostic snapshot error).
+test_nochaselog1_recovery.py:19 = exact positive;9wrong/incomplete keys;
+unmatched/laterUNKNOWN; priorRECOVERY; multiUNKNOWN oneepisode; source duplicate;
+unordered; actual retained packet counts/missing IDs/ms; hash mismatch;
+zeroidentity; wrong RECOVERY severity.
+Total60SOURCE cases, ZERO author execution. No OFF/ON logging-flag controls;
+logging switch request explicitly withdrawn, strict-ownerOFF remains a distinct
+must-not-change strategy-path control. Existing raw/source34 never executed.
+Main may select these3modules on reviewed literal proposal integration; no
+generic environment flag/Settings monkeypatch is needed or permitted.
+
+SOURCE COST NOTE (NOT A PERFORMANCE RECEIPT)
+Core adds constant dictionary reads/branch/try around new diagnostics only;
+one small observer per existing SymbolState lifetime, constant current+last
+timestamps, formatting/log call only first matching flip. No per-tick loops,
+extra business clock/IO/guard calls/tasks/queues/threads, no schema migration.
+Retrospective helper work/memory O(inputrecords), off producer path; caller
+owns finite immutable source window/identity/coverage. No new live collector.
+No assertion that logger cannot block; existing shared logger resource model
+unchanged apart from one additive INFO attempt per observed flip.
+
+REMAINING / PR LIMITS
+POM10:54-11:05 callback/profile, SPRC callback tape and BRAI UNKNOWN/DEFERRED
+acceptedC11216, written also in prior pinned inputmanifest. Do not invent full
+callback replay; supplied-state comparison is explicitly NOT historical proof.
+Main review/integration + actual new60 controlled validation are stillOPEN.
+Old severity and all raw incident data unchanged. No whole-package GO/install.
+Next queued source scope scannerABC only after NOCHASE handoff/disposition and
+its already-pending shared flag/hook/timestamp interface review; L3completed.

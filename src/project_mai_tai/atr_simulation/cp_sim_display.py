@@ -23,9 +23,65 @@ COLUMNS = ("Ticker", "Path", "Qty", "Entry Time", "Entry", "Exit Time", "Exit", 
 HEADER = '<tr>' + ''.join('<th' + (' style="text-align:right"' if name in {"Qty", "Entry", "Exit"} else '')
     + '>' + escape(name) + '</th>' for name in COLUMNS) + '</tr>'
 CAPTION = "Simulation - not real trades; never in live P&L."
+# The one table of REAL recorded trades must never wear the simulation badge (operator 10-27).
+REAL_MARKER = "LIVE:ACTUAL"
+REAL_CAPTION = "Real recorded trades - comparison only; never added to live P&L."
+REAL_BADGE = "REAL RECORDED TRADES"
+SIM_BADGE = "SIMULATION - NOT REAL TRADES"
 COLUMN_WIDTHS = (6, 10, 5, 11, 8, 11, 8, 17, 24)
 COLGROUP = '<colgroup>' + ''.join('<col style="width:' + str(width) + '%">'
     for width in COLUMN_WIDTHS) + '</colgroup>'
+# Operator-approved 10-27 plain-English table descriptions, checked against the SIM code.
+DESCRIPTIONS = {
+    "FIRSTBAR": "Simulation, not real trades. After a buy flip, buys at the first trade at or above the flip"
+        " bar's high + 1 cent. Exits: target +5%, stop -8%, sell flip or session end.",
+    "FIRSTBAR+2min": "The same simulation plus the 2-minute rule: a trade that is not up 1% within"
+        " 2 minutes is sold.",
+    "Live replay": "Our real live buys (recorded order fill price), with the exits simulated by the same"
+        " rules as FIRSTBAR. Shows what our real entries would make with those exits. Not real P&L.",
+    "Recorded LIVE comparison": "Our real recorded live trades on the stored comparison days, shown next"
+        " to the three SIM tables below. Never added to live P&L; UNKNOWN means not matched to a broker fill.",
+    "SIM TODAY": "Simulation of the same signals with today's entry (the real fill where the bot bought)"
+        " and simulated exits; the Exit reason column shows which rule closed each trade.",
+    "SIM VOLBODY / Queue aware": "Simulation of the VOLBODY rule: buy only when the price is inside the"
+        " bar's volume body. Fills assume we wait in line behind other buyers (the realistic case).",
+    "SIM VOLBODY / Optimistic": "The same VOLBODY rule, but fills assume we are first in line (the best case).",
+}
+OVERRIDES_DESCRIPTION = "Extra data sources the replays can read; for checking only, they never change trading."
+DAY_FILTER_STYLE = ('#atr-sim-compact .sim-desc{padding:2px 0 0;color:#98a6c8;font-size:11px;'
+    'line-height:1.35;max-width:900px}'
+    '#atr-sim-compact .sim-dayfilter{display:flex;flex-wrap:wrap;align-items:center;gap:12px;'
+    'margin:0 0 12px;font-size:12px}'
+    '#atr-sim-compact .sim-dayfilter small{color:#98a6c8}')
+# Presentation only: every row stays in the HTML; the browser hides rows not on the chosen ET day.
+DAY_FILTER = ('<div class="sim-dayfilter" data-sim-dayfilter="true">'
+    '<label>Show trades from <input type="date" id="atr-sim-day"></label>'
+    '<label><input type="checkbox" id="atr-sim-all"> All dates</label>'
+    '<small>Default is today (ET). The boxes above total every date in the window.</small></div>')
+# Placed after every table: it must run once the rows exist.
+DAY_FILTER_SCRIPT = ('<script type="text/javascript">(function(){'
+    'var root=document.getElementById("atr-sim-compact");if(!root){return;}'
+    'var day=document.getElementById("atr-sim-day"),all=document.getElementById("atr-sim-all");'
+    'var today=new Intl.DateTimeFormat("en-CA",{timeZone:"America/New_York",year:"numeric",'
+    'month:"2-digit",day:"2-digit"}).format(new Date());day.value=today;'
+    'function rowDay(row){var cells=[row.querySelector(\'td[data-sim-time="entry"]\'),'
+    'row.querySelector(\'td[data-sim-time="exit"]\')];for(var i=0;i<cells.length;i++){'
+    'var m=cells[i]&&/^(\\d{4}-\\d{2}-\\d{2})/.exec(cells[i].getAttribute("title")||"");'
+    'if(m){return m[1];}}return "";}'
+    'function apply(){var want=all.checked?"":(day.value||today);'
+    'root.querySelectorAll("section[data-sim-mode] tbody").forEach(function(body){'
+    'var old=body.querySelector("tr[data-sim-day-empty]");if(old){old.remove();}'
+    'var shown=0,hidden=0;body.querySelectorAll("tr").forEach(function(row){'
+    'if(!row.querySelector("td[data-sim-time]")){return;}'
+    'var keep=!want||rowDay(row)===want;row.style.display=keep?"":"none";'
+    'if(keep){shown++;}else{hidden++;}});'
+    'if(!shown&&hidden){var tr=document.createElement("tr");tr.setAttribute("data-sim-day-empty","true");'
+    'var td=document.createElement("td");td.colSpan=9;td.textContent="No trades on "+want'
+    '+" in this table ("+hidden+" on other dates; tick All dates to see them).";'
+    'tr.appendChild(td);body.appendChild(tr);}});}'
+    'day.addEventListener("change",function(){all.checked=false;apply();});'
+    'all.addEventListener("change",apply);if(document.readyState==="loading"){'
+    'document.addEventListener("DOMContentLoaded",apply);}else{apply();}})();</script>')
 
 
 def page_scopes(port, firstbar=None, aggregate=None, legacy=None):
@@ -111,10 +167,23 @@ def _sim_row(row, render_row):
         opening = cell[1][:-1] + ' data-sim-time="' + field + '" title="' + escape(full, quote=True) + '">'
         replacement = opening + escape(_compact_time(full)) + cell[3]
         rendered = rendered[:cell.start()] + replacement + rendered[cell.end():]
+    if row.get("coverage_note") is not None:
+        note = row["coverage_note"]
+        if not isinstance(note, str) or not 0 < len(note) <= 2048:
+            raise ValueError("bounded_plain_coverage_note_required")
+        summary = list(re.finditer(r'(<td\b[^>]*>)(.*?)(</td>)', rendered, re.S))[8]
+        replacement = (summary[1] + summary[2]
+            + '<br><small class="sim-row-coverage">' + escape(note) + '</small>' + summary[3])
+        rendered = rendered[:summary.start()] + replacement + rendered[summary.end():]
     return rendered
 
 
-def panel(title, rows, *, render_row, tooltip="", marker="", caption=CAPTION, outcomes=None):
+def panel(title, rows, *, render_row, tooltip="", marker="", caption=CAPTION, outcomes=None,
+          description=None, updated_text=None, warning_text=None):
+    description = DESCRIPTIONS.get(title, "") if description is None else description
+    real = marker == REAL_MARKER
+    if real and caption == CAPTION:
+        caption = REAL_CAPTION
     body = ''.join(_sim_row(row, render_row) for row in rows)
     metadata, audit = "", ""
     if outcomes is not None:
@@ -141,7 +210,11 @@ def panel(title, rows, *, render_row, tooltip="", marker="", caption=CAPTION, ou
         + '"' + metadata + (' data-aggregate-entry-sim="true"' if marker == "AGGREGATE_ENTRY" else '')
         + '><div class="panel-header"><div><h3>' + escape(title) + '</h3>'
         + '<div class="sub" title="' + escape(tooltip, quote=True) + '">' + escape(caption)
-        + '</div></div><span class="count pink" style="font-size:10px">SIMULATION - NOT REAL TRADES</span>'
+        + '</div>' + ('<div class="sim-desc">' + escape(description) + '</div>' if description else '')
+        + ('<div class="sim-updated">' + escape(updated_text) + '</div>' if updated_text is not None else '')
+        + ('<div class="sim-stale" role="status">' + escape(warning_text) + '</div>' if warning_text else '')
+        + '</div><span class="count ' + ('green' if real else 'pink') + '" style="font-size:10px">'
+        + (REAL_BADGE if real else SIM_BADGE) + '</span>'
         + '</div><div class="table-wrap"><table>' + COLGROUP + '<thead>' + HEADER + '</thead><tbody>'
         + body + '</tbody></table></div>' + audit + '</section>')
 
@@ -225,6 +298,7 @@ def _overrides(firstbar, aggregate, legacy):
             + str(max_days) + '" value="' + str(scope.get("days", max_days if max_days == 32 else 1))
             + '"></label>')
     return ('<details class="panel full sim-overrides"><summary>Optional replay sources</summary>'
+        '<div class="sim-desc">' + escape(OVERRIDES_DESCRIPTION) + '</div>'
         '<form method="get" action="/bot/1m-schwab-v2" '
         'onsubmit="for(const field of this.elements){if(field.name &amp;&amp; !field.value){field.disabled=true;}}">'
         + ''.join(fields)
@@ -279,6 +353,6 @@ def render_page(firstbar, aggregate, legacy, *, render_row, scopes):
         '#atr-sim-compact form{display:flex;flex-wrap:wrap;gap:8px;max-width:100%;padding-top:10px}'
         '#atr-sim-compact input{max-width:100%;box-sizing:border-box}'
         '@media(max-width:720px){#atr-sim-compact .sim-stats{grid-template-columns:repeat(2,minmax(0,1fr))}'
-        '#atr-sim-compact .count{white-space:normal}}</style>'
-        '<div class="sim-stats">' + ''.join(tiles) + '</div>' + first_panels + aggregate_html
-        + legacy_panels(legacy, render_row=render_row) + _overrides(*scopes) + '</div>')
+        '#atr-sim-compact .count{white-space:normal}}' + DAY_FILTER_STYLE + '</style>'
+        '<div class="sim-stats">' + ''.join(tiles) + '</div>' + DAY_FILTER + first_panels + aggregate_html
+        + legacy_panels(legacy, render_row=render_row) + _overrides(*scopes) + DAY_FILTER_SCRIPT + '</div>')

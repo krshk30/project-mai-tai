@@ -105,7 +105,9 @@ def _csv_output(*, include_outside_window_population: bool) -> str:
 
 
 def _cte(sql: str, name: str, following: str) -> str:
-    return sql.split(f"{name} AS (", 1)[1].split(f"),\n{following} AS (", 1)[0]
+    before_following = sql.split(f"{name} AS (", 1)[1].split(f"{following} AS (", 1)[0]
+    # Exclude the CTE terminator and its intervening explanatory SQL comments.
+    return before_following.rsplit("),", 1)[0]
 
 
 def _target_window_text_tripwire(sql: str) -> bool:
@@ -140,6 +142,7 @@ def _target_window_text_tripwire(sql: str) -> bool:
                 "AND (",
                 "(ba.name = 'live:orb' AND bo.payload::jsonb ? 'fanout_source')",
                 "OR nullif(bo.payload::jsonb->>'fanout_segment_id', '') IS NOT NULL",
+                "OR bo.payload::jsonb ? 'atr_country_schema'",
                 ")",
             ],
         ),
@@ -155,7 +158,7 @@ def _target_window_text_tripwire(sql: str) -> bool:
             ],
         ),
         "target_matched_orders": (
-            "target_refused",
+            "target_route_orders",
             [
                 "CROSS JOIN target_bounds b",
                 "WHERE bo.side = 'buy'",
@@ -163,6 +166,20 @@ def _target_window_text_tripwire(sql: str) -> bool:
                 "AND bo.symbol IN (SELECT symbol FROM target_mirror_symbols)",
                 "AND ba.name IN ('live:orb', 'live:schwab_1m_v2')",
                 "AND bo.submitted_at >= b.since_at AND bo.submitted_at < b.until_at",
+            ],
+        ),
+        "target_route_orders": (
+            "target_refused",
+            [
+                "CROSS JOIN target_bounds b",
+                "WHERE bo.side = 'buy'",
+                "AND ba.name IN ('live:orb', 'live:schwab_1m_v2')",
+                "AND (bo.id::text IN (SELECT order_id FROM target_buy_legs)",
+                "OR bo.id::text IN (SELECT order_id FROM target_matched_orders)",
+                "OR (bo.submitted_at >= b.since_at AND bo.submitted_at < b.until_at",
+                "AND (bo.payload::jsonb ? 'fanout_source'",
+                "OR bo.payload::jsonb ? 'fanout_segment_id'",
+                "OR bo.payload::jsonb ? 'atr_country_schema')))",
             ],
         ),
         "target_refused": (

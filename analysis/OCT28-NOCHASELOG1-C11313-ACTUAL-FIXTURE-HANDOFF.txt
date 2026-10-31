@@ -1,0 +1,39 @@
+OCT28-1108-NOCHASELOG1-NEXT-BUILD — actual fixture source increment
+Original Galileo / SOURCE-FILE ONLY. Main sole runtime/integration/PR owner.
+Parentb6e5f7d4968b0583f79ddfbc779b9d6b6a3f5765.
+
+SOURCE INPUT RECEIVED / BOUNDED COMPLETION
+WHOLE217line71182byte C1packet read and unchanged SHA verified:
+/Users/velkris/.codex/task-queues/analysis/OCT28-C1-NOCHASE-FIXTURE-POM-SPRC.log
+SHA17efb9342d5bc0c3d6ab7a9159b6c8f7e9ee9ee5adffb7afd21b78ee4ccefe0b.
+Minimal sanitized fixture under tests/fixtures/nochaselog1/pom_sprc_actual.tsv
+SHA3839690d7ab1610ac8e19b0185ce3851b7ddbbf1ee7fbf1a88c5692cc52577e9;
+2984bytes/57rows. Original timestamp/symbol/tag only; no account field needed.
+All28actual admission mismatch lines +28original country-refusal markers +1
+original POM ARM line.12POM and16SPRC admissions.29raw text matches includes
+the SPRC heading and is NOT29events. Full original source refs preserved as
+fixture_line->raw_line map plus raw hash; tests never require the private path.
+All values are exact field projection from delivered source; no fabricated
+event/time/tag, no model/provider/query/native/callback execution performed.
+Commit ACTUAL-MARKERS-PROVENANCE.txt explains scope/privacy/gaps.
+
+ONLY NEW TWO SELECTORS — NO REPEAT OF QUALIFIED60
+tests/unit/test_postflip_nochase_actual_fixture.py::test_actual_sanitized_fixture_hash_and_exact_payload_free_shape
+tests/unit/test_postflip_nochase_actual_fixture.py::test_actual_pom_sprc_marker_counts_order_and_original_times_are_retained
+Both source-only UNRUN. Hash/57rows/strict3column whitelist, then per-symbol
+counts/pair tag-order/original timestamps and source-context gaps. No APP import,
+DB/network, source-baseline loading, replay, skip or private artifact dependency.
+Original3modules16+25+19=60byte-unchanged fromb6; Main reports their actual60
+PASS1.56s/fence0/3456pins on futureH2+ORBOFF composition. No author rerun.
+New fullCI membership62=that60+these2, no forcedfakeexact60 roster or relabeling.
+
+UNCHANGED BOUNDARIES
+No src/APP/helper/replayer edit in this increment. Core remains
+6445eeeec902659200c2a8c0899515daf5feb5099cfeeb14ba0a3a8d42aceb42;
+old markers/severity untouched, no Settingsswitch/no classifier.
+Raw C1packet unchanged/local only. No tokens/accounts/native payload committed.
+Full historical POM/SPRC callback replay/native permission/incident cause remain
+UNKNOWN/DEFERRED; this marker fixture does not supply full state or prove them.
+No author test/import/compile/runtime/SQL/SSH/provider/capture/push/sharedwrite.
+Main claims only these2 after source review; original60receipt stays retained.
+Next queue scannerABC remains under pending timestamp/flag/hook interface review.

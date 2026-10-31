@@ -1,7 +1,6 @@
 """Pure schema parsing/review controls. Controlled DDL is not actual production."""
 
 from copy import deepcopy
-import json
 
 import pytest
 

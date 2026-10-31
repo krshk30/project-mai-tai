@@ -7,7 +7,7 @@ import json
 import pytest
 
 from project_mai_tai.brokerdecides1 import assess, decode
-from tools.l12_service_boot_replay import C11929_CONTROLLED_VERSION, prepare_c11929_controlled_native
+from tools.l12_service_boot_replay import prepare_c11929_controlled_native
 from tools.l12_original122_branch_adapter import summarize_original122_local_callbacks
 
 

@@ -951,6 +951,10 @@ def check_oms_order_lifecycle() -> tuple[str, str, str]:
     where = (
         f"ti.status NOT IN {terminal} "
         "AND bo.id IS NULL "
+        # WBATTACH submits its exit pair directly; no BrokerOrder is created for
+        # this intent (webull_attach_riskoff.py:591-649). This exception says
+        # nothing about protection: check_stops_armed still grades the position.
+        "AND ti.reason IS DISTINCT FROM 'WBATTACH1_PROTECTION' "
         "AND ti.created_at < now() - interval '10 min' "
         "AND ti.created_at > now() - interval '6 hours'"
     )
@@ -1024,8 +1028,23 @@ def check_stops_armed() -> tuple[str, str, str]:
     # else), so ANY polygon_30s position held past the 2-min settle guard counted as "NAKED" and
     # RED-paged — for a simulated position that cannot lose a cent.
     real = f"ba.name IN ({_REAL_MONEY_SQL_LIST})"
+    # Momentum live protects at the broker with an exit-only OCO (target + stop) and writes no
+    # oms_armed_stops / oms_managed_positions row, so every held momentum position paged NAKED
+    # (CETX 10-29 09:35, stop 2.23 working since 09:32:20). A working OCO of that strategy with
+    # a positive stop leg is the armed stop: the working OCO parent (bracket_stop_price; older
+    # rows lack exit_only_oco) or its working native stop child (client id suffix "S").
+    momentum_protected = (
+        "EXISTS (SELECT 1 FROM broker_orders o "
+        "WHERE o.broker_account_id = vp.broker_account_id AND o.symbol = vp.symbol "
+        "AND o.strategy_id = vp.strategy_id AND s.code = 'momentum_warn_live' "
+        "AND o.side = 'sell' AND o.status IN ('pending', 'submitted', 'accepted', 'partially_filled') "
+        "AND ((CASE WHEN o.payload->>'bracket_stop_price' ~ '^[0-9]+(\\.[0-9]+)?$' "
+        "THEN (o.payload->>'bracket_stop_price')::numeric > 0 ELSE false END) "
+        "OR (o.payload->>'momlive_native_child' = 'true' AND o.client_order_id LIKE 'ml1-%-p-%S')))"
+    )
     unprotected = _scalar_int(
-        f"SELECT count(*) {joins} AND {real} AND a.id IS NULL AND m.id IS NULL"
+        f"SELECT count(*) {joins} AND {real} AND a.id IS NULL AND m.id IS NULL "
+        f"AND NOT {momentum_protected}"
     )
     owned_open = _scalar_int(f"SELECT count(*) {joins} AND {real}")
     paper_unprotected = _scalar_int(

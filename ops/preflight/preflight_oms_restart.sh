@@ -68,7 +68,7 @@ BLIND=0       # 1 => could not see (exit 2, and BLIND outranks FAIL)
 echo "=== OMS RESTART PRE-FLIGHT — $STAMP ==="
 
 # ---------- gate 0: can we reach the database at all ----------
-URL=$(sudo grep -E '^MAI_TAI_DATABASE_URL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)
+URL=$(sudo grep -E '^MAI_TAI_DATABASE_URL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-) || URL=""
 if [ -z "${URL:-}" ]; then
   echo "  [BLIND] cannot read MAI_TAI_DATABASE_URL from $ENV_FILE"
   echo "          ⛔ This is UNKNOWN, not clean. Refusing."
@@ -117,7 +117,7 @@ if [ "$STRICT_ALL_POSITIONS" -eq 1 ]; then
   PROT_SQL="''"
   echo "  [info]  strict all-account-position flatness enabled; no symbols are excluded"
 else
-  PROT_RAW=$(sudo grep -E '^MAI_TAI_PROTECTED_SYMBOLS=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)
+  PROT_RAW=$(sudo grep -E '^MAI_TAI_PROTECTED_SYMBOLS=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-) || PROT_RAW=""
   if [ -z "${PROT_RAW:-}" ]; then
     echo "  [warn]  MAI_TAI_PROTECTED_SYMBOLS unreadable/unset — using an EMPTY exclusion set."
     echo "          That OVER-blocks (operator manuals will also block). Safe direction, on purpose."
@@ -133,7 +133,11 @@ fi
 # These are BY DEFINITION ours — the OMS writes a managed row per position its ladder owns. They
 # live in the DB and survive an OMS crash, so this signal still works when the OMS is down, which is
 # exactly the case broker truth cannot cover.
-MROWS=$(psql "$DSN" -tAc "SELECT count(*) FROM oms_managed_positions WHERE status='open';" 2>/dev/null)
+if ! MROWS=$(psql "$DSN" -tAc "SELECT count(*) FROM oms_managed_positions WHERE status='open';" 2>/dev/null); then
+  echo "  [BLIND] open managed-row query failed; position truth UNKNOWN"
+  echo "  ===> NO-GO (cannot see). Do not restart the OMS."
+  exit 2
+fi
 if ! [[ "${MROWS:-}" =~ ^[0-9]+$ ]]; then
   echo "  [BLIND] cannot count open managed rows"
   BLIND=1
@@ -152,10 +156,14 @@ fi
 # PAPER account. A real-money account could sit hours stale behind a healthy-looking global gauge.
 OPEN_POS=""
 for acct in $REAL_ACCOUNTS; do
-  AGE=$(psql "$DSN" -tAc "
+  if ! AGE=$(psql "$DSN" -tAc "
     SELECT COALESCE(round(extract(epoch from (now()-max(ap.updated_at)))::numeric,0)::text,'NULL')
     FROM account_positions ap JOIN broker_accounts ba ON ba.id=ap.broker_account_id
-    WHERE ba.name='$acct';" 2>/dev/null)
+    WHERE ba.name='$acct';" 2>/dev/null); then
+    echo "  [BLIND] $acct: position freshness query failed; broker truth UNKNOWN"
+    BLIND=1
+    continue
+  fi
   if [ -z "${AGE:-}" ] || [ "$AGE" = "NULL" ]; then
     echo "  [BLIND] $acct: no position rows / no sync timestamp — broker truth unknowable"
     echo "          ⛔ The OMS is the SOLE WRITER of account_positions; if it is down this is"
@@ -170,10 +178,15 @@ for acct in $REAL_ACCOUNTS; do
     BLIND=1
     continue
   fi
-  P=$(psql "$DSN" -tAc "
+  # C1 C11853 A3: a failed query is UNKNOWN, never a successful empty/flat read.
+  if ! P=$(psql "$DSN" -tAc "
     SELECT COALESCE(string_agg(ap.symbol||'='||ap.quantity,' '),'')
     FROM account_positions ap JOIN broker_accounts ba ON ba.id=ap.broker_account_id
-    WHERE ba.name='$acct' AND ap.quantity <> 0 AND ap.symbol NOT IN ($PROT_SQL);" 2>/dev/null)
+    WHERE ba.name='$acct' AND ap.quantity <> 0 AND ap.symbol NOT IN ($PROT_SQL);" 2>/dev/null); then
+    echo "  [BLIND] $acct: position query failed; flatness UNKNOWN"
+    BLIND=1
+    continue
+  fi
   if [ -n "${P// /}" ]; then
     echo "  [BLOCK] $acct NOT FLAT [${AGE}s old]: $P"
     OPEN_POS="$OPEN_POS $(echo "$P" | tr ' ' '\n' | cut -d= -f1 | tr '\n' ' ')"

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Mapping
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
@@ -44,6 +44,66 @@ EASTERN = ZoneInfo("America/New_York")
 # small: a real confirm is always in the past, so anything beyond a skew-sized window is staleness,
 # not a timing artefact.
 FUTURE_CONFIRM_TOLERANCE_SECS = 60.0
+
+
+def session_confirm_clock(raw: object, now: datetime) -> dict:
+    """Proposed 04ET research-key clock; UNKNOWN never manufactures now.
+
+    No source/session policy, scanner membership or trading state is changed.
+    Old calendar parser below remains exact for the default-OFF writer.
+    """
+    if not isinstance(now, datetime) or now.utcoffset() is None:
+        return dict(status="UNKNOWN", reason="observation_clock_unknown", trade_date=None, event_at=None)
+    observed = now.astimezone(EASTERN)
+    day = observed.date() - timedelta(days=1) if observed.hour < 4 else observed.date()
+    failure = dict(status="UNKNOWN", reason="confirmed_clock_unknown", trade_date=day, event_at=None)
+    if not isinstance(raw, str) or not raw.strip() or len(raw) > 64:
+        return failure
+    cleaned = raw.strip().replace(" ET", "").replace("ET", "").strip()
+    parsed = None
+    for fmt in ("%I:%M:%S %p", "%I:%M %p", "%H:%M:%S", "%H:%M"):
+        try:
+            parsed = datetime.strptime(cleaned, fmt)
+            break
+        except ValueError:
+            continue
+    if parsed is None:
+        return failure
+    event_day = day if parsed.hour >= 4 else day + timedelta(days=1)
+    candidate = datetime(event_day.year, event_day.month, event_day.day,
+                         parsed.hour, parsed.minute, parsed.second, tzinfo=EASTERN)
+    roundtrip = candidate.astimezone(timezone.utc).astimezone(EASTERN)
+    if roundtrip.replace(tzinfo=None) != candidate.replace(tzinfo=None):
+        return dict(failure, reason="nonexistent_local_confirm_clock")
+    if candidate.utcoffset() != candidate.replace(fold=1).utcoffset():
+        return dict(failure, reason="ambiguous_local_confirm_clock")
+    if (candidate.astimezone(timezone.utc) - now.astimezone(timezone.utc)).total_seconds() > FUTURE_CONFIRM_TOLERANCE_SECS:
+        return dict(failure, reason="future_confirm_clock_unknown")
+    return dict(status="PROVEN_CLOCK", reason="scanner_04et_session_key",
+                trade_date=day, event_at=candidate)
+
+
+def shadow_session_keys(*, now: datetime, all_confirmed) -> dict:
+    """Bounded, JSON-compatible would-write keys; NEVER opens a session/DB.
+
+    This does not mute LOW_VOLUME or activate the corrected writer. Main owns
+    Settings/call-site and L4 ledger integration; unknown clock is not no event.
+    """
+    rows = []
+    for stock in all_confirmed:
+        if len(rows) >= 1000:
+            raise ValueError("scanner_shadow_frame_overflow_no_truncation")
+        symbol = stock.get("ticker")
+        if (not raw_symbol_is_uppercase(symbol) or len(symbol) > 32
+                or any(not (c.isascii() and (c.isalnum() or c in ".-")) for c in symbol)):
+            raise ValueError("scanner_shadow_symbol_unknown")
+        clock = session_confirm_clock(stock.get("confirmed_at"), now)
+        rows.append(dict(symbol=symbol, status=clock["status"], reason=clock["reason"],
+            trade_date=clock["trade_date"].isoformat() if clock["trade_date"] else None,
+            event_at=clock["event_at"].isoformat() if clock["event_at"] else None))
+    return dict(schema="SMARTALERT1_SCANNER_SESSION_SHADOW_V1", shadow_only=True,
+                observed_at=now.isoformat() if isinstance(now, datetime) and now.utcoffset() is not None else None,
+                writes=0, rows=rows, unknown_is_not_absence=True)
 
 _INSERT_SQL = text(
     """
@@ -140,9 +200,21 @@ def capture_events(
     all_confirmed: Iterable[Mapping[str, object]],
     faded_symbols: Iterable[str],
     dropped_retention_symbols: Iterable[str],
+    session_day_enabled: bool = False,
 ) -> None:
     """Persist CONFIRM / FADE / RETENTION_DROP rows. Never raises."""
     if session_factory is None:
+        return
+
+    effective_date = trade_date
+    if session_day_enabled is True:
+        session_clock = session_confirm_clock("04:00", now)
+        if session_clock["trade_date"] is None:
+            logger.warning("[SCANNER-CAPTURE-UNKNOWN] reason=observation_clock_unknown")
+            return
+        effective_date = session_clock["trade_date"]
+    elif session_day_enabled is not False:
+        logger.warning("[SCANNER-CAPTURE-UNKNOWN] reason=session_day_flag_unknown")
         return
 
     rows: list[dict[str, object]] = []
@@ -153,10 +225,17 @@ def capture_events(
         symbol = str(stock.get("ticker", "")).upper().strip()
         if not symbol:
             continue
-        event_at = _parse_confirmed_at(stock.get("confirmed_at"), trade_date, now)
+        if session_day_enabled:
+            clock = session_confirm_clock(stock.get("confirmed_at"), now)
+            if clock["status"] != "PROVEN_CLOCK":
+                logger.warning("[SCANNER-CAPTURE-UNKNOWN] symbol=%r reason=%s", symbol[:32], clock["reason"])
+                continue  # Unproved event time, NOT proof that no CONFIRM occurred.
+            event_at = clock["event_at"]
+        else:
+            event_at = _parse_confirmed_at(stock.get("confirmed_at"), trade_date, now)
         rows.append(
             {
-                "trade_date": trade_date,
+                "trade_date": effective_date,
                 "symbol": symbol,
                 "event_type": "CONFIRM",
                 "event_at": event_at,
@@ -178,7 +257,7 @@ def capture_events(
             continue
         rows.append(
             {
-                "trade_date": trade_date,
+                "trade_date": effective_date,
                 "symbol": symbol,
                 "event_type": "FADE",
                 "event_at": now,
@@ -200,7 +279,7 @@ def capture_events(
             continue
         rows.append(
             {
-                "trade_date": trade_date,
+                "trade_date": effective_date,
                 "symbol": symbol,
                 "event_type": "RETENTION_DROP",
                 "event_at": now,

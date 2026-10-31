@@ -118,6 +118,15 @@ finding); the detail line carries `run_verdict=` and each failing metric with it
 graded FAIL is distinguishable from a D6 run that crashed (`IN_PROGRESS`) or could not tell. A check's class is explicit output, not inferred from its
 name or from the aggregate exit code.
 
+D2 country-route scope: D6 cross-venue pairing and the paired fill-rate bake-off are
+`NOT_APPLICABLE` only for complete sealed single-venue routing evidence bound to the
+actual order/account/provider/symbol/segment and causal submission/fill clocks. Missing,
+malformed or conflicting routing remains `COULD_NOT_TELL`, never GREEN by default.
+Actual two-venue submissions still require their paired fills; any missing counterpart
+remains a failed outcome and notifies, including when another metric is unexercised.
+Venue-local duplicate fills and refused exits keep their existing denominators and
+grading. An empty session remains `UNEXERCISED`; N/A is not an exercised cross-venue PASS.
+
 ## Deploy (F3 = updating a cron, no service restart)
 The runtime check must execute overnight and on weekends; the wrapper itself limits the DB-backed
 function checks to 09:35-16:05 ET on open weekdays. Root crontab:

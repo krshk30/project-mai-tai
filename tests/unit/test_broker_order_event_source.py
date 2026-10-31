@@ -301,8 +301,8 @@ def test_webull_exception_paths_are_DERIVED_never_guessed() -> None:
     """
     src = (_ADAPTERS / "webull.py").read_text(encoding="utf-8")
     assert 'origin: str = "unknown"' in src, "the helper must still default to unknown"
-    assert src.count('origin="client"') == 4, (
-        "only the four pre-flight guards are literal-client: missing account config, "
+    assert src.count('origin="client"') == 5, (
+        "only the five pre-flight guards are literal-client: PRICE1 entry floor, missing account config, "
         "invalid raw BUY stop-limit relationship, missing instrument id, and the "
         "fresh-market resting-mirror shape guard"
     )

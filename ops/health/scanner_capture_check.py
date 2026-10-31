@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Read-only scanner-capture volume check with an ET-window-matched baseline.
 
+Only rows written from 04:00 ET of their trade date count. Before the 10-29 session-day
+writer fix the scanner re-wrote the prior day's confirmations under the new date between
+00:00 and 04:00 ET (4,182 rows on 10-27, 605 on 10-29); counting them inflated the baseline
+and made a correct day look like LOW_VOLUME.
+
 The original box-only check collapsed a failed database read into ``rows=0`` and then
 diagnosed the capture writer as broken.  This checker keeps those states separate and
 reports observations only.  A low-volume verdict means that the measured row rate is far
@@ -51,6 +56,9 @@ current_stats AS (
     FROM scanner_confirmed_events AS events
     CROSS JOIN params
     WHERE events.trade_date = params.today_et
+      AND events.created_at >= (
+          (params.today_et + TIME '04:00') AT TIME ZONE 'America/New_York'
+      )
       AND events.created_at < (
           (params.today_et + params.cutoff_et) AT TIME ZONE 'America/New_York'
       )
@@ -63,6 +71,9 @@ baseline_counts AS (
     CROSS JOIN params
     LEFT JOIN scanner_confirmed_events AS events
       ON events.trade_date = days.trade_date
+     AND events.created_at >= (
+         (days.trade_date + TIME '04:00') AT TIME ZONE 'America/New_York'
+     )
      AND events.created_at < (
          (days.trade_date + params.cutoff_et) AT TIME ZONE 'America/New_York'
      )

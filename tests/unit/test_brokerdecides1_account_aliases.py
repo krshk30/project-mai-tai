@@ -9,7 +9,7 @@ from project_mai_tai.brokerdecides1_sync import local_evidence
 from project_mai_tai.brokerdecides1_retirement import retire_batch
 from project_mai_tai.db.models import BrokerAccount, BrokerDecidesDispatchRetirement, Fill, Strategy, TradeIntent
 from test_brokerdecides1_control_overlay import control, nonentry
-from test_brokerdecides1_local_census import ACCOUNTS, attempt, census, order
+from test_brokerdecides1_local_census import ACCOUNTS, attempt, census as census, order
 
 
 def alias(session, *, provider="webull", active=True):

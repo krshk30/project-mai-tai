@@ -1,0 +1,133 @@
+2026-10-20 13:50:03,517 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=535 refused_unknown=2 allowed=0 slot=reclaim reason=non_first_producer_disabled
+2026-10-20 13:51:02,375 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=536 refused_unknown=2 allowed=0 slot=reclaim reason=non_first_producer_disabled
+2026-10-20 13:52:02,710 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-DISARM] WORX reason=flip
+2026-10-20 13:52:02,710 ERROR project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-UNKNOWN] WORX opportunity_id=1792498927430 entry_allowed=0 reason=sell_flip_idle_owner_contains_evidence
+2026-10-20 13:52:02,719 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RETRY] WORX segment_id=1792504260000 closes_in_segment=0 retries_left=0 action=reset_new_segment reason=fresh_sell_flip
+2026-10-20 13:52:03,812 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1 recovered=0 pending=1 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 13:53:03,110 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 13:53:05,213 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=37 recovered=0 pending=37 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 13:54:02,539 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 13:54:06,699 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=73 recovered=0 pending=73 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 13:55:02,706 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 13:55:02,707 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=537 refused_unknown=3 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 13:55:09,696 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=109 recovered=0 pending=109 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 13:56:02,421 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 13:56:02,422 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=538 refused_unknown=4 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 13:56:11,634 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=145 recovered=0 pending=145 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 13:57:03,158 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 13:57:03,158 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=539 refused_unknown=5 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 13:57:12,930 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=181 recovered=0 pending=181 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 13:58:02,601 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 13:58:02,601 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=540 refused_unknown=6 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 13:58:14,219 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=217 recovered=0 pending=217 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 13:59:00,722 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 13:59:00,723 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=541 refused_unknown=7 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 13:59:15,718 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=253 recovered=0 pending=253 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:00:03,632 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:00:03,632 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=542 refused_unknown=8 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:00:19,690 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=289 recovered=0 pending=289 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:01:02,861 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:01:02,862 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=543 refused_unknown=9 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:01:22,184 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=325 recovered=0 pending=325 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:02:02,325 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:02:02,326 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=544 refused_unknown=10 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:02:24,188 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=361 recovered=0 pending=361 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:03:02,767 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:03:02,767 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=545 refused_unknown=11 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:03:25,969 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=397 recovered=0 pending=397 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:04:02,582 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:04:02,583 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=546 refused_unknown=12 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:04:27,647 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=433 recovered=0 pending=433 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:05:02,936 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:05:02,944 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=547 refused_unknown=13 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:05:30,852 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=469 recovered=0 pending=469 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:06:02,962 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:06:02,963 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=548 refused_unknown=14 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:06:32,982 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=505 recovered=0 pending=505 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:07:02,711 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:07:02,712 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=549 refused_unknown=15 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:07:34,564 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=541 recovered=0 pending=541 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:08:00,665 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:08:00,666 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=550 refused_unknown=16 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:08:36,230 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=577 recovered=0 pending=577 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:09:02,775 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:09:02,785 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=551 refused_unknown=17 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:09:38,504 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=613 recovered=0 pending=613 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:10:02,865 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:10:02,867 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=552 refused_unknown=18 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:10:41,850 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=649 recovered=0 pending=649 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:11:02,334 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:11:02,335 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=553 refused_unknown=19 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:11:43,592 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=685 recovered=0 pending=685 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:12:02,849 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:12:02,850 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=554 refused_unknown=20 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:12:45,034 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=721 recovered=0 pending=721 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:13:02,506 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:13:02,507 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=555 refused_unknown=21 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:13:46,494 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=757 recovered=0 pending=757 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:14:02,637 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:14:02,638 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=556 refused_unknown=22 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:14:47,921 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=793 recovered=0 pending=793 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:15:04,036 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:15:04,039 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=559 refused_unknown=23 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:15:51,406 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=829 recovered=0 pending=829 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:16:02,585 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:16:02,585 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=560 refused_unknown=24 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:16:53,259 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=865 recovered=0 pending=865 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:17:03,143 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:17:03,144 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=561 refused_unknown=25 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:17:54,954 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=901 recovered=0 pending=901 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:18:02,636 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:18:02,637 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=562 refused_unknown=26 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:18:56,479 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=937 recovered=0 pending=937 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:19:03,112 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:19:03,113 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=563 refused_unknown=27 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:19:58,345 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=973 recovered=0 pending=973 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:20:03,108 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:20:03,115 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=564 refused_unknown=28 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:21:02,094 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1009 recovered=0 pending=1009 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:21:02,302 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:21:02,303 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=565 refused_unknown=29 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:22:02,303 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:22:02,304 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=566 refused_unknown=30 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:22:03,976 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1045 recovered=0 pending=1045 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:23:02,709 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:23:02,710 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=567 refused_unknown=31 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:23:05,556 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1081 recovered=0 pending=1081 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:24:01,658 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:24:01,660 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=568 refused_unknown=32 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:24:07,291 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1117 recovered=0 pending=1117 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:25:03,200 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:25:03,202 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=570 refused_unknown=33 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:25:10,419 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1153 recovered=0 pending=1153 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:26:02,951 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:26:02,953 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=571 refused_unknown=34 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:26:12,980 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1189 recovered=0 pending=1189 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:27:02,727 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FRESH-SELL-OWNER-HELD] WORX reason=request_not_exhausted
+2026-10-20 14:27:02,728 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=573 refused_unknown=35 allowed=0 slot=first reason=owner_phase_unknown
+2026-10-20 14:27:14,662 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1225 recovered=0 pending=1225 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:28:03,058 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] WORX armed bar_ts=1792506420000 trig=4.1400 flip_level=4.0895
+2026-10-20 14:28:16,459 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1261 recovered=0 pending=1261 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:29:18,488 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1297 recovered=0 pending=1297 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:30:03,830 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=575 refused_unknown=35 allowed=0 slot=reclaim reason=non_first_producer_disabled
+2026-10-20 14:30:22,506 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1333 recovered=0 pending=1333 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:31:03,155 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=576 refused_unknown=35 allowed=0 slot=reclaim reason=non_first_producer_disabled
+2026-10-20 14:31:24,959 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1369 recovered=0 pending=1369 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:32:02,397 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=577 refused_unknown=35 allowed=0 slot=reclaim reason=non_first_producer_disabled
+2026-10-20 14:32:26,603 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1405 recovered=0 pending=1405 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:33:02,843 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=578 refused_unknown=35 allowed=0 slot=reclaim reason=non_first_producer_disabled
+2026-10-20 14:33:28,083 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1441 recovered=0 pending=1441 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:34:03,218 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=579 refused_unknown=35 allowed=0 slot=reclaim reason=non_first_producer_disabled
+2026-10-20 14:34:29,432 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1477 recovered=0 pending=1477 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:35:02,106 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=580 refused_unknown=35 allowed=0 slot=reclaim reason=non_first_producer_disabled
+2026-10-20 14:35:31,703 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1513 recovered=0 pending=1513 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:36:03,022 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=581 refused_unknown=35 allowed=0 slot=reclaim reason=non_first_producer_disabled
+2026-10-20 14:36:33,206 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1549 recovered=0 pending=1549 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:37:03,190 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=582 refused_unknown=35 allowed=0 slot=reclaim reason=non_first_producer_disabled
+2026-10-20 14:37:34,507 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1585 recovered=0 pending=1585 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:38:02,600 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=583 refused_unknown=35 allowed=0 slot=reclaim reason=non_first_producer_disabled
+2026-10-20 14:38:35,925 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1621 recovered=0 pending=1621 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:39:00,561 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=584 refused_unknown=35 allowed=0 slot=reclaim reason=non_first_producer_disabled
+2026-10-20 14:39:37,886 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1657 recovered=0 pending=1657 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0
+2026-10-20 14:40:03,360 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-ADMISSION] WORX evaluated=585 refused_unknown=35 allowed=0 slot=reclaim reason=non_first_producer_disabled
+2026-10-20 14:40:40,790 WARNING project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RECOVERY] WORX evaluated=1693 recovered=0 pending=1693 entry_allowed=0 reason=insufficient_unambiguous_evidence open=0 filled_accounts=0 position_ids=0 age_ms=0

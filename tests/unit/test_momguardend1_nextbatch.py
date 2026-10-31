@@ -3,7 +3,7 @@
 All process/provider effects are replaced with controlled local fakes. These
 controls do not establish installed wrapper provenance or native hook results.
 """
-from datetime import UTC, date, datetime, time
+from datetime import date, datetime, time
 import hashlib
 import importlib.util
 import json

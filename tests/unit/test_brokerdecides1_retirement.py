@@ -21,7 +21,7 @@ from project_mai_tai.db.models import (
     BrokerDecidesDispatchEvidence as Evidence, BrokerDecidesDispatchRetirement as Retirement,
     BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill, OmsManagedPosition, TradeIntent,
 )
-from test_brokerdecides1_local_census import ACCOUNTS, attempt, census, order
+from test_brokerdecides1_local_census import ACCOUNTS, attempt, census as census, order
 
 
 def observed():

@@ -28,6 +28,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import Quote
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2Strategy
 from project_mai_tai.v2_flip_entry_ownership import FlipPositionBook
+from tests.unit.resting_book_control import prove_primary_rest
 
 _ET = ZoneInfo("America/New_York")
 IN_WIN = int(datetime(2026, 7, 10, 11, 0, tzinfo=_ET).timestamp() * 1000)
@@ -259,7 +260,6 @@ def test_ftft_20260911_real_tape_stays_resting_through_the_flip() -> None:
 
 
 # ------------------------------------------------------------------ FAN-OUT leg
-from tests.unit.resting_book_control import prove_primary_rest
 
 
 def test_fanout_leg_is_gated_on_its_own() -> None:

@@ -113,6 +113,10 @@ def test_t1_t2_t3_t9_recorded_stray_cannot_take_state(case, stream, caplog):
     after.pop("last_quote")
     assert after == before
     assert strategy.drain_webull_fanout_intents() == []
+    if not stream and (case[4] is None or case[4] <= 0):
+        # The shared PRICE1 gate rejects an absent ask before PM diagnostics.
+        assert "PRICE1-REFUSED" in caplog.text
+        return
     assert "V2-PM-CROSS-BLOCK" in caplog.text
     for label in ("print=", "size=", "bid=", "ask=", "ask_source=", "ask_age_ms=", "trigger=", "reason="):
         assert label in caplog.text
@@ -325,12 +329,14 @@ def test_t8_lghl_stream_cap_skip_then_recorded_rest_cross():
     assert cross(strategy, state, clock, 7.02, 7.04, stream=False) is not None
 
 
-def test_t10_flag_off_reproduces_saiq_false_buy_and_zero_ask_webull(caplog):
+def test_t10_flag_off_keeps_legacy_cross_but_preserves_validated_ask_for_webull(caplog):
     strategy, state, clock = armed(STRAYS[0], confirm=False)
     with caplog.at_level(logging.WARNING):
         assert cross(strategy, state, clock, 6.83, 6.24) is not None
-    assert strategy.drain_webull_fanout_intents() == []
-    assert "price=0.0" in caplog.text
+    mirror, = strategy.drain_webull_fanout_intents()
+    assert mirror.quantity == Decimal(48)
+    assert mirror.metadata["entry_size_price"] == "6.24"
+    assert "PRICE1-REFUSED" not in caplog.text
 
 
 def flip(strategy, state, clock):

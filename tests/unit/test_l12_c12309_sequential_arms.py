@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.unit.test_l12_nonce_restore_caller import nonce
+from tests.unit.test_l12_nonce_restore_caller import nonce as nonce
 from tests.unit.test_l12_postcopy_lease_stages import consumed_copy, inputs, stage
 
 

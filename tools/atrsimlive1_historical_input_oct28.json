@@ -1,0 +1,36 @@
+{
+  "schema": "ATRSIMLIVE1_REVIEWED_HISTORICAL_INPUT_BINDING_V1",
+  "scope": "ATRSIMLIVE1_SEALED_ORIGINAL_RR_HISTORICAL_REPLAY_V1",
+  "trading_day": "2026-10-28",
+  "c1_authority_sha256": "5ebc5e902bcbe439a4ddcfe2db20ba016e8312fb9ec65557d6056ff635e21461",
+  "files": {
+    "summary": {
+      "path": "/Users/velkris/.codex/task-queues/analysis/OCT29-ATR-CLOSED-SEED-WARM-RO-COPY-EXACT-PATHS-FIRST/warm/phase-summary.json",
+      "sha256": "46df3b7579a6a00f73a31c03ef5a3ff0f4caa97bde8b1e2f8d457e7d8b17ad3c"
+    },
+    "outer": {
+      "path": "/Users/velkris/.codex/task-queues/analysis/OCT29-ATR-CLOSED-SEED-WARM-RO-COPY-EXACT-PATHS-FIRST/warm/actual-outer-first.json",
+      "sha256": "21b77ee689d9ab486046f2767c3af0748f55a741c4c226cc54e324c611c5fca0"
+    },
+    "original_plan": {
+      "path": "/Users/velkris/.codex/task-queues/analysis/OCT29-ATR-CLOSED-SEED-WARM-RO-COPY-EXACT-PATHS-FIRST/warm/bound-phase-plan.json",
+      "sha256": "39d5c2c1c9d0843c86f6a17e18b8f0bfe3739ca775d76f3d09c588ac8aa9bdca"
+    },
+    "prior_full_audit": {
+      "path": "/private/tmp/OCT29-GIBBS-ATR-PAYLOAD-REUSE-AUDIT.json",
+      "sha256": "9051032370de76d870b461d1be41fdaa1073f24857f45f14624ca6b49500cd15"
+    },
+    "original_driver_log": {
+      "path": "/Users/velkris/.codex/task-queues/analysis/OCT29-ATR-CLOSED-SEED-WARM-RO-COPY-EXACT-PATHS-FIRST/warm/driver-first.log",
+      "sha256": "a6f0a07cf13d31dc22579661741d1697cdd428bdea7d0a5de4cea0e4e96df061"
+    },
+    "policy": {
+      "path": "/Users/velkris/.codex/task-queues/analysis/caprpl-20261013/oct5-condition-rules.json",
+      "sha256": "e42e5075bd296144b2a632438de01be1c7f1afe8ebaed34cd528d58f34e39cf3"
+    },
+    "evidence": {
+      "path": "/Users/velkris/.codex/task-queues/analysis/OCT29-ATR-CLOSED-SEED-WARM-RO-COPY-EXACT-PATHS-FIRST/warm/atrsim-evidence.jsonl.gz",
+      "sha256": "5512f335b7d990f129d8fd9f3a4767d53a99fb05023b093145f37d169cd640fa"
+    }
+  }
+}

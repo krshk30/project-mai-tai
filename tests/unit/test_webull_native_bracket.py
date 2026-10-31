@@ -119,6 +119,7 @@ def _bracket_req(**meta) -> OrderRequest:
     metadata = {
         "bracket": "true",
         "bracket_entry_type": "LIMIT",
+        "reference_price": "10.50",       # unpadded entry anchor required by PRICE1
         "limit_price": "10.50",           # MASTER entry (marketable limit)
         "bracket_target_price": "11.50",  # STOP_PROFIT (+target)
         "bracket_stop_price": "10.00",    # STOP_LOSS (-protect)

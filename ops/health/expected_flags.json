@@ -2,6 +2,16 @@
   "schema_version": 1,
   "baseline": "2026-09-29 after 3389090a deploy; read-only /proc audit of owning processes",
   "flags": [
+    {"name":"oms_webull_exit3_enabled","expected":true,"owning_service":"oms","reason":"WBEXIT3 exact owned Webull exit responsibility, positive original reads, partial size and retained UNKNOWN; no manual/Schwab/new-provider permission.","ruling":"C1 Oct29 20:47/21:03/21:26/21:33/22:04 SOURCE/private qualification; code defaultFalse. ON only reviewed package installed by C1 after Oct30 close; candidate+numbers due13ET or defer. This catalog is not install/activation authority."},
+    {"name": "strategy_schwab_1m_v2_pm_softrest_quote_log_enabled", "expected": true, "owning_service": "schwab-1m-v2", "reason": "Best-effort PM software-rest native quote/print diagnostics: at most one periodic line per symbol per second plus actual decision changes. No entry, pricing, broker, polling or guard behavior change.", "ruling": "C1 2026-10-29 20:47 L2, base amended20:56 to1dfa. Code defaultFalse; C1 installs ON after the Oct30 close with the reviewed package. Audit expectation only; no independent activation authority."},
+    {"name": "strategy_schwab_1m_v2_brokerdecides1_same_day_event_binding_enabled", "expected": true, "owning_service": "oms", "also_check_services": ["schwab-1m-v2"], "reason": "Exact original local accepted-event identity may bind a lost v2 dispatch token during the bounded background census; broker closure and zero-execution proof remain required. No historical order or retirement row is rewritten.", "ruling": "C1 2026-10-29 15:26 Lane A, exact package base confirmed15:33. Code defaultFalse; reviewed package installs ON after close. Audit expectation only; no independent installation authority."},
+    {"name": "strategy_schwab_1m_v2_keepwatch_transient_rest_hold_enabled", "expected": true, "owning_service": "schwab-1m-v2", "reason": "C7-F1 defers only the first existing-rest cancel for a source-bound stale rebuild until the next distinct owned history attempt. New placements remain held; other reasons cancel immediately.", "ruling": "C1 2026-10-29 12:39/12:44 tonight-package assignment and exact 12:51:47 policy ruling. Code defaultFalse; reviewed package installs ON after the close. Audit expectation only, no independent installation authority."},
+    {"name": "orb_country_semantic_admission_enabled", "expected": true, "owning_service": "oms", "reason": "ORBCOUNTRY1 compares freshly verified route semantics while preserving the original parent's country-record stamp and all ownership, request and native guards.", "ruling": "C1 October28 10:56 release amended21:31:33: code defaultFalse, installedON only after exact reviewed-subset ALL-ON combination and applicable durable boot gates. Unready independent lanes defer. This expectation grants no standalone activation or install authority."},
+    {"name": "scanner_confirmed_capture_session_day_enabled", "expected": true, "owning_service": "strategy", "reason": "Research capture uses the 04:00 ET session key; unknown confirm clocks stay UNKNOWN. Scanner decisions, watchlists and confirmation/fade behavior stay unchanged.", "ruling": "C1 October28 21:12:11 accepts the exact writer clock policy and requires ON at the reviewed package install, code defaultFalse. Actual strategy output equivalence and in-memory hook cost are mandatory; no new DB read, phone or sender retirement."},
+    {"name": "scanner_nuweref1_enabled", "expected": false, "owning_service": "strategy", "reason": "NUWEREF1 missing scanner reference recovery remains disabled in the Group-1 install; request rate and live shutdown qualification remain open.", "ruling": "C11853 Group-1 and C12133: source reviewed for OFF installation only; this expected-value entry grants no activation or deployment authority."},
+    {"name": "strategy_schwab_1m_v2_keepwatch_sized_trade_gap_enabled", "expected": true, "owning_service": "schwab-1m-v2", "reason": "C7A: only a positive sized round-lot print (size >= 100, not condition 37) can create a keep-watch traded-gap barrier; odd-lot and unsized observations never freeze a symbol. Known round-lot gaps still hold.", "ruling": "Operator 2026-10-29 ~09:2x ET: deploy mid-session as soon as it works; C1 09:27 source-policy ruling. Code defaultFalse, installs ON. Audit expectation only; no activation authority."},
+    {"name": "strategy_schwab_1m_v2_brokerdecides1_legacy_resolution_enabled", "expected": true, "owning_service": "oms", "also_check_services": ["schwab-1m-v2"], "reason": "C7B-min: v2 dispatch attempts from a closed session with no order row are final for entry admission (v2 opens are DAY-only); current-session lost ACKs stay UNKNOWN.", "ruling": "Operator 2026-10-29: deploy mid-session as soon as it works; C1 09:27/09:57 DAY-finality ruling. Code defaultFalse, installs ON. Audit expectation only."},
+    {"name": "strategy_schwab_1m_v2_wbexit2_enabled", "expected": true, "owning_service": "oms", "also_check_services": ["schwab-1m-v2"], "reason": "WBEXIT2 keeps the Webull close obligation until the original children are positively terminal; any unknown holds with originals untouched.", "ruling": "Operator approved 2026-10-28 for the next package; C1 accepted semantics 2026-10-29 02:15; installs ON under the operator deploy-flag-ON rule. Audit expectation only; no activation authority."},
     {"name": "strategy_schwab_1m_v2_brokerdecides1_enabled", "expected": true, "owning_service": "schwab-1m-v2", "also_check_services": ["oms"], "reason": "BROKERDECIDES1 native account publication and entry gate are enabled in the reviewed live package; unknown evidence remains guarded.", "ruling": "C1 2026-10-27 18:32 explicitly authorizes this one operational catalog entry, expected true under the operator deploy-flag-ON rule. Audit expectation only; no activation, restart or deployment authority."},
     {
       "name": "strategy_schwab_1m_v2_keepwatch1_enabled",
@@ -76,6 +86,13 @@
       "owning_service": "schwab-1m-v2",
       "reason": "B2 releases an exhausted owner only on a fresh live SELL with fresh flat-both evidence, no working BUY, and own terminal cancels settled for 15 seconds.",
       "ruling": "Sunday PM operator rule: default ON; exact-head review and deployment remain separate."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_retry_request_fresh_sell_handoff_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Preserve the exact retry request across a fresh SELL and a later cancel-only receipt; independent flat/cancel proof and atomic owner retirement remain required.",
+      "ruling": "C1 2026-10-29 17:34 operator-approved source/private qualification, default False; C1 installs ON only after exact-source review."
     },
     {
       "name": "strategy_schwab_1m_v2_resting_buy_round_up_enabled",
@@ -428,6 +445,13 @@
       "owning_service": "schwab-1m-v2",
       "reason": "Enabled in the owning running service for the approved live configuration.",
       "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_flip_print_diagnostic_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Causal print fields UNKNOWN plus separately labelled observed trade; code default OFF, package install ON.",
+      "ruling": "C1 2026-10-29 21:33; install only with approved package after October 30 close."
     },
     {
       "name": "strategy_schwab_1m_v2_tick_capture_enabled",

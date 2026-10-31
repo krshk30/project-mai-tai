@@ -1,5 +1,6 @@
 """Real PG16 locking proofs; never use the application/production DSN."""
 
+from types import SimpleNamespace
 import importlib.util
 import asyncio
 import logging
@@ -210,6 +211,7 @@ def shared_admission(pg, code, provider):
         unit.add(Strategy(id=strategy_id, code=code, name=code, execution_mode="live"))
     control_store.seed(strategy_id)
     service = OmsRiskService.__new__(OmsRiskService)
+    service.settings = SimpleNamespace()  # WBEXIT2/3 read service.settings since 10-28; absent switch = off
     service.session_factory, service.store = sessions, OmsStore()
     service.logger = logging.getLogger("controlled-pg-admission")
     service._bot_control_runtime = BotControlRuntime(sessions)

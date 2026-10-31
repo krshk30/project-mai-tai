@@ -1,0 +1,13 @@
+# Read-only list-today census via installed WebullBrokerAdapter (box 78bad800 code), run by claude-1 ~16:3x ET 10-30, base schwab_1m_v2-CHOW-protect-3f84a37f10f2
+OUTCOME released
+REPORT schwab_1m_v2-CHOW-protect-3f84a37f10f2S cancelled broker FSHAE9Q1OTEM8MJ9SUJT6B2P9A 64 0 geometry= {"order_status": "CANCELLED", "stop_price": "4.31"}
+REPORT schwab_1m_v2-CHOW-protect-3f84a37f10f2T cancelled broker 3DG494DFGIGS20OKHC8O69N8QB 64 0 geometry= {"limit_price": "4.92", "order_status": "CANCELLED"}
+RAW {"client_order_id": "schwab_1m_v2-CHOW-protect-3f84a37f10f2T", "order_type": "LMT", "tif": "DAY", "item": {"order_status": "CANCELLED", "order_type": "LIMIT", "limit_price": "4.92", "stop_price": null, "qty": "64", "filled_qty": "0"}}
+RAW {"client_order_id": "schwab_1m_v2-CHOW-protect-3f84a37f10f2S", "order_type": "STP", "tif": "DAY", "item": {"order_status": "CANCELLED", "order_type": "STOP_LOSS", "limit_price": null, "stop_price": "4.31", "qty": "64", "filled_qty": "0"}}
+# Replay through installed wbexit2.original_geometry varying only order_status (event_type set accepted):
+SUBMITTED -> REFUSED wbexit2_original_WORKING_geometry_UNKNOWN
+PENDING   -> REFUSED
+ACCEPTED  -> REFUSED
+QUEUED    -> REFUSED
+WORKING   -> PASSES (4.92, 4.31)
+# EOD confirm_exit_pair_terminal standalone (detail reads) ~18:2x ET: OUTCOME released; T/S event=cancelled origin=broker cancel_outcome=confirmed

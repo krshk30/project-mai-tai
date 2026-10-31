@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 import ast
 import asyncio
 import logging
@@ -199,6 +200,7 @@ def test_manual_orb_intent_is_refused_by_oms_before_any_dependency_is_touched(
     account_name: str,
 ) -> None:
     service = OmsRiskService.__new__(OmsRiskService)
+    service.settings = SimpleNamespace()  # WBEXIT2/3 read service.settings since 10-28; absent switch = off
     service.logger = logging.getLogger("test-oms-orb-paper-refusal")
     service._load_global_manual_stop_symbols = lambda: (_ for _ in ()).throw(  # type: ignore[method-assign]
         AssertionError("ORB intent crossed the OMS refusal boundary")

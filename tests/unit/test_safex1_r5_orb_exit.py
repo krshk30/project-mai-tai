@@ -17,8 +17,11 @@ from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot, Ex
 from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent, Fill, SystemIncident, VirtualPosition
 from project_mai_tai.oms import orb_schwab_eod as owner
 from project_mai_tai.orb_schwab_exits import BODY_REASON
-from tests.unit.test_orbroute1_oms_chain import setup as route_setup, seed_filled_webull
+from tests.unit.test_orbroute1_oms_chain import setup as _route_setup, seed_filled_webull
+
 from tests.unit.test_ownmix2_exit_caps import orb_case, later_buy
+
+route_setup = _route_setup
 
 
 def close_case(monkeypatch, route_setup, provider):

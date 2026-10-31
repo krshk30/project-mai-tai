@@ -95,12 +95,14 @@ async def test_real_service_cache_freshness_still_fences_flag_off(monkeypatch, a
     assert written and state.position_qty == state.position_qty_held == 0
 
 
-def test_raw_subfloor_line_cannot_be_rescued_by_valid_ask_or_cap():
+def test_raw_subfloor_offset_trigger_cannot_be_rescued_by_valid_ask_or_cap():
     strategy = SchwabV2Strategy(_dual_settings())
     state = _armed_clro(strategy)
     _at(strategy, PRINT_2_RCV)
-    state.resting_level = .999
-    state.resting_trigger = 1.004
+    # PRICE1 applies to the raw offset trigger before provider rounding, not
+    # the unoffset ATR line. .9949 * 1.005 remains below the $1 floor.
+    state.resting_level = .9949
+    state.resting_trigger = 1.00
     state.resting_wire_cap = 1.01
     assert strategy.on_stream_trade("CLRO", 1.005, PRINT_2_TS, ask_price=1.005) is None
     assert state.resting_flip_ms == 0

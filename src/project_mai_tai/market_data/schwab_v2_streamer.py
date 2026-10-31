@@ -75,6 +75,8 @@ class SchwabTick:
     bid_size: int | None = None
     ask_size: int | None = None
     last_size: int | None = None
+    # Diagnostic provenance only; never used as a trade/quote decision clock.
+    message_ts_ms: int | None = None
 
 
 TickCallback = Callable[[SchwabTick], Awaitable[None]]
@@ -664,6 +666,7 @@ class SchwabV2Streamer:
                         kind="trade", service="LEVELONE_EQUITIES", symbol=symbol,
                         event_ts_ms=int(event_ts), raw=content, raw_hash=raw_hash,
                         price=last, size=last_size, cumulative_volume=cum_vol,
+                        message_ts_ms=item_ts_ms,
                     )
                 )
         if (bid is not None and bid > 0) or (ask is not None and ask > 0):
@@ -675,6 +678,7 @@ class SchwabV2Streamer:
                         bid_price=bid, ask_price=ask, last_price=last,
                         bid_size=bid_size, ask_size=ask_size, last_size=last_size,
                         cumulative_volume=cum_vol,
+                        message_ts_ms=item_ts_ms,
                     )
                 )
         return ticks

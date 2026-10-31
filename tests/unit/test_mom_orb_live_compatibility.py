@@ -1,6 +1,5 @@
 """New controlled reader/comparison guards, never historical trading proof."""
 from copy import deepcopy
-from datetime import UTC, datetime
 import json
 
 import pytest

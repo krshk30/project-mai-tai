@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from project_mai_tai.momentum_live.entry_wire import _ENTRY_WIRE, entry_wire_check, entry_wire_guard
-from tests.unit.test_mombuffer1_incap_reprice import priced  # noqa: F401
+from tests.unit.test_mombuffer1_incap_reprice import priced as priced  # noqa: F401
 from tests.unit.test_mombuffer1_review_guards import (
     test_actual_adapter_local_guard_after_wait_is_terminal_and_never_calls_transport as native_refusal_case,
 )
@@ -14,7 +14,7 @@ from tests.unit.test_momlive1_virtual_clear import (
     test_bbci_missing_target_then_broker_zero_keeps_ownership_until_actual_exit as virtual_clear_case,
 )
 from tests.unit.test_momstuck2_prewire_refusal import env  # noqa: F401
-from tests.unit.test_webull_adapter import fake_sdk  # noqa: F401
+from tests.unit.test_webull_adapter import fake_sdk as fake_sdk  # noqa: F401
 
 
 @pytest.mark.asyncio

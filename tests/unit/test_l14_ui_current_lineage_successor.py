@@ -16,7 +16,7 @@ from tests.unit import test_l14_only_a2_fallback_composition as history
 
 ROOT = Path(__file__).resolve().parents[2]
 PATH = ROOT / "tests/fixtures/atr_simulation/l14_current_ui_successor_20261025.json"
-SHA = "d08b29e7c3bbaa2174cd2758f13a83321061fb5b6433715dba9b709ea1bde1be"
+SHA = "4033374f0110b09e93fa9c3cc153354d1f8332db93bf9ea56033930c4c0690d9"
 ADDED = "src/project_mai_tai/atr_simulation/cp_sim_display.py"
 MODIFIED = {"src/project_mai_tai/atr_simulation/aggregate_entry_display.py",
     "src/project_mai_tai/services/atr_simulation_legacy_routes.py",
@@ -79,7 +79,12 @@ def assert_current_protected_l14_successor():
 
 def assert_current_runtime_membership_successor():
     lineage()
-    assert history.current_runtime_paths() == history.tree_paths(history.COMBINED) | {ADDED}
+    # C12133: exact separately reviewed B1 component; historical UI pins stay intact.
+    reference = "src/project_mai_tai/services/scanner_reference_recovery.py"
+    path = ROOT / reference
+    assert not path.is_symlink() and path.resolve() == path
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == "d23cc6304794453c26dc1ceaf4e94728ed7b66bfb060a3defcac013cc9f28570"
+    assert history.current_runtime_paths() == history.tree_paths(history.COMBINED) | {ADDED, reference}
 
 
 def test_exact_current_UI_postimages_preserve_all55_historical_preimages():

@@ -11,8 +11,8 @@ from sqlalchemy import select
 from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent, Fill, OmsManagedPosition, TradeIntent, VirtualPosition
 from project_mai_tai.momentum_live.admission import Refusal, Route, price_entry
 from project_mai_tai.momentum_live.entry_reprice import MAX_PRICE_UPDATES
-from tests.unit.test_momstuck2_prewire_refusal import durable, env  # noqa: F401
-from tests.unit.test_webull_adapter import fake_sdk  # noqa: F401
+from tests.unit.test_momstuck2_prewire_refusal import durable, env as env  # noqa: F401
+from tests.unit.test_webull_adapter import fake_sdk as fake_sdk  # noqa: F401
 
 
 @pytest.fixture

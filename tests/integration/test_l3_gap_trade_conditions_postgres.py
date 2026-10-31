@@ -169,13 +169,18 @@ def test_sql_mutations_are_killed_by_positive_and_negative_controls(factory, mon
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enabled", [True, False])
-async def test_original_wff_1553_buy_reaches_simulated_accepted_order(factory, monkeypatch, enabled):
+async def test_original_wff_1553_buy_reaches_simulated_accepted_order(
+    factory, monkeypatch, enabled, continuing_observation=True,
+):
     # Market bars and gap print are recorded. Complete provider coverage and a
     # flat account are controlled replay inputs, not historical venue evidence.
     seed(factory)
     rows = RAW["bars"]
     prefix, live_tail, buy_bar = rows[:-12], rows[-12:-2], rows[-2]
-    now = int(datetime.fromisoformat(prefix[-1]["created_at"]).timestamp() * 1000)
+    # CONTROLLED continuing observation begins before the recorded SELL. A
+    # subscription at the prefix's end is a late join and must retain its cap.
+    start = prefix[0] if continuing_observation else prefix[-1]
+    now = int(datetime.fromisoformat(start["created_at"]).timestamp() * 1000)
     case = make_line_restore_case(symbol="WFF", now_ms=now, settings_overrides={
         **RAW["live_flags"], **RAW["process_settings"], FLAG: enabled,
     })
@@ -191,7 +196,15 @@ async def test_original_wff_1553_buy_reaches_simulated_accepted_order(factory, m
     case.schwab.broker_account_name = case.settings.strategy_schwab_1m_v2_account_name
     case.webull.broker_account_name = case.settings.strategy_schwab_1m_v2_webull_account_name
     for row in prefix:
-        await case.feed_bar(row)
+        if continuing_observation:
+            received = int(datetime.fromisoformat(row["created_at"]).timestamp() * 1000)
+            # CONTROLLED subscription predates the SELL; prefix delivery is
+            # warmup, not claimed as a historical live observation. Publish
+            # its corrected line before ten subsequent live closes earn the
+            # spanning-gap readiness guard and actual entry-budget identity.
+            await case.feed_bar(row, now_ms=received, phase="replay")
+        else:
+            await case.feed_bar(row)
     case.bot._rest_warmup_done.add("WFF")
     ledger = case.bot._line_sessions["WFF"]
     bars = [case.bar(row) for row in prefix]
@@ -221,10 +234,27 @@ async def test_original_wff_1553_buy_reaches_simulated_accepted_order(factory, m
         assert case.snapshot()["entry_allowed"] is (enabled and index == 9)
         if index < 9:
             assert not case.schwab.intents  # Nine is still insufficient.
+    if not continuing_observation:
+        state = case.strategy.watchlist_state("WFF")
+        assert state.cw_resting_taken and state.cw_reclaim_taken
+        assert not state.resting_active
+        assert not [d for d in case.schwab.intents if d.intent_type == "open"]
     with case.clock(int(datetime.fromisoformat(buy_bar["created_at"]).timestamp() * 1000)):
+        # The previous tail poll is now a minute old. Preserve the 15-second
+        # ownership fence, then earn fresh CONTROLLED flat evidence from the
+        # same private DB reader used for every preceding live bar.
+        state = case.strategy.watchlist_state("WFF")
+        assert not case.strategy._flip_owner_evidence_fresh(state)
+        case.strategy.apply_flip_position_book(case.bot._fetch_flip_position_book())
+        assert case.strategy._flip_owner_evidence_fresh(state)
         await case.feed_bar(buy_bar, phase="live")
         await case.rebuild()
     drafts = [draft for draft in case.schwab.intents if draft.intent_type == "open"]
+    if not continuing_observation:
+        # The late join never earned a standing order on the pre-watch SELL.
+        # No post-BUY quote is supplied to manufacture a different entry path.
+        assert not drafts
+        return
     assert bool(drafts) is enabled, case.snapshot()
     if not enabled:
         return
@@ -258,3 +288,10 @@ async def test_original_wff_1553_buy_reaches_simulated_accepted_order(factory, m
         now_ms=int(datetime.fromisoformat(rows[-1]["created_at"]).timestamp() * 1000))
     await case.rebuild()
     assert len([d for d in case.schwab.intents if d.intent_type == "open"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_wff_late_join_keeps_reconstructed_short_capped(factory, monkeypatch):
+    await test_original_wff_1553_buy_reaches_simulated_accepted_order(
+        factory, monkeypatch, True, continuing_observation=False,
+    )

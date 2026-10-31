@@ -1,0 +1,70 @@
+def begin(session, binding, *, quantity, originals, reason, now, bare_proven=False, decision=None, attempt_started=None,
+          originals_proven=True, native_account_id=None, entry_anchor=None):
+    """Commit this result BEFORE the first original-child cancellation.
+
+    originals is the exact validated native WORKING proof, including its native
+    IDs/geometry and the entire original-attempt census. It is never rewritten
+    from a later WORKING pair. An empty tree needs positive bare-fill provenance
+    from the existing _atr_state caller; absence is not that provenance.
+    """
+    timestamp(now)
+    positive_quantity(str(quantity))
+    if reason not in REASONS:
+        raise ValueError("wbexit2_exit_reason_not_covered")
+    old = read(session, binding, lock=True)
+    if old is not None:
+        if old["phase"] == "RESOLVED":
+            raise ValueError("wbexit2_resolved_obligation_not_rearmed")
+        return old
+    if not isinstance(originals, list) or not originals and bare_proven is not True and originals_proven:
+        raise ValueError("wbexit2_original_tree_unknown")
+    if originals_proven and originals and (type(native_account_id) is not str or not native_account_id):
+        raise ValueError("wbexit2_original_native_account_unknown")
+    bases, children, native_ids = set(), set(), set()
+    for pair in originals:
+        if (not isinstance(pair, dict) or not isinstance(pair.get("base"), str) or not pair["base"]
+                or pair["base"] in bases or not isinstance(pair.get("children"), list)
+                or len(pair["children"]) != 2):
+            raise ValueError("wbexit2_original_pair_unknown")
+        bases.add(pair["base"])
+        if originals_proven and positive_quantity(pair["quantity"]) != quantity:
+            raise ValueError("wbexit2_original_pair_quantity_unknown")
+        positive_quantity(pair["quantity"])
+        for child in pair["children"]:
+            key = child.get("coid")
+            if not isinstance(key, str) or not key or key in children:
+                raise ValueError("wbexit2_original_child_unknown")
+            if originals_proven:
+                if (not isinstance(child.get("native_id"), str) or not child["native_id"]
+                        or child["native_id"] in native_ids or not isinstance(child.get("price"), str)):
+                    raise ValueError("wbexit2_original_child_unknown")
+                price = Decimal(child["price"])
+                if not price.is_finite() or price <= 0:
+                    raise ValueError("wbexit2_original_geometry_unknown")
+            elif child.get("native_id") is not None or child.get("price") is not None:
+                raise ValueError("wbexit2_unproven_original_must_be_explicit_UNKNOWN")
+            children.add(key)
+            native_ids.add(child["native_id"])
+    if entry_anchor is None or not entry_anchor <= now:
+        raise ValueError("wbexit2_original_entry_anchor_UNKNOWN")
+    state = {"source": SOURCE, "schema_version": 1, "entry_anchor_at": timestamp(entry_anchor),
+             "owner_id": str(address(binding)), "identity": deepcopy(binding),
+             "generation": 1, "phase": "BOUND" if originals_proven else "HOLD", "reason": reason,
+             "opened_at": timestamp(now), "first_cancel_at": None,
+             "risk_clock_source": "PREWIRE_RESERVATION_NOT_NATIVE_RELEASE",
+             "original_attempt_outcome": "PENDING", "original_quantity": str(quantity),
+             "originals": deepcopy(originals), "child_fill_highwater": {key: "0" for key in children},
+             "originals_proven": originals_proven is True,
+             "native_account_id": native_account_id,
+             "remaining": str(quantity), "cancel_bases": [], "sell": None,
+             "decision": deepcopy(decision),
+             "original_attempt_started_at": timestamp(attempt_started or now),
+             "original_action_deadline_at": timestamp((attempt_started or now) + timedelta(seconds=6)),
+             "invocation": None,
+             "hold_reason": None, "scan_exception": False, "updated_at": timestamp(now)}
+    session.add(SystemIncident(id=address(binding), service_name="oms-risk", severity="info",
+        status="open", title=f"Webull close owner: {binding['symbol']}"[:255], opened_at=now,
+        payload=state))
+    session.flush()  # Unique primary key refuses two concurrent creators.
+    return deepcopy(state)
+

@@ -11,7 +11,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder

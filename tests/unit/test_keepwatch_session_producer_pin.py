@@ -10,7 +10,6 @@ from dataclasses import asdict, fields, replace
 from datetime import UTC, datetime
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest

@@ -1,0 +1,52 @@
+{
+  "task": "OCT28-1108-NOCHASELOG1-NEXT-BUILD",
+  "scope": "FILE_SOURCE_CENSUS_NOT_CALLBACK_REPLAY",
+  "historical_replay_eligible": false,
+  "native_proof": false,
+  "source_base": "32b0f6f6860bf6441363cddd91aa20709005f691",
+  "source_core_sha256": "abf79c2b2fd8a0f9e9f946d6b461f44e924cfdc4d38e92ee4a08d1c7400414bc",
+  "retained": [
+    {
+      "case": "SPRC2026-10-26 first owner",
+      "path": "/private/tmp/OCT26-C10831-SPRC-OWNER-READONLY-FIRST-20261026.txt",
+      "sha256": "e519ea175fe0e806f13fd9b8dd76bf1fe1dc36c3ee7540b063f5b46d35062c90",
+      "physical_row_lines": [5, 6, 7, 8, 9, 10],
+      "origin": "ACTUAL_RETAINED_OWNER_ROWS_NOT_CALLBACK_TAPE",
+      "limitations": "Reverse-ordered snapshot rows; not original callback delivery, complete indicator prefix, membership or native books. Do not treat created_at as availability."
+    },
+    {
+      "case": "SPRC2026-10-26 second owner",
+      "path": "/private/tmp/OCT26-C10929-SPRC-SECOND-OWNER-READONLY-FIRST-20261026.txt",
+      "sha256": "28bf1931b24422c1fa30dac5f21ed31d85a037ab88e0bda2584c8e383b5e93b6",
+      "physical_row_lines": [6, 7, 8, 9],
+      "origin": "ACTUAL_RETAINED_OWNER_ROWS_NOT_CALLBACK_TAPE",
+      "limitations": "08:56 UNKNOWN is transient: reconciled provisional08:56:11.455757/BOUND08:56:11.459659, not permanently unbound. No invented flat book."
+    },
+    {
+      "case": "GCTK_ELPW2026-10-28 severity evidence",
+      "path": "/Users/velkris/.codex/task-queues/analysis/OCT28-C1-FLIPOWNER-SEQ.txt",
+      "sha256": "4a76d42275942213aa326343def92b93891b299e425d9eb9e8c9c55ddcf7a869",
+      "origin": "ACTUAL_RETAINED_FILTERED_LOG_SEQUENCE",
+      "limitations": "Not complete today population; BRAI absent; GCTK opportunity0 pairing ambiguous; N unqualified."
+    }
+  ],
+  "excluded_wrong_scope": [
+    {
+      "path": "/Users/velkris/.codex/task-queues/analysis/OCT28-C1-POM-0933-0945-OMS-RAW.txt",
+      "sha256": "05d69c667075ef899cfece3dcdd898cfe28d72dbd948e79fbe155a909ebf7b0b",
+      "reason": "Earlier MOM/OMS09:33-09:45 episode is not POM V2 admission10:54-11:05."
+    },
+    {
+      "path": "/Users/velkris/.codex/task-queues/analysis/L11-MASSIVE-1M-AGGS-20261023/massive_1m_2026-10-21_POM.csv",
+      "reason": "Wrong day; not POM2026-10-28. No substitution/read/normalization."
+    }
+  ],
+  "missing": [
+    "Exact retained POM2026-10-28 10:54-11:05ET V2 callback/log packet manifest and complete prefix BUY identity; current C1 prose is not full raw state.",
+    "Actual shared callback API event order and availability clocks for POM and SPRC; owner created_at cannot substitute.",
+    "Literal observed indicator prefix/session/reset/BUY/SELL transitions, slotclear/retry and current ownership inputs at each callback for complete POM/SPRC replay.",
+    "Retained full profile/config and journalable economic output/persistence trace for exact historical differential replay, without inventing native permission.",
+    "BRAI original UNKNOWN/recovery sequence and complete today episode population for N; no new read authorized."
+  ],
+  "next": "Main may bind existing retained inputs and execute reviewed controlled source tests. Missing raw operands remain UNKNOWN; no capture/provider/query authorized."
+}

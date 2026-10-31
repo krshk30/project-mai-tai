@@ -7,10 +7,10 @@ import pytest
 
 from project_mai_tai.atr_simulation import aggregate_entry_publication as pub
 from project_mai_tai.atr_simulation.firstbar_live_baseline import (
-    independent_leg_totals, simulate_aggregate_cohort, simulate_aggregate_entry,
+    independent_leg_totals, simulate_aggregate_cohort,
 )
 from tests.unit.test_atr_firstbar_live_baseline import item, trade
-from tests.unit.test_atr_simulation_aggregate_entry_publication import operands, prepare, unknown_first
+from tests.unit.test_atr_simulation_aggregate_entry_publication import operands as operands, prepare, unknown_first
 
 
 def test_overlap_changes_only_information_not_each_independent_position_economics():

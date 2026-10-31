@@ -19,8 +19,8 @@ async def test_no_wire_refusal_keeps_actual_reason_and_quote_inputs(reason, monk
     env = setup(is_us=False)
     env.ports.request_quote_owner = AsyncMock()
     env.ports.wait_quote = None
-    env.signal = replace(env.signal, signal_price=Decimal("0.9198"))
-    env.quote.update(ask="0.934", received_at=env.now[0]-timedelta(milliseconds=125))
+    env.signal = replace(env.signal, signal_price=Decimal("1.9198"))  # PRICE1 ($1.00 buy floor, 10-27) refuses sub-dollar first
+    env.quote.update(ask="1.950", received_at=env.now[0]-timedelta(milliseconds=125))
     if reason == "timeout":
         env.ports.request_quote_owner.side_effect = [TimeoutError(), None]
     elif reason == "quote_missing_future_or_stale":
@@ -38,7 +38,7 @@ async def test_no_wire_refusal_keeps_actual_reason_and_quote_inputs(reason, monk
     assert len(rows) == 1
     line = rows[0]
     assert f"symbol=SCNI reason={reason} " in line
-    assert "signal=0.9198 cap=0.9335970" in line
+    assert "signal=1.9198 cap=1.9485970" in line
     assert "route=webull no_wire=true" in line
     if reason in {"timeout", "quote_missing_future_or_stale"}:
         assert "ask=UNKNOWN ask_age_ms=UNKNOWN" in line
@@ -46,8 +46,8 @@ async def test_no_wire_refusal_keeps_actual_reason_and_quote_inputs(reason, monk
     else:
         expected_age = (int(env.now[0].timestamp()*1e9)
                         - int(env.quote["received_at"].timestamp()*1e9))/1_000_000
-        assert f"ask=0.934 ask_age_ms={expected_age}" in line
-        assert "limit=0.934" in line
+        assert f"ask=1.950 ask_age_ms={expected_age}" in line
+        assert "limit=1.95 " in line
     assert not env.sent
     env.ports.durable_order.assert_not_awaited()
     env.ports.record.assert_not_awaited()

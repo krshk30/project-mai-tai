@@ -36,7 +36,8 @@ def verify_firstbar_files(root=None):
 def load_firstbar_engine():
     """Only construct the actual pinned Gibbs engine; no execution at import."""
     verify_firstbar_files()
-    from . import engine_binding, firstbar, firstbar_exits, firstbar_replay
+    # The replay module imports both planner and exits before the root checks below.
+    from . import engine_binding, firstbar_replay
 
     root = Path(__file__).resolve().parent
     expected = {**engine_binding.ENGINE_PINS, **FIRSTBAR_PINS}

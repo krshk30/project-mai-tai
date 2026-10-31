@@ -73,6 +73,21 @@ class RoutingBrokerAdapter:
             raise RuntimeError("complete_native_reader_UNAVAILABLE")
         return await reader(broker_account_name)
 
+    async def read_wbexit2_positions(self, broker_account_name: str, *, after: float):
+        """No ordinary/cache fallback for the WBEXIT2 request-start receipt."""
+        adapter = self._adapter_for_account(broker_account_name)
+        reader = getattr(adapter, "read_wbexit2_positions", None)
+        if not callable(reader):
+            raise RuntimeError("wbexit2_fresh_positions_UNAVAILABLE")
+        return await reader(broker_account_name, after=after)
+
+    async def read_wbexit3_day_history(self, broker_account_name: str, *, after):
+        adapter = self._adapter_for_account(broker_account_name)
+        reader = getattr(adapter, "read_wbexit3_day_history", None)
+        if not callable(reader):
+            raise RuntimeError("wbexit3_same_day_history_UNAVAILABLE")
+        return await reader(broker_account_name, after=after)
+
     def positions_wire_read_age_seconds(self, broker_account_name: str) -> float | None:
         """Route to the account's adapter. An adapter without a positions cache returns None,
         meaning every successful ``list_account_positions`` call was a real read (ALERTS1)."""
