@@ -19,10 +19,12 @@ Trades are read only from each signal to its exit, so the cost does not grow wit
 from __future__ import annotations
 
 import bisect
+import hashlib
 import json
 import math
 import statistics
 import os
+import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -39,6 +41,14 @@ NOTIONAL = 600.0
 # Same condition filter as the bot's bars: non-last-updating conditions and odd lots never fill.
 EXCLUDED = {"2", "7", "10", "13", "15", "16", "20", "21", "22", "29", "33", "37", "38", "52", "53"}
 PAGE = 5000
+# Operator 10-31 (RENT 10-26): the trade capture follows the scanner subscription, so a session-end
+# "exit" priced from a print long before 20:00 is not a real exit. Past this gap the exit is UNKNOWN.
+SESSION_MARK_MAX_GAP = timedelta(minutes=15)
+# Operator 10-31 round 4 (hot/cold STOCK at the buy): pullback sizes recorded side by side, and the
+# time & sales windows before the decision. A trade is classified only against a quote <= 5 s old.
+PULLBACK_SIZES = (0.02, 0.03, 0.05)
+TAPE_WINDOWS_MIN = (5, 10)
+QUOTE_MAX_AGE = timedelta(seconds=5)
 
 
 def eligible(conditions: str | None) -> bool:
@@ -212,10 +222,10 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=F
     conf_close = datetime.fromtimestamp((fill_bar_ms + 120_000) / 1000, timezone.utc)
     conf_fails = conf_i is not None and rows[conf_i]["state"] != "long" and conf_close <= now
     exit_ = None
-    last = f_px
+    last, last_ts = f_px, f_ts
     deadline, hit_one = f_ts + timedelta(seconds=120), False
     for ts, price in stream:
-        last = price
+        last, last_ts = price, ts
         if ts <= deadline and price >= f_px * 1.01:
             hit_one = True
         if sell_close is not None and ts >= sell_close:
@@ -234,6 +244,11 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=F
         if exit_:
             break
     if exit_ is None and now >= session_end:
+        if session_end - last_ts > SESSION_MARK_MAX_GAP:
+            return dict(base, trigger=trig, status="EXIT UNKNOWN", quantity=qty,
+                        entry_time=f_ts.astimezone(ET).strftime("%H:%M:%S"), entry_price=round(f_px, 4),
+                        exit_time="unknown", reason=("no trade print in the last "
+                        f"{int((session_end - last_ts).total_seconds() // 60)} min before 20:00 (capture ended); exit UNKNOWN"))
         exit_ = (session_end, last, "session end")
     x_px = exit_[1] if exit_ else last
     return dict(base, trigger=trig, status="CLOSED" if exit_ else "OPEN", quantity=qty,
@@ -322,6 +337,124 @@ def trades(conn, symbol, start, end):
         last_ts, last_id = page[-1][0], page[-1][4]
 
 
+_CAPTURE_TRADES = trades  # launchers that read another source (Massive backfill) replace `trades`
+
+
+def provenance():
+    """Coach 10-31: every day row names the engine that produced it."""
+    path = os.path.abspath(__file__)
+    with open(path, "rb") as fh:
+        sha = hashlib.sha256(fh.read()).hexdigest()
+    commit = dirty = None
+    try:
+        repo = os.path.dirname(os.path.dirname(path))
+        commit = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True,
+                                timeout=5).stdout.strip() or None
+        if commit:
+            dirty = bool(subprocess.run(["git", "-C", repo, "status", "--porcelain", "--", "tools/atrsim2_job.py"],
+                                        capture_output=True, text=True, timeout=5).stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return {"engine_file": "tools/atrsim2_job.py", "engine_sha256": sha, "engine_commit": commit,
+            "engine_file_dirty": dirty, "launcher": os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] else None,
+            "trade_source": "market_capture_trades" if trades is _CAPTURE_TRADES else getattr(trades, "__name__", "replaced")}
+
+
+def _pullbacks(closes, size):
+    """Down legs of at least `size` from a running high, on 1-minute CLOSES (zigzag). Closes, not
+    highs/lows: inside one bar we cannot tell whether the high or the low came first."""
+    if not closes:
+        return 0
+    count, peak, trough, down = 0, closes[0], None, False
+    for c in closes:
+        if not down:
+            peak = max(peak, c)
+            if c <= peak * (1 - size):
+                count, down, trough = count + 1, True, c
+        else:
+            trough = min(trough, c)
+            if c >= trough * (1 + size):
+                down, peak = False, c
+    return count
+
+
+def tape_pressure(conn, symbol, at):
+    """Time & sales before the decision: share of volume at/above the ask (buyers) vs at/below the bid
+    (sellers), each trade against the last quote <= 5 s old. UNKNOWN when nothing was captured."""
+    longest = timedelta(minutes=max(TAPE_WINDOWS_MIN))
+    tape = conn.execute(text(
+        "select event_ts, price, size, conditions from market_capture_trades where symbol=:s "
+        "and event_ts >= :a and event_ts < :b and size > 0 order by event_ts, id"),
+        {"s": symbol, "a": at - longest, "b": at}).all()
+    quotes = conn.execute(text(
+        "select event_ts, bid_price, ask_price from market_capture_quotes where symbol=:s "
+        "and event_ts >= :a and event_ts < :b order by event_ts, id"),
+        {"s": symbol, "a": at - longest - QUOTE_MAX_AGE, "b": at}).all()
+    q_ts = [q[0] for q in quotes]
+    out = {}
+    for minutes in TAPE_WINDOWS_MIN:
+        start = at - timedelta(minutes=minutes)
+        buy = sell = mid = unclassified = 0
+        for ts, price, size, cond in tape:
+            if ts < start or not eligible(cond):
+                continue
+            k = bisect.bisect_right(q_ts, ts) - 1
+            if k < 0 or ts - q_ts[k] > QUOTE_MAX_AGE or not quotes[k][1] or not quotes[k][2]:
+                unclassified += size
+            elif float(quotes[k][1]) >= float(quotes[k][2]):
+                mid += size  # locked/crossed quote: the side is not knowable
+            elif float(price) >= float(quotes[k][2]):
+                buy += size
+            elif float(price) <= float(quotes[k][1]):
+                sell += size
+            else:
+                mid += size
+        total = buy + sell + mid + unclassified
+        classified = buy + sell + mid
+        out[f"{minutes}m"] = ({"status": "UNKNOWN", "reason": "no captured trades in the window"} if total == 0 else
+                              {"status": "UNKNOWN", "reason": "no quote <= 5 s old for any trade", "volume": int(total)}
+                              if classified == 0 else
+                              {"buy_share": round(buy / classified, 4), "sell_share": round(sell / classified, 4),
+                               "mid_share": round(mid / classified, 4), "volume": int(total),
+                               "unclassified_volume": int(unclassified)})
+    return out
+
+
+def stock_features(conn, symbol, flip_bar, at, price, previous):
+    """Operator 10-31 round 4 — is THIS STOCK hot or cold at the buy? Inputs only, no rule yet."""
+    series, rows = LINES[symbol]
+    fi = next(i for i, b in enumerate(series) if b.ts == flip_bar.ts)
+    si = max((i for i in range(fi) if rows[i]["flip"] == "SELL"), default=None)
+    out = {"decision_at": at.astimezone(ET).strftime("%H:%M:%S"), "decision_price": round(price, 4)}
+    # 1. the earlier trade on this stock today (same table), closed before this decision
+    if previous is None:
+        out["previous_trade"] = {"result": "none"}
+    else:
+        p_exit, p_pct = previous
+        out["previous_trade"] = {"result": "loss" if p_pct < 0 else "win", "pnl_pct": p_pct,
+                                 "minutes_since_exit": round((at - p_exit).total_seconds() / 60, 1)}
+    # 2. + 3. the purple (short) stretch: from the SELL flip bar to the bar before this BUY flip
+    if si is None:
+        out["purple"] = {"status": "UNKNOWN", "reason": "no SELL flip earlier today"}
+    else:
+        closes = [b.close for b in series[si:fi]]
+        low_so_far, high_so_far, up, down = math.inf, 0.0, 0.0, 0.0
+        for c in closes:  # biggest rise off an earlier low / drop off an earlier high, in time order
+            up = max(up, c / low_so_far - 1) if low_so_far < math.inf else up
+            down = max(down, 1 - c / high_so_far) if high_so_far else down
+            low_so_far, high_so_far = min(low_so_far, c), max(high_so_far, c)
+        out["purple"] = {"minutes": round((series[fi].ts - series[si].ts) / 60_000, 1), "bars": len(closes),
+                         "pullbacks": {f"{int(sz * 100)}pct": _pullbacks(closes, sz) for sz in PULLBACK_SIZES},
+                         "max_swing_up_pct": round(up * 100, 2), "max_swing_down_pct": round(down * 100, 2)}
+    # 4. time & sales before the decision
+    out["tape"] = tape_pressure(conn, symbol, at)
+    # 5. distance below the day high, from bars completed before the decision
+    done = [b for b in series if b.ts + 60_000 <= at.timestamp() * 1000]
+    day_high = max((b.high for b in done), default=None)
+    out["below_day_high_pct"] = round((1 - price / day_high) * 100, 2) if day_high else None
+    return out
+
+
 def simulate(conn, symbol, bar, sell_close, day, now):
     flip_close = datetime.fromtimestamp(bar.ts / 1000 + 60, timezone.utc)
     open_from = datetime.combine(day, datetime.min.time(), ET).replace(hour=7)
@@ -354,9 +487,9 @@ def simulate(conn, symbol, bar, sell_close, day, now):
     deadline = e_ts + timedelta(seconds=120)
     results = {"FIRSTBAR": None, "FIRSTBAR+2min": None}
     hit_one = False
-    last = e_px
+    last, last_ts = e_px, e_ts
     for ts, price in stream:  # continues after the entry trade
-        last = price
+        last, last_ts = price, ts
         if ts <= deadline and price >= e_px * 1.01:
             hit_one = True
         for name in results:
@@ -377,12 +510,18 @@ def simulate(conn, symbol, bar, sell_close, day, now):
                 results[name] = (ts, px, reason)
         if all(results.values()):
             break
-    if now >= session_end:  # no trade printed at/after 20:00: close at the session's last trade
+    stale_end = now >= session_end and session_end - last_ts > SESSION_MARK_MAX_GAP
+    if now >= session_end and not stale_end:  # no trade printed at/after 20:00: close at the session's last trade
         for name in results:
             results[name] = results[name] or (session_end, last, "session end")
     out = []
     for name in ("FIRSTBAR", "FIRSTBAR+2min"):
         r = results[name]
+        if r is None and stale_end:
+            out.append(dict(base, status="EXIT UNKNOWN", quantity=qty, entry_time=e_ts.astimezone(ET).strftime("%H:%M:%S"),
+                            entry_price=round(e_px, 4), exit_time="unknown",
+                            reason="no trade print near 20:00 (capture ended); exit UNKNOWN"))
+            continue
         row = dict(base, status="CLOSED" if r else "OPEN", quantity=qty, entry_time=e_ts.astimezone(ET).strftime("%H:%M:%S"),
                    entry_price=round(e_px, 4))
         x_px = r[1] if r else last
@@ -407,6 +546,24 @@ def run(now=None):
         windows = WINDOWS = confirmed_windows(conn, day)
         fills = live_fills(conn, anchor)
         session_end = datetime.combine(day, datetime.min.time(), ET).replace(hour=20)
+        last_closed = {"LIVE rules SIM": {}, "LIVE+2min SIM": {}}
+
+        def at_clock(hms):
+            hh, mm, ss = (int(x) for x in hms.split(":"))
+            return datetime.combine(day, datetime.min.time(), ET).replace(hour=hh, minute=mm, second=ss)
+
+        def record(name, symbol, bar, row):
+            """Stock features at the buy decision: the simulated fill, else the flip bar's close."""
+            if row.get("entry_time"):
+                at, price = at_clock(row["entry_time"]), row["entry_price"]
+            else:
+                at, price = datetime.fromtimestamp(bar.ts / 1000 + 60, timezone.utc), bar.close
+            prev = last_closed[name].get(symbol)
+            row["stock"] = stock_features(conn, symbol, bar, at, price,
+                                          prev if prev is not None and prev[0] <= at else None)
+            if row.get("status") == "CLOSED" and row.get("exit_time") not in (None, "open", "unknown"):
+                last_closed[name][symbol] = (at_clock(row["exit_time"]), row["pnl_pct"])
+
         for symbol, flips in flips_by_symbol(conn, anchor).items():
             for i, (bar, flip) in enumerate(flips):
                 if flip != "BUY":
@@ -421,8 +578,10 @@ def run(now=None):
                 a, b = simulate(conn, symbol, bar, sell_close, day, now)
                 tables["FIRSTBAR"].append(a)
                 tables["FIRSTBAR+2min"].append(b)
-                tables["LIVE rules SIM"].append(live_rules_sim(conn, symbol, bar, sell_close, day, now,
-                    {"symbol": symbol, "signal": a["signal"], "trigger": a["trigger"]}))
+                live1 = live_rules_sim(conn, symbol, bar, sell_close, day, now,
+                    {"symbol": symbol, "signal": a["signal"], "trigger": a["trigger"]})
+                record("LIVE rules SIM", symbol, bar, live1)
+                tables["LIVE rules SIM"].append(live1)
                 live2 = live_rules_sim(conn, symbol, bar, sell_close, day, now,
                     {"symbol": symbol, "signal": a["signal"], "trigger": a["trigger"]}, two_min=True)
                 if live2.get("status") in ("CLOSED", "OPEN"):
@@ -430,11 +589,19 @@ def run(now=None):
                     hh, mm, ss = (int(x) for x in live2["entry_time"].split(":"))
                     fill_at = datetime.combine(day, datetime.min.time(), ET).replace(hour=hh, minute=mm, second=ss)
                     live2["h2"] = h2_check(symbol, fill_at)
+                record("LIVE+2min SIM", symbol, bar, live2)
                 tables["LIVE+2min SIM"].append(live2)
     for rows in tables.values():
         rows.sort(key=lambda r: (r.get("entry_time") or "99", r["signal"], r["symbol"]))
     doc = {"schema": "ATRSIM2_DAY_V1", "trading_day": day.isoformat(), "generated_at": now.isoformat(),
+           "provenance": provenance(), "run_started_utc": datetime.now(timezone.utc).isoformat(),
            "elapsed_seconds": round(time.monotonic() - started, 2), "notional_usd": NOTIONAL, "tables": tables}
+    dry = os.environ.get("ATRSIM_DRY_RUN_OUT")
+    if dry:  # replay/test: write the day document to a file, never to the database
+        with open(dry, "w") as fh:
+            json.dump(doc, fh)
+        print(json.dumps({"event": "ATRSIM2_DRY_RUN", "trading_day": doc["trading_day"], "out": dry}), flush=True)
+        return 0
     with engine.begin() as conn:
         conn.execute(text("delete from dashboard_snapshots where snapshot_type=:t and payload->>'trading_day'=:d"),
                      {"t": SNAPSHOT_TYPE, "d": day.isoformat()})
