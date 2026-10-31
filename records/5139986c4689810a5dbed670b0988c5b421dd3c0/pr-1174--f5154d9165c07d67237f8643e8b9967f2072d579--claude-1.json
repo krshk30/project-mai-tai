@@ -1,0 +1,9 @@
+{
+  "pr_number": 1174,
+  "range_base": "f5154d9165c07d67237f8643e8b9967f2072d579",
+  "range_head": "5139986c4689810a5dbed670b0988c5b421dd3c0",
+  "reviewed_at": "2026-10-31T17:30:14Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1 review: squash, tree identical to codex/oct31-green-suite d650eaad4. Installed chain reviewed at each install 10-28..10-31; codex test fixes tests-only ACCEPT; Ruff 25f75228 mechanical ACCEPT; my 01185426d + aeed7cc28 independently reviewed by codex-2 (pin 21a8e0aaf)."
+}
