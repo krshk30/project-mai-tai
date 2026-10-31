@@ -8,9 +8,11 @@ import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime
 from decimal import Decimal
+import hashlib
 import inspect
 import os
 from pathlib import Path
+import subprocess
 from types import MethodType, SimpleNamespace
 
 import pytest
@@ -282,7 +284,18 @@ def test_passive_status_record_has_expected_base_and_zero_cancelled_report():
 
 
 def test_whole_service_AST_is_exact_8159_after_stripping_only_diagnostic_import_and_calls():
-    original = ast.parse(Path(os.environ["WBEXIT_EOD_8159_SERVICE_SOURCE"]).read_text())
+    source = os.environ.get("WBEXIT_EOD_8159_SERVICE_SOURCE")
+    if source:
+        raw = Path(source).read_bytes()
+    else:
+        # CI fetches full history. Read the immutable ancestor as Git data,
+        # rather than requiring a private Main qualification environment.
+        raw = subprocess.check_output([
+            "git", "show",
+            "8159cd107a1b97f0034026e33d66b613a750c7af:src/project_mai_tai/oms/service.py",
+        ], cwd=Path(__file__).resolve().parents[2])
+    assert hashlib.sha256(raw).hexdigest() == "92754652fe63b4582181ff049b8e60052e7a4aae7571b18a5d9dec0d1d768388"
+    original = ast.parse(raw)
     candidate = ast.parse(Path(inspect.getsourcefile(OmsRiskService)).read_text())
     class Strip(ast.NodeTransformer):
         def visit_ImportFrom(self, node):

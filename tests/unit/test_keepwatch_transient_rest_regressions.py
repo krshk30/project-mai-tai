@@ -81,6 +81,30 @@ def test_f1_audit_addition_keeps_exact_preexisting_flag_denominators():
     handoff_row = json.loads(handoff_rows[0].strip().rstrip(b","))
     assert handoff_row["name"] == handoff.decode() and handoff_row["expected"] is True
     historical_raw = baseline_raw.replace(handoff_rows[0], b"", 1)
+    # ccc94bd2c added three separately reviewed diagnostics/WBEXIT3 rows.
+    # Remove exactly those complete rows before comparing the older artifact;
+    # every pre-existing value, metadata field and byte remains pinned below.
+    additions = {
+        "oms_webull_exit3_enabled": "oms",
+        "strategy_schwab_1m_v2_pm_softrest_quote_log_enabled": "schwab-1m-v2",
+        "strategy_schwab_1m_v2_flip_print_diagnostic_enabled": "schwab-1m-v2",
+    }
+    historical = historical_raw.decode()
+    decoder = json.JSONDecoder()
+    for added_name, owner in additions.items():
+        matching = []
+        for match in re.finditer(r'(?m)^    \{', historical):
+            row, end = decoder.raw_decode(historical, match.start() + 4)
+            if row["name"] == added_name:
+                matching.append((match.start(), end, row))
+        assert len(matching) == 1
+        start, end, row = matching[0]
+        assert row["expected"] is True and row["owning_service"] == owner
+        assert not row.get("also_check_services")
+        assert Settings.model_fields[added_name].default is False
+        assert historical[end:end + 2] == ',\n'
+        historical = historical[:start] + historical[end + 2:]
+    historical_raw = historical.encode()
     assert hashlib.sha256(historical_raw).hexdigest() == "78c3ab65472d7c5760ca4d1f4c2852f7a5583af19dbf9a46dede129783300dc5"
     current, baseline = json.loads(raw), json.loads(baseline_raw)
     own, = [row for row in current["flags"] if row["name"] == name]
@@ -91,5 +115,5 @@ def test_f1_audit_addition_keeps_exact_preexisting_flag_denominators():
     numeric = json.loads((root / "ops/health/expected_numeric.json").read_text())["settings"]
     def projected(rows):
         return sum((1 + len(row.get('also_check_services', [])) for row in rows + numeric))
-    assert projected(baseline["flags"]) == 186  # +NCPL handoff, preserving the older hash above.
-    assert projected(current["flags"]) == 187
+    assert projected(baseline["flags"]) == 189  # NCPL handoff + ccc94bd2c's three rows.
+    assert projected(current["flags"]) == 190

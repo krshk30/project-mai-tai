@@ -173,12 +173,22 @@ def test_unselected_fast_path_does_not_skip_scope_validation(loader, kwargs):
     assert caught.value.status_code == 400
 
 
-def test_default_shared_page_retains_live_bytes_and_forms_with_no_executor(monkeypatch):
+def test_default_shared_page_retains_live_bytes_with_only_the_owned_today_read(monkeypatch):
     from tests.unit.test_legacy_sim_shared_mount import mounted, request
+    from project_mai_tai.atr_simulation import sim2_display
     from project_mai_tai.services import control_plane as cp
 
-    async def forbidden(*args, **kwargs):
-        raise AssertionError("no source selected: no empty SIM executor work")
+    reads = []
+
+    async def owned_today_read(function, *args, **kwargs):
+        # Operator10-29 replaced legacy selected-source panels with today's
+        # stored ATRSIM2 read. No legacy/firstbar executor work is permitted.
+        assert function is sim2_display.load_day and not kwargs
+        assert len(args) == 2 and args[1] == "2026-10-23"
+        reads.append(args[1])
+        return None  # Explicit controlled absence of today's stored document.
+
+    monkeypatch.setattr(cp, "utcnow", lambda: datetime(2026, 10, 23, 20, tzinfo=timezone.utc))
     captured = []
     render = cp._render_bot_detail_page
     def observe(data, strategy, **kwargs):
@@ -186,10 +196,12 @@ def test_default_shared_page_retains_live_bytes_and_forms_with_no_executor(monke
         return render(data, strategy, **kwargs)
     monkeypatch.setattr(cp, "_render_bot_detail_page", observe)
     with mounted() as (app, first, old, data, original):
-        monkeypatch.setattr(asyncio, "to_thread", forbidden)
+        monkeypatch.setattr(asyncio, "to_thread", owned_today_read)
         response = request(app, "/bot/1m-schwab-v2")
         assert response.status_code == 200 and first.calls == old.calls == []
         snapshot, strategy, panel = captured[0]
         assert response.text.replace(panel, "", 1) == render(snapshot, strategy)
-        assert 'name="legacy_source_id"' in panel and 'data-firstbar-mount="true"' in panel
-        assert "UNKNOWN" in panel and data == original
+        assert 'name="legacy_source_id"' not in panel
+        assert 'data-firstbar-mount="true"' in panel
+        assert "No simulation for 2026-10-23 yet" in panel and data == original
+        assert reads == ["2026-10-23"]

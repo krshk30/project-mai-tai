@@ -165,12 +165,23 @@ def test_default_off_exact_catalog_inventory_and_projection():
     root = Path(__file__).parents[2]
     entries = load_catalog(root / "ops/health/expected_flags.json")
     numeric = load_numeric_catalog(root / "ops/health/expected_numeric.json")
-    assert len(entries) == 154 and len(numeric) == 5
+    # ccc94bd2c composed three reviewed diagnostics/WBEXIT3 audit rows.
+    additions = {
+        "oms_webull_exit3_enabled": "oms",
+        "strategy_schwab_1m_v2_pm_softrest_quote_log_enabled": "schwab-1m-v2",
+        "strategy_schwab_1m_v2_flip_print_diagnostic_enabled": "schwab-1m-v2",
+    }
+    assert len(entries) == 157 and len(numeric) == 5
+    for name, owner in additions.items():
+        added, = [e for e in entries if e["name"] == name]
+        assert added["expected"] is True and added["owning_service"] == owner
+        assert not added.get("also_check_services")
+        assert Settings.model_fields[name].default is False
     assert sum(1 + len(e.get("also_check_services", [])) for e in numeric) == 8
     entry, = [e for e in entries if e["name"] == FLAG]
     assert entry["expected"] is True and entry["owning_service"] == "schwab-1m-v2"
     projection = Counter(s for e in entries for s in [e["owning_service"], *e.get("also_check_services", [])])
-    assert sum(projection.values()) == 179
+    assert sum(projection.values()) == 182
 
 
 @pytest.mark.parametrize("config", [SchwabV2Config, SimpleNamespace])
