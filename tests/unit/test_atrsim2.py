@@ -177,3 +177,50 @@ def test_live_rules_waiting_buy_needs_an_established_three_bar_short(monkeypatch
     finally:
         job.LINES.pop("ONEG", None)
         job.LINES.pop("TNMG", None)
+
+
+def test_round4_pullbacks_count_down_legs_on_closes_at_each_size():
+    closes = [5.00, 5.20, 5.05, 5.30, 5.10, 5.40, 5.00]  # legs: -2.9%, -3.8%, -7.4%
+    assert job._pullbacks(closes, 0.02) == 3
+    assert job._pullbacks(closes, 0.03) == 2
+    assert job._pullbacks(closes, 0.05) == 1
+    assert job._pullbacks([5.0, 5.1, 5.2, 5.3], 0.02) == 0  # no pullback before the flip
+    assert job._pullbacks([], 0.02) == 0
+
+
+class _Rows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _TapeConn:
+    def __init__(self, tape, quotes):
+        self.tape, self.quotes = tape, quotes
+
+    def execute(self, statement, params):
+        return _Rows(self.tape if "market_capture_trades" in str(statement) else self.quotes)
+
+
+def test_round4_tape_pressure_classifies_against_fresh_quotes_and_locked_is_mid():
+    at = datetime(2026, 10, 30, 13, 31, 34, tzinfo=timezone.utc)
+    s = lambda sec: datetime(2026, 10, 30, 13, 31, sec, tzinfo=timezone.utc)  # noqa: E731
+    quotes = [(s(0), 4.30, 4.31), (s(10), 4.31, 4.31), (s(20), 4.30, 4.32)]
+    tape = [(s(1), 4.31, 100, ""),     # at the ask -> buyer
+            (s(2), 4.30, 300, ""),     # at the bid -> seller
+            (s(11), 4.31, 200, ""),    # locked quote -> mid
+            (s(21), 4.31, 400, ""),    # inside the spread -> mid
+            (s(30), 4.32, 500, "")]    # last quote 10 s old -> unclassified
+    out = job.tape_pressure(_TapeConn(tape, quotes), "TNMG", at)
+    assert out["5m"] == {"buy_share": 0.1, "sell_share": 0.3, "mid_share": 0.6,
+                         "volume": 1500, "unclassified_volume": 500}
+    assert job.tape_pressure(_TapeConn([], []), "TNMG", at)["5m"]["status"] == "UNKNOWN"
+    assert job.tape_pressure(_TapeConn(tape[:1], []), "TNMG", at)["5m"]["reason"] == "no quote <= 5 s old for any trade"
+
+
+def test_round4_provenance_names_engine_and_trade_source():
+    prov = job.provenance()
+    assert len(prov["engine_sha256"]) == 64 and prov["engine_file"] == "tools/atrsim2_job.py"
+    assert prov["trade_source"] == "market_capture_trades"
