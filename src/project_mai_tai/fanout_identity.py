@@ -18,6 +18,7 @@ ATR_COUNTRY_ROUTE_KEYS = (
 
 
 FANOUT_IDENTITY_KEYS = (
+    "clearwait_dispatch_token",
     "fanout_segment_id",
     "fanout_slot",
     "fanout_slot_id",
@@ -25,6 +26,53 @@ FANOUT_IDENTITY_KEYS = (
     "fanout_predecessor_attempt_id",
     "fanout_identity_schema",
 ) + ATR_COUNTRY_ROUTE_KEYS
+
+DISPATCH_BINDING_KEYS = ("clearwait_dispatch_token", "fanout_segment_id")
+
+
+def replace_broker_order_payload(
+    previous: Mapping[str, object] | None, metadata: Mapping[str, object]
+) -> dict[str, object]:
+    """Keep legacy report overwrite, except exact original dispatch bindings.
+
+    Missing original bindings stay missing; a report/cancel is not authority to
+    repair them. Nonbinding fields absent from the new metadata are discarded.
+    """
+    existing = previous or {}
+    payload = dict(metadata)
+    for key in DISPATCH_BINDING_KEYS:
+        if key in existing:
+            payload[key] = existing[key]
+        else:
+            payload.pop(key, None)
+    return payload
+
+
+def merge_broker_order_payload(
+    previous: Mapping[str, object] | None, metadata: Mapping[str, object]
+) -> dict[str, object]:
+    """Merge report/reprice fields without changing an existing order's identity.
+
+    The order is the original placement, even when the incoming metadata belongs
+    to a cancel request. Keep exact committed identity values (including invalid
+    values that must remain UNKNOWN). Reports/cancels/reprices cannot introduce
+    or repair a missing/null/empty original dispatch binding. New placements
+    initialize their payload separately; no parent proof is inferred here.
+    Other payload fields retain their JSON types and incoming updates win.
+    """
+    existing = dict(previous or {})
+    merged = {**existing, **metadata}
+    for key in FANOUT_IDENTITY_KEYS:
+        if key in DISPATCH_BINDING_KEYS:
+            if key in existing:
+                merged[key] = existing[key]
+            else:
+                merged.pop(key, None)
+            continue
+        if key in existing and existing[key] is not None and existing[key] != "":
+            merged[key] = existing[key]
+    return merged
+
 
 _SLOT_BY_SOURCE = {
     "rth_resting": "resting",
@@ -81,8 +129,21 @@ def carry_fanout_identity(
     payload with unrelated request fields.
     """
 
-    merged = {str(key): str(value) for key, value in base.items()}
+    # A cancel/report's own identity is not the original placement identity.
+    # Do not stringify malformed dispatch values into valid-looking metadata.
+    merged = {str(key): str(value) for key, value in base.items()
+              if key not in DISPATCH_BINDING_KEYS}
     for key in FANOUT_IDENTITY_KEYS:
+        if key in DISPATCH_BINDING_KEYS:
+            value = authoritative.get(key)
+            if key == "clearwait_dispatch_token":
+                if (type(value) is str and 0 < len(value) <= 128 and value == value.strip()):
+                    merged[key] = value
+            elif (type(value) is int and value > 0
+                    or type(value) is str and 0 < len(value) <= 128
+                    and value.isascii() and value.isdecimal() and value[0] != "0"):
+                merged[key] = str(value)
+            continue
         value = str(authoritative.get(key, "") or "").strip()
         if value:
             merged[key] = value

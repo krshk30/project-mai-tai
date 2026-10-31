@@ -214,7 +214,10 @@ async def test_polled_pmax_policy_reject_is_logged_cached_paged_and_blocks_retry
                 quantity=Decimal("2"),
                 intent_type="open",
                 reason="CW_V2_RESTING",
-                metadata={**PMAX_METADATA, "fanout_attempt_id": PMAX_RETRY_SCHWAB_COID},
+                # Controlled retry anchor: reach the policy-cache gate without
+                # treating an unpriced BUY as a valid entry under PRICE1.
+                metadata={**PMAX_METADATA, "reference_price": "1.6108",
+                          "fanout_attempt_id": PMAX_RETRY_SCHWAB_COID},
             ),
         )
     )
@@ -230,7 +233,8 @@ async def test_polled_pmax_policy_reject_is_logged_cached_paged_and_blocks_retry
                 quantity=Decimal("1"),
                 intent_type="open",
                 reason="CW_V2_RESTING",
-                metadata={**PMAX_METADATA, "fanout_attempt_id": PMAX_RETRY_WEBULL_COID},
+                metadata={**PMAX_METADATA, "reference_price": "1.6108",
+                          "fanout_attempt_id": PMAX_RETRY_WEBULL_COID},
             ),
         )
     )

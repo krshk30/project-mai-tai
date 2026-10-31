@@ -6,6 +6,7 @@ from datetime import UTC, datetime, time as daytime
 from decimal import Decimal, ROUND_FLOOR
 from hashlib import sha256
 import json
+import os
 import re
 import time
 from types import SimpleNamespace
@@ -64,6 +65,10 @@ class OmsLiveRuntime:
         self._missing_entry_pass = {}
         self._missing_entry_started = {}
         self._missing_entry_read_budget = (None, 0)
+        self._exit_gate_frames = {}
+        self._exit_gate_states = {}
+        self._exit_gate_fire = None
+        self._exit_gate_instance = (os.getpid(), time.monotonic_ns())
         self.state_lock = asyncio.Lock()
         self.actor = None
         self.publisher = None
@@ -160,7 +165,8 @@ class OmsLiveRuntime:
         ports = ActorPorts(self._entry_enabled, self.now_ns, self._observe,
             self._save, self._cancel_entry, self._protect, self._exit, self._exit_quote,
             stop_requested=self._stop_requested, abandon_unsent=self._abandon_unsent_for_stop,
-            diagnostic_account=lambda: self.accounts[0])
+            diagnostic_account=lambda: self.accounts[0],
+            exit_decision_observer=self._exit_gate_fired)
         self.actor = LiveActor(self.book, executor, ports, state_lock=self.state_lock)
         await self.actor.start()
         self.publisher = OwnerProofPublisher(self.service.redis, self.settings.redis_stream_prefix, self.book,
@@ -551,6 +557,8 @@ class OmsLiveRuntime:
     async def _save(self, episode):
         values = dict(self.runtime.get(episode["episode_id"], {}))
         await self.service._run_db(lambda session: self.db.save(session, episode, metadata=values))
+        if episode.get("state") in {"closed", "terminal_no_fill"}:
+            self._exit_gate_retire(episode["episode_id"])
 
     async def _prepare(self, identity, request, provider):
         await self.service._run_db(lambda session: self.db.prepare_order(session, identity, request, provider=provider))
@@ -957,6 +965,185 @@ class OmsLiveRuntime:
         await self._record(request, reports)
         return reports
 
+    def _exit_gate_fired(self, position, reason, decision_ns):
+        try:
+            self._exit_gate_fire = (asyncio.current_task(), position.episode_id, decision_ns,
+                                    reason, position.exit_clock_source, position.exit_clock_ns)
+        except Exception:
+            pass  # Original actor clock read only; no diagnostic business clock.
+
+    def _exit_gate_state(self, identity):
+        states = getattr(self, "_exit_gate_states", None)
+        if not isinstance(states, dict):
+            return None
+        if identity not in states:
+            if len(states) >= 2:
+                return None
+            states[identity] = {"root": None, "latch_ns": None, "post_cancel": False,
+                "entry_gate": None, "outcomes": {}, "steps": {}, "lines": 0,
+                "suppressed": 0, "last_summary_suppressed": 0, "sink_errors": 0,
+                "retired": False, "generation_changed": False, "clock": None, "overlap": False}
+        return states[identity]
+
+    def _exit_gate_cancel_latched(self, handle):
+        try:
+            state = self._exit_gate_state(handle.episode_id)
+            if state is None:
+                return
+            if state["root"] not in (None, handle.base_coid):
+                state.update(latch_ns=None, entry_gate=None, post_cancel=False, generation_changed=True)
+            state["root"] = handle.base_coid
+            state["post_cancel"] = True
+            if state["latch_ns"] is None:
+                state["latch_ns"] = time.monotonic_ns()
+        except Exception:
+            pass  # Called ONLY after original successful _save_handle, before SDK.
+
+    def _exit_gate_open(self, position, fire):
+        task = asyncio.current_task()
+        state = self._exit_gate_state(position.episode_id)
+        if state is None:
+            return None
+        handle = self.native.handles.get(position.episode_id)
+        if handle is not None:
+            if state["root"] not in (None, handle.base_coid):
+                state.update(latch_ns=None, entry_gate=None, post_cancel=False, generation_changed=True)
+            state["root"] = handle.base_coid
+            if self.runtime.get(position.episode_id, {}).get(f"native_cancel_wires:{handle.base_coid}"):
+                state["post_cancel"] = True  # Restored latch WITHOUT an invented clock.
+        observed = fire[2] if fire is not None and fire[:2] == (task, position.episode_id) else None
+        if observed is not None and fire[3] == "time_300s" and state["clock"] is None:
+            state["clock"] = (fire[4], fire[5], observed)
+        trace = {"state": state, "steps": state["steps"],
+                 "outcome": "returned", "active": None, "attempt_journal_saved": False,
+                 "attempt_logged": False}
+        frames = getattr(self, "_exit_gate_frames", None)
+        key = (position.episode_id, task)
+        if isinstance(frames, dict) and any(k[0] == position.episode_id for k in frames):
+            state["overlap"] = True
+        trace["bound"] = isinstance(frames, dict) and len(frames) < 2 and key not in frames
+        if trace["bound"]:
+            frames[key] = trace
+        return trace
+
+    def _exit_gate_change(self, identity, state, gate, event, before, after):
+        # CONDITIONAL proposal: 20 applies to ENTRY/CHANGE calls; attempt summary extra.
+        try:
+            if not state["post_cancel"]:
+                return
+            if state["lines"] >= 20:
+                state["suppressed"] += 1
+                return
+            state["lines"] += 1  # Count attempted INFO calls, including logger failure.
+            now = time.monotonic_ns()
+            since = (now - state["latch_ns"]) / 1e6 if state["latch_ns"] is not None else None
+            self.service.logger.info("[MOMLIVE1-EXIT-GATE] runtime=%s episode=%s event=%s "
+                "gate=%s from=%s to=%s since_local_latch_save_ms=%s latch_clock=%s "
+                "line=%s cap_scope=process_episode",
+                self._exit_gate_instance, identity, event, gate, before, after, since,
+                "observed_after_save" if since is not None else "UNKNOWN", state["lines"])
+        except Exception:
+            state["sink_errors"] += 1
+
+    def _exit_gate_start(self, trace, gate):
+        try:
+            if trace is not None:
+                state = trace["state"]
+                if state["post_cancel"] and state["entry_gate"] != gate:
+                    previous = state["entry_gate"] or "unobserved"
+                    state["entry_gate"] = gate
+                    self._exit_gate_change(trace["identity"], state, gate, "ENTRY", previous, gate)
+                started = time.monotonic_ns()  # AFTER entry logging; avoid charging that IO to the await.
+                trace["active"] = (gate, started)
+                return started
+        except Exception:
+            pass
+        return None
+
+    def _exit_gate_end(self, trace, gate, started, outcome):
+        try:
+            if trace is None or started is None:
+                return
+            ended = time.monotonic_ns()
+            if trace["active"] == (gate, started):
+                trace["active"] = None
+            state = trace["state"]
+            value = trace["steps"].get(gate)
+            if value is None:
+                value = trace["steps"][gate] = [started, ended, 0, 0, 0, outcome]
+            duration = ended - started
+            value[1], value[2], value[3] = ended, value[2] + duration, max(value[3], duration)
+            value[4], value[5] = value[4] + 1, outcome
+            if state["post_cancel"]:
+                previous = state["outcomes"].get(gate, "unobserved")
+                if previous != outcome:
+                    state["outcomes"][gate] = outcome
+                    self._exit_gate_change(trace["identity"], state, gate, "CHANGE", previous, outcome)
+        except Exception:
+            pass
+
+    def _exit_gate_attempt(self, trace, position, reason, values, site):
+        if trace is None or not trace["attempt_journal_saved"] or trace["attempt_logged"]:
+            return
+        trace["attempt_logged"] = True
+        state = trace["state"]
+        try:
+            gates = ("terminal_before_prepare", "terminal_after_prepare", "fresh_pre_release",
+                     "fresh_post_release", "positions", "foreign_vp", "fresh_pre_ceiling",
+                     "owned_ceiling", "fresh_pre_send")
+            steps = tuple((gate, *(v / 1e6 for v in trace["steps"][gate][:4]),
+                           *trace["steps"][gate][4:]) if gate in trace["steps"]
+                          else (gate, None, None, None, None, 0, "not_reached") for gate in gates)
+            source, anchor, fired = state["clock"] or ("UNKNOWN", None, None)
+            if reason != "time_300s":
+                source, anchor, fired = "UNKNOWN", None, None
+            due = anchor + 300_000_000_000 if reason == "time_300s" and type(anchor) is int else None
+            proven = source in ("send", "first_execution") and due is not None and type(fired) is int
+            suppressed = state["suppressed"] - state["last_summary_suppressed"]
+            state["last_summary_suppressed"] = state["suppressed"]
+            self.service.logger.info("[MOMLIVE1-EXIT-ATTEMPT-TIMING] runtime=%s episode=%s "
+                "attempt=%s site=%s eval_outcome=%s steps_ms=%s "
+                "step_fields=gate,first_start,last_end,total,max,calls,last_outcome incomplete=%s "
+                "suppressed=%s suppressed_total=%s change_calls_total=%s sink_errors=%s "
+                "terminal_binding=%s generation_changed=%s overlap=%s "
+                "clock_site=first_locally_observed_time_300s_decision clock_source=%s "
+                "due_business_ns=%s fired_business_ns=%s late_ns=%s clock_proven=%s",
+                self._exit_gate_instance, position.episode_id, values.get("soft_exit_attempt"),
+                site, trace["outcome"], steps,
+                (trace["active"][0], trace["active"][1] / 1e6, "end_UNKNOWN") if trace["active"] else None,
+                suppressed,
+                state["suppressed"], state["lines"], state["sink_errors"], trace["bound"],
+                state["generation_changed"], state["overlap"], source if source in ("send", "first_execution") else "UNKNOWN",
+                due, fired, fired - due if proven else None, proven)
+        except Exception:
+            state["sink_errors"] += 1
+        finally:
+            state["steps"] = {}  # New attempt's fixed aggregate; no event history.
+
+    def _exit_gate_finish(self, trace, position, reason, values):
+        try:
+            frames = getattr(self, "_exit_gate_frames", {})
+            key = (position.episode_id, asyncio.current_task())
+            if trace is not None and frames.get(key) is trace:
+                frames.pop(key)
+            self._exit_gate_attempt(trace, position, reason, values, "return_or_error_finally")
+            state = trace["state"] if trace is not None else None
+            if (state is not None and state["retired"]
+                    and not any(k[0] == position.episode_id for k in frames)):
+                self._exit_gate_states.pop(position.episode_id, None)
+        except Exception:
+            pass
+
+    def _exit_gate_retire(self, identity):
+        try:
+            state = self._exit_gate_states.get(identity)
+            if state is not None:
+                state["retired"] = True
+                if not any(key[0] == identity for key in self._exit_gate_frames):
+                    self._exit_gate_states.pop(identity, None)
+        except Exception:
+            pass
+
     def _protection_market_session(self):
         local = self.clock().astimezone(ET)
         return ("AM" if (local.hour, local.minute) < (9, 30)
@@ -978,7 +1165,28 @@ class OmsLiveRuntime:
                                  session=position.market_session)
 
     async def _read_protection(self, handle):
-        read = await self.backend.read(handle, self)
+        trace = None
+        gate = "terminal_before_prepare"
+        try:
+            frames = getattr(self, "_exit_gate_frames", {})
+            trace = frames.get((handle.episode_id, asyncio.current_task()))
+            prepared = bool(self.runtime.get(handle.episode_id, {}).get(f"native_cancel_wires:{handle.base_coid}"))
+            gate = "terminal_after_prepare" if prepared else "terminal_before_prepare"
+        except Exception:
+            pass
+        started = self._exit_gate_start(trace, gate)
+        outcome = "exception"
+        try:
+            read = await self.backend.read(handle, self)
+            try:
+                outcome = "terminal" if read.terminal else "working" if read.working else "unknown"
+            except Exception:
+                outcome = "unknown"
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        finally:
+            self._exit_gate_end(trace, gate, started, outcome)
         control = getattr(self.service, "_bot_control_runtime", None)
         if control is not None and self._stop_requested():
             if (read.episode_id != handle.episode_id or read.account != handle.account
@@ -1080,285 +1288,342 @@ class OmsLiveRuntime:
         return ready  # Final quantity proof rechecks freshness after the broker await.
 
     async def _exit(self, position, reason):
+        fire = getattr(self, "_exit_gate_fire", None)
+        self._exit_gate_fire = None
         values = self.runtime.setdefault(position.episode_id, {})
         if position.remaining <= 0:
             return
-        control_market = False
-        if reason == "KILLSW1_STOP":
-            if values.get("killsw1_broker_refused"):
-                return
-            local = self.clock().astimezone(ET)
-            provider = self.provider(position.account)
-            if (local.weekday() >= 5 or local.date() in US_MARKET_HOLIDAYS
-                    or not (4, 0) <= (local.hour, local.minute) < (20, 0)
-                    or provider == "schwab" and local.hour < 7):
-                last_log = values.get("killsw1_session_blocked_log_ns")
-                if last_log is None or self.now_ns() - last_log >= 30_000_000_000:
-                    self.service.logger.warning("[KILLSW1-BLOCKED] episode=%s reason=broker_session protection=retained",
-                                                position.episode_id)
-                    values["killsw1_session_blocked_log_ns"] = self.now_ns()
-                values["killsw1_session_blocked"] = True
-                return
-            values.pop("killsw1_session_blocked", None)
-            control_market = (9, 30) <= (local.hour, local.minute) < (16, 0)
-            snapshot = await self._inspect(position.episode_id)
-            if not snapshot["entry_terminal"]:
-                return  # Entry cancellation must prove terminal before any protection release.
-            handle = self.native.handles.get(position.episode_id)
-            terminal_key = handle.base_coid if handle is not None else position.entry_coid + ":no-native"
-            if (not values.get("soft_exit_sent") and values.get("killsw1_terminal_key") == terminal_key
-                    and not await self._control_receipt_ready(position, values)):
-                return
-        if (not values.get("soft_exit_reason")
-                or values.get("soft_exit_reason") == "target_5pct"
-                and reason in {"hard_stop_15pct", "time_300s", "KILLSW1_STOP"}):
-            values["soft_exit_reason"] = reason
-            await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
-        position.pending_exit_reason = values["soft_exit_reason"]
-        mandatory_chase = self._mandatory_chase(position, position.pending_exit_reason)
-        # Completion is conservative relative to dispatch. The pre-save journal
-        # timestamp cannot pace actual calls when DB latency differs per attempt.
-        last = (values.get("soft_exit_dispatch_completed_ns") or values.get("soft_exit_terminal_verified_ns")
-                or values.get("soft_exit_working_verified_ns"))
-        if last is not None and self.now_ns()-int(last) < 2_000_000_000:
-            return
-        cancel_last = values.get("soft_exit_cancel_completed_ns") or values.get("soft_exit_cancel_verified_ns")
-        if values.get("soft_exit_sent"):
-            snapshot = await self._inspect(position.episode_id)
-            exits = [row for row in snapshot["orders"] if row["request"].metadata.get("exit_reason")
-                     and (not values.get("soft_exit_coid")
-                          or row["request"].client_order_id == values["soft_exit_coid"])]
-            if len(exits) != 1:
-                raise Refusal("soft_exit_order_identity_UNKNOWN")
-            row = exits[0]
-            await self._read_missing_execution_time(position.episode_id, row)
-            terminal = {"filled", "cancelled", "rejected", "expired"}
-            if (row["status"] not in terminal and self._soft_exit_chase_window()
-                    and values.get("soft_exit_cancel_coid") == values.get("soft_exit_coid")
-                    and cancel_last is not None and self.now_ns()-int(cancel_last) < 2_000_000_000):
-                return
-            if (row["status"] not in terminal
-                    or row["request"].metadata.get("momlive_terminal_broker_event") != row["status"]):
-                read_ns = values.get("soft_exit_read_ns")
-                if read_ns is not None and self.now_ns()-int(read_ns) < 1_000_000_000:
+        trace = None
+        try:
+            trace = self._exit_gate_open(position, fire)
+            if trace is not None:
+                trace["identity"] = position.episode_id
+        except Exception:
+            pass
+        try:
+            control_market = False
+            if reason == "KILLSW1_STOP":
+                if values.get("killsw1_broker_refused"):
                     return
-                values["soft_exit_read_ns"] = self.now_ns()
-                request = row["request"]
-                if self._soft_exit_chase_window():
-                    request = replace(request, metadata={**request.metadata, "momlive_fresh_order_read": "true"})
-                report = await self.backend.fetch_entry_update(request, self)
-                if report is None:
-                    # Mandatory exits may cancel their known original order on
-                    # UNKNOWN; the post-cancel terminal proof still gates SELL.
-                    if not mandatory_chase or not self._soft_exit_chase_window():
-                        return
-                else:
-                    await self._record(row["request"], [report])
+                local = self.clock().astimezone(ET)
+                provider = self.provider(position.account)
+                if (local.weekday() >= 5 or local.date() in US_MARKET_HOLIDAYS
+                        or not (4, 0) <= (local.hour, local.minute) < (20, 0)
+                        or provider == "schwab" and local.hour < 7):
+                    last_log = values.get("killsw1_session_blocked_log_ns")
+                    if last_log is None or self.now_ns() - last_log >= 30_000_000_000:
+                        self.service.logger.warning("[KILLSW1-BLOCKED] episode=%s reason=broker_session protection=retained",
+                                                    position.episode_id)
+                        values["killsw1_session_blocked_log_ns"] = self.now_ns()
+                    values["killsw1_session_blocked"] = True
+                    return
+                values.pop("killsw1_session_blocked", None)
+                control_market = (9, 30) <= (local.hour, local.minute) < (16, 0)
                 snapshot = await self._inspect(position.episode_id)
-                row = next(item for item in snapshot["orders"]
-                           if item["request"].client_order_id == row["request"].client_order_id)
-            if (row["status"] not in terminal
-                    or row["request"].metadata.get("momlive_terminal_broker_event") != row["status"]):
-                if (not self._soft_exit_chase_window()
-                        or report is not None and (report.origin != "broker"
-                            or report.event_type not in {"accepted", "partially_filled"})):
+                if not snapshot["entry_terminal"]:
+                    return  # Entry cancellation must prove terminal before any protection release.
+                handle = self.native.handles.get(position.episode_id)
+                terminal_key = handle.base_coid if handle is not None else position.entry_coid + ":no-native"
+                if (not values.get("soft_exit_sent") and values.get("killsw1_terminal_key") == terminal_key
+                        and not await self._control_receipt_ready(position, values)):
                     return
-                if last is None:
-                    values["soft_exit_working_verified_ns"] = self.now_ns()
-                    await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
-                    return
-                fresh = self._exit_quote(position.symbol)
-                stamp, bid = fresh.get("observed_ns"), fresh.get("bid")
-                if (stamp is None or bid is None or bid <= 0
-                        or not 0 <= self.now_ns()-stamp <= 2_000_000_000
-                        or stamp <= int(values.get("soft_exit_quote_ns", last))):
-                    return
-                if not await self._chase_cancel(position.episode_id, row["request"], values,
-                        mandatory=mandatory_chase, reason=position.pending_exit_reason):
-                    return
-                request = replace(row["request"], metadata={**row["request"].metadata,
-                                                           "momlive_fresh_order_read": "true"})
-                report = await self.backend.fetch_entry_update(request, self)
-                if report is None:
-                    return
-                await self._record(row["request"], [report])
+            if (not values.get("soft_exit_reason")
+                    or values.get("soft_exit_reason") == "target_5pct"
+                    and reason in {"hard_stop_15pct", "time_300s", "KILLSW1_STOP"}):
+                values["soft_exit_reason"] = reason
+                await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
+            position.pending_exit_reason = values["soft_exit_reason"]
+            mandatory_chase = self._mandatory_chase(position, position.pending_exit_reason)
+            # Completion is conservative relative to dispatch. The pre-save journal
+            # timestamp cannot pace actual calls when DB latency differs per attempt.
+            last = (values.get("soft_exit_dispatch_completed_ns") or values.get("soft_exit_terminal_verified_ns")
+                    or values.get("soft_exit_working_verified_ns"))
+            if last is not None and self.now_ns()-int(last) < 2_000_000_000:
+                return
+            cancel_last = values.get("soft_exit_cancel_completed_ns") or values.get("soft_exit_cancel_verified_ns")
+            if values.get("soft_exit_sent"):
                 snapshot = await self._inspect(position.episode_id)
-                row = next(item for item in snapshot["orders"]
-                           if item["request"].client_order_id == request.client_order_id)
+                exits = [row for row in snapshot["orders"] if row["request"].metadata.get("exit_reason")
+                         and (not values.get("soft_exit_coid")
+                              or row["request"].client_order_id == values["soft_exit_coid"])]
+                if len(exits) != 1:
+                    raise Refusal("soft_exit_order_identity_UNKNOWN")
+                row = exits[0]
+                await self._read_missing_execution_time(position.episode_id, row)
+                terminal = {"filled", "cancelled", "rejected", "expired"}
+                if (row["status"] not in terminal and self._soft_exit_chase_window()
+                        and values.get("soft_exit_cancel_coid") == values.get("soft_exit_coid")
+                        and cancel_last is not None and self.now_ns()-int(cancel_last) < 2_000_000_000):
+                    return
                 if (row["status"] not in terminal
                         or row["request"].metadata.get("momlive_terminal_broker_event") != row["status"]):
+                    read_ns = values.get("soft_exit_read_ns")
+                    if read_ns is not None and self.now_ns()-int(read_ns) < 1_000_000_000:
+                        return
+                    values["soft_exit_read_ns"] = self.now_ns()
+                    request = row["request"]
+                    if self._soft_exit_chase_window():
+                        request = replace(request, metadata={**request.metadata, "momlive_fresh_order_read": "true"})
+                    report = await self.backend.fetch_entry_update(request, self)
+                    if report is None:
+                        # Mandatory exits may cancel their known original order on
+                        # UNKNOWN; the post-cancel terminal proof still gates SELL.
+                        if not mandatory_chase or not self._soft_exit_chase_window():
+                            return
+                    else:
+                        await self._record(row["request"], [report])
+                    snapshot = await self._inspect(position.episode_id)
+                    row = next(item for item in snapshot["orders"]
+                               if item["request"].client_order_id == row["request"].client_order_id)
+                if (row["status"] not in terminal
+                        or row["request"].metadata.get("momlive_terminal_broker_event") != row["status"]):
+                    if (not self._soft_exit_chase_window()
+                            or report is not None and (report.origin != "broker"
+                                or report.event_type not in {"accepted", "partially_filled"})):
+                        return
+                    if last is None:
+                        values["soft_exit_working_verified_ns"] = self.now_ns()
+                        await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
+                        return
+                    fresh = self._exit_quote(position.symbol)
+                    stamp, bid = fresh.get("observed_ns"), fresh.get("bid")
+                    if (stamp is None or bid is None or bid <= 0
+                            or not 0 <= self.now_ns()-stamp <= 2_000_000_000
+                            or stamp <= int(values.get("soft_exit_quote_ns", last))):
+                        return
+                    if not await self._chase_cancel(position.episode_id, row["request"], values,
+                            mandatory=mandatory_chase, reason=position.pending_exit_reason):
+                        return
+                    request = replace(row["request"], metadata={**row["request"].metadata,
+                                                               "momlive_fresh_order_read": "true"})
+                    report = await self.backend.fetch_entry_update(request, self)
+                    if report is None:
+                        return
+                    await self._record(row["request"], [report])
+                    snapshot = await self._inspect(position.episode_id)
+                    row = next(item for item in snapshot["orders"]
+                               if item["request"].client_order_id == request.client_order_id)
+                    if (row["status"] not in terminal
+                            or row["request"].metadata.get("momlive_terminal_broker_event") != row["status"]):
+                        return
+                if snapshot["outstanding_exit"]:
                     return
-            if snapshot["outstanding_exit"]:
-                return
-            position.exited = snapshot["exited"]
-            if position.remaining <= 0:
-                return
-            if last is None:
-                # Crash/legacy journal without completion: terminal proof fences
-                # the unknown call, but its actual dispatch time is not known.
-                values["soft_exit_terminal_verified_ns"] = self.now_ns()
+                position.exited = snapshot["exited"]
+                if position.remaining <= 0:
+                    return
+                if last is None:
+                    # Crash/legacy journal without completion: terminal proof fences
+                    # the unknown call, but its actual dispatch time is not known.
+                    values["soft_exit_terminal_verified_ns"] = self.now_ns()
+                    await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
+                    return
+                values["soft_exit_sent"] = False
+                if position.episode_id not in self.native.handles:
+                    position.release_unknown, position.reserved = False, Decimal(0)
                 await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
+            gate_started = self._exit_gate_start(trace, "fresh_pre_release")
+            fresh = self._exit_quote(position.symbol)
+            stamp, bid = fresh.get("observed_ns"), fresh.get("bid")
+            if not control_market and (stamp is None or bid is None or bid <= 0 or not 0 <= self.now_ns()-stamp <= 2_000_000_000
+                    or last is not None and stamp <= int(values.get("soft_exit_quote_ns", last))):
+                self._exit_gate_end(trace, "fresh_pre_release", gate_started, "wait")
                 return
-            values["soft_exit_sent"] = False
-            if position.episode_id not in self.native.handles:
-                position.release_unknown, position.reserved = False, Decimal(0)
-            await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
-        fresh = self._exit_quote(position.symbol)
-        stamp, bid = fresh.get("observed_ns"), fresh.get("bid")
-        if not control_market and (stamp is None or bid is None or bid <= 0 or not 0 <= self.now_ns()-stamp <= 2_000_000_000
-                or last is not None and stamp <= int(values.get("soft_exit_quote_ns", last))):
-            return
-        if not await self.native.release_for_exit(position) or position.remaining <= 0:
-            return
-        if reason == "KILLSW1_STOP":
-            handle = self.native.handles.get(position.episode_id)
-            terminal_key = handle.base_coid if handle is not None else position.entry_coid + ":no-native"
-            if values.get("killsw1_terminal_key") != terminal_key:
-                values.update(killsw1_terminal_key=terminal_key,
-                              killsw1_protection_terminal_at=self.clock().isoformat())
-                values.pop("killsw1_receipt_check_ns", None)
-                await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
-            if not await self._control_receipt_ready(position, values):
+            self._exit_gate_end(trace, "fresh_pre_release", gate_started, "ready")
+            if not await self.native.release_for_exit(position) or position.remaining <= 0:
                 return
-        fresh = self._exit_quote(position.symbol)
-        stamp, bid = fresh.get("observed_ns"), fresh.get("bid")
-        if not control_market and (stamp is None or bid is None or bid <= 0 or not 0 <= self.now_ns()-stamp <= 2_000_000_000):
-            return  # Durable watched exit stays armed after confirmed release.
-        holdings = await self.service.broker_adapter.list_account_positions(position.account)
-        if reason == "KILLSW1_STOP":
-            matching = [row for row in holdings if row.symbol == position.symbol]
-            if len(matching) != 1 or matching[0].broker_account_name != position.account:
-                return  # Missing/duplicate/misrouted holdings is UNKNOWN, never zero.
-        total = next((row.quantity for row in holdings if row.symbol == position.symbol), None)
-        def foreign(session):
-            own = session.scalar(select(Strategy.id).where(Strategy.code == STRATEGY_CODE))
-            account = session.scalar(select(BrokerAccount.id).where(BrokerAccount.name == position.account))
-            rows = session.scalars(select(VirtualPosition).where(VirtualPosition.broker_account_id == account,
-                VirtualPosition.symbol == position.symbol, VirtualPosition.strategy_id != own)).all()
-            return sum((max(Decimal(0), row.quantity) for row in rows), Decimal(0))
-        reserved_foreign = (Decimal(0) if reason == "KILLSW1_STOP"
-                            else await self.service._run_db(foreign, commit=False))
-        if reason == "KILLSW1_STOP":
-            from project_mai_tai.oms.bot_control_evidence import owned_exit_ceiling, positions_after_protection
-            def ceiling(session):
-                terminal_at = datetime.fromisoformat(values["killsw1_protection_terminal_at"])
-                positions_after_protection(session, account_name=position.account,
-                                           terminal_at=terminal_at, now=self.clock())
+            if reason == "KILLSW1_STOP":
+                handle = self.native.handles.get(position.episode_id)
+                terminal_key = handle.base_coid if handle is not None else position.entry_coid + ":no-native"
+                if values.get("killsw1_terminal_key") != terminal_key:
+                    values.update(killsw1_terminal_key=terminal_key,
+                                  killsw1_protection_terminal_at=self.clock().isoformat())
+                    values.pop("killsw1_receipt_check_ns", None)
+                    await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
+                if not await self._control_receipt_ready(position, values):
+                    return
+            gate_started = self._exit_gate_start(trace, "fresh_post_release")
+            fresh = self._exit_quote(position.symbol)
+            stamp, bid = fresh.get("observed_ns"), fresh.get("bid")
+            if not control_market and (stamp is None or bid is None or bid <= 0 or not 0 <= self.now_ns()-stamp <= 2_000_000_000):
+                self._exit_gate_end(trace, "fresh_post_release", gate_started, "wait")
+                return  # Durable watched exit stays armed after confirmed release.
+            self._exit_gate_end(trace, "fresh_post_release", gate_started, "ready")
+            gate_started = self._exit_gate_start(trace, "positions")
+            gate_outcome = "exception"
+            try:
+                holdings = await self.service.broker_adapter.list_account_positions(position.account)
+                gate_outcome = "returned"
+            except asyncio.CancelledError:
+                gate_outcome = "cancelled"
+                raise
+            finally:
+                self._exit_gate_end(trace, "positions", gate_started, gate_outcome)
+            if reason == "KILLSW1_STOP":
+                matching = [row for row in holdings if row.symbol == position.symbol]
+                if len(matching) != 1 or matching[0].broker_account_name != position.account:
+                    return  # Missing/duplicate/misrouted holdings is UNKNOWN, never zero.
+            total = next((row.quantity for row in holdings if row.symbol == position.symbol), None)
+            def foreign(session):
                 own = session.scalar(select(Strategy.id).where(Strategy.code == STRATEGY_CODE))
                 account = session.scalar(select(BrokerAccount.id).where(BrokerAccount.name == position.account))
-                snapshot = self.db.inspect_episode(session, position.episode_id)
-                matching = [item for item in snapshot["orders"]
-                            if item["request"].client_order_id == position.entry_coid
-                            and item["request"].broker_account_name == position.account
-                            and item["request"].symbol == position.symbol]
-                if (len(matching) != 1 or not snapshot["entry_terminal"] or snapshot["outstanding_exit"]
-                        or own is None or account is None):
-                    raise Refusal("KILLSW1:owned_orders_not_terminal")
-                cap = owned_exit_ceiling(session, strategy_id=own, account_id=account, symbol=position.symbol,
-                    remaining=snapshot["quantity"] - snapshot["exited"], broker_total=total)
-                return cap, snapshot["exited"]
+                rows = session.scalars(select(VirtualPosition).where(VirtualPosition.broker_account_id == account,
+                    VirtualPosition.symbol == position.symbol, VirtualPosition.strategy_id != own)).all()
+                return sum((max(Decimal(0), row.quantity) for row in rows), Decimal(0))
+            if reason == "KILLSW1_STOP":
+                reserved_foreign = Decimal(0)
+            else:
+                gate_started = self._exit_gate_start(trace, "foreign_vp")
+                gate_outcome = "exception"
+                try:
+                    reserved_foreign = await self.service._run_db(foreign, commit=False)
+                    gate_outcome = "returned"
+                except asyncio.CancelledError:
+                    gate_outcome = "cancelled"
+                    raise
+                finally:
+                    self._exit_gate_end(trace, "foreign_vp", gate_started, gate_outcome)
+            if reason == "KILLSW1_STOP":
+                from project_mai_tai.oms.bot_control_evidence import owned_exit_ceiling, positions_after_protection
+                def ceiling(session):
+                    terminal_at = datetime.fromisoformat(values["killsw1_protection_terminal_at"])
+                    positions_after_protection(session, account_name=position.account,
+                                               terminal_at=terminal_at, now=self.clock())
+                    own = session.scalar(select(Strategy.id).where(Strategy.code == STRATEGY_CODE))
+                    account = session.scalar(select(BrokerAccount.id).where(BrokerAccount.name == position.account))
+                    snapshot = self.db.inspect_episode(session, position.episode_id)
+                    matching = [item for item in snapshot["orders"]
+                                if item["request"].client_order_id == position.entry_coid
+                                and item["request"].broker_account_name == position.account
+                                and item["request"].symbol == position.symbol]
+                    if (len(matching) != 1 or not snapshot["entry_terminal"] or snapshot["outstanding_exit"]
+                            or own is None or account is None):
+                        raise Refusal("KILLSW1:owned_orders_not_terminal")
+                    cap = owned_exit_ceiling(session, strategy_id=own, account_id=account, symbol=position.symbol,
+                        remaining=snapshot["quantity"] - snapshot["exited"], broker_total=total)
+                    return cap, snapshot["exited"]
+                try:
+                    total, exited = await self.service._run_db(ceiling, commit=False)
+                except ValueError as exc:
+                    blocked = str(exc)
+                    if values.get("killsw1_wait") != blocked:
+                        self.service.logger.warning("[KILLSW1-BLOCKED] episode=%s reason=%s sell=0",
+                                                    position.episode_id, blocked)
+                        values["killsw1_wait"] = blocked
+                    return
+                values.pop("killsw1_wait", None)
+                position.exited = max(position.exited, exited)
+                reserved_foreign = Decimal(0)  # Reviewed22:2x cap is own fills/own VP/broker total.
+            gate_started = self._exit_gate_start(trace, "fresh_pre_ceiling")
+            fresh = self._exit_quote(position.symbol)
+            stamp, bid = fresh.get("observed_ns"), fresh.get("bid")
+            if not control_market and (stamp is None or bid is None or bid <= 0 or not 0 <= self.now_ns()-stamp <= 2_000_000_000):
+                self._exit_gate_end(trace, "fresh_pre_ceiling", gate_started, "wait")
+                return
+            self._exit_gate_end(trace, "fresh_pre_ceiling", gate_started, "ready")
+            local = self.clock().astimezone(ET)
+            session = "NORMAL" if (9, 30) <= (local.hour, local.minute) < (16, 0) else "AM" if local.hour < 9 else "PM"
+            if control_market and session != "NORMAL":
+                return  # Session changed while releasing protection; next pass reprices for EH.
+            control_market = reason == "KILLSW1_STOP" and session == "NORMAL"
+            gate_started = self._exit_gate_start(trace, "owned_ceiling")
+            gate_outcome = "exception"
             try:
-                total, exited = await self.service._run_db(ceiling, commit=False)
-            except ValueError as exc:
-                blocked = str(exc)
-                if values.get("killsw1_wait") != blocked:
-                    self.service.logger.warning("[KILLSW1-BLOCKED] episode=%s reason=%s sell=0",
-                                                position.episode_id, blocked)
-                    values["killsw1_wait"] = blocked
+                quantity = position.claim_exit_quantity(broker_available=total, foreign_reserved=reserved_foreign)
+                gate_outcome = "positive" if quantity > 0 else "zero"
+            finally:
+                self._exit_gate_end(trace, "owned_ceiling", gate_started, gate_outcome)
+            if quantity <= 0:
                 return
-            values.pop("killsw1_wait", None)
-            position.exited = max(position.exited, exited)
-            reserved_foreign = Decimal(0)  # Reviewed22:2x cap is own fills/own VP/broker total.
-        fresh = self._exit_quote(position.symbol)
-        stamp, bid = fresh.get("observed_ns"), fresh.get("bid")
-        if not control_market and (stamp is None or bid is None or bid <= 0 or not 0 <= self.now_ns()-stamp <= 2_000_000_000):
-            return
-        local = self.clock().astimezone(ET)
-        session = "NORMAL" if (9, 30) <= (local.hour, local.minute) < (16, 0) else "AM" if local.hour < 9 else "PM"
-        if control_market and session != "NORMAL":
-            return  # Session changed while releasing protection; next pass reprices for EH.
-        control_market = reason == "KILLSW1_STOP" and session == "NORMAL"
-        quantity = position.claim_exit_quantity(broker_available=total, foreign_reserved=reserved_foreign)
-        if quantity <= 0:
-            return
-        tick, limit = None, None
-        if not control_market:
-            tick = Decimal(".0001") if bid < 1 else Decimal(".01")
-            limit = (bid/tick).to_integral_value(rounding=ROUND_FLOOR)*tick
-            if limit <= 0:
-                raise Refusal("exit_limit_tick_unrepresentable")
-        attempt = int(values.get("soft_exit_attempt", 0))+1
-        coid = f"ml1-{position.symbol}-x-{position.episode_id.replace('-', '')[:20]}"
-        if attempt > 1:
-            coid += f"-{attempt}"
-        if len(coid) > 38:
-            raise Refusal("soft_exit_identity_capacity_UNKNOWN")
-        exit_metadata = {"episode_id": position.episode_id, "momlive_strategy": STRATEGY_CODE,
-             "momlive_one_shot": "true", "session": session,
-             "clock_source": position.exit_clock_source, "clock_start_ns": str(position.exit_clock_ns),
-             "extended_hours": "false" if session == "NORMAL" else "true", "exit_reason": reason}
-        if not control_market:
-            exit_metadata["limit_price"] = str(limit)
-            exit_metadata["reference_price"] = str(limit)
-        request = OrderRequest(coid,
-            position.account, STRATEGY_CODE, position.symbol, "sell", "close", quantity, reason,
-            exit_metadata, "market" if control_market else "limit", "day")
-        await self._prepare(position.episode_id, request, self.provider(position.account))
-        # A new uncertain call must never inherit the preceding call's pace
-        # proof if the process dies before persisting its own completion.
-        values.pop("soft_exit_dispatch_completed_ns", None)
-        values.pop("soft_exit_terminal_verified_ns", None)
-        values.pop("soft_exit_working_verified_ns", None)
-        if control_market and (stamp is None or not isinstance(bid, Decimal) or not bid.is_finite()
-                               or bid <= 0 or not 0 <= self.now_ns()-stamp <= 2_000_000_000):
-            stamp = None
-        values.update(soft_exit_sent=True, soft_exit_coid=coid, soft_exit_attempt=attempt,
-                      soft_exit_attempt_ns=self.now_ns(), soft_exit_quote_ns=stamp)
-        if stamp is None:
-            values.pop("soft_exit_quote_ns", None)  # UNKNOWN, not an invented quote timestamp.
-        if reason == "KILLSW1_STOP":
-            values["soft_exit_reason"] = reason  # New attempt only; prior owned-exit history is unchanged.
-        await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
-        checked = self._exit_quote(position.symbol)
-        checked_stamp, checked_bid = checked.get("observed_ns"), checked.get("bid")
-        control_session_closed = False
-        if control_market:
-            now_local = self.clock().astimezone(ET)
-            control_session_closed = not (9, 30) <= (now_local.hour, now_local.minute) < (16, 0)
-        if (not control_market and (checked_stamp is None or checked_bid is None or checked_bid <= 0
-                or not 0 <= self.now_ns()-checked_stamp <= 2_000_000_000
-                or (checked_bid/tick).to_integral_value(rounding=ROUND_FLOOR)*tick != limit)
-                or control_session_closed):
-            # Still in this pre-wire frame: known UNSENT, not a broker rejection
-            # or ambiguous ACK. Mark only this own order; keep the exit armed.
-            await self.service._run_db(lambda unit: self.db.abandon_unsent_exit(unit, request))
-            values["soft_exit_sent"] = False
-            position.reserved = Decimal(0)
+            tick, limit = None, None
+            if not control_market:
+                tick = Decimal(".0001") if bid < 1 else Decimal(".01")
+                limit = (bid/tick).to_integral_value(rounding=ROUND_FLOOR)*tick
+                if limit <= 0:
+                    raise Refusal("exit_limit_tick_unrepresentable")
+            attempt = int(values.get("soft_exit_attempt", 0))+1
+            coid = f"ml1-{position.symbol}-x-{position.episode_id.replace('-', '')[:20]}"
+            if attempt > 1:
+                coid += f"-{attempt}"
+            if len(coid) > 38:
+                raise Refusal("soft_exit_identity_capacity_UNKNOWN")
+            exit_metadata = {"episode_id": position.episode_id, "momlive_strategy": STRATEGY_CODE,
+                 "momlive_one_shot": "true", "session": session,
+                 "clock_source": position.exit_clock_source, "clock_start_ns": str(position.exit_clock_ns),
+                 "extended_hours": "false" if session == "NORMAL" else "true", "exit_reason": reason}
+            if not control_market:
+                exit_metadata["limit_price"] = str(limit)
+                exit_metadata["reference_price"] = str(limit)
+            request = OrderRequest(coid,
+                position.account, STRATEGY_CODE, position.symbol, "sell", "close", quantity, reason,
+                exit_metadata, "market" if control_market else "limit", "day")
+            await self._prepare(position.episode_id, request, self.provider(position.account))
+            # A new uncertain call must never inherit the preceding call's pace
+            # proof if the process dies before persisting its own completion.
+            values.pop("soft_exit_dispatch_completed_ns", None)
+            values.pop("soft_exit_terminal_verified_ns", None)
+            values.pop("soft_exit_working_verified_ns", None)
+            if control_market and (stamp is None or not isinstance(bid, Decimal) or not bid.is_finite()
+                                   or bid <= 0 or not 0 <= self.now_ns()-stamp <= 2_000_000_000):
+                stamp = None
+            values.update(soft_exit_sent=True, soft_exit_coid=coid, soft_exit_attempt=attempt,
+                          soft_exit_attempt_ns=self.now_ns(), soft_exit_quote_ns=stamp)
+            if stamp is None:
+                values.pop("soft_exit_quote_ns", None)  # UNKNOWN, not an invented quote timestamp.
+            if reason == "KILLSW1_STOP":
+                values["soft_exit_reason"] = reason  # New attempt only; prior owned-exit history is unchanged.
             await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
-            return
-        self.service.logger.info("[MOMLIVE1-EXIT] episode=%s symbol=%s attempt=%s quantity=%s limit=%s reason=%s",
-            position.episode_id, position.symbol, attempt, quantity, limit, values["soft_exit_reason"])
-        control = getattr(self.service, "_bot_control_runtime", None)
-        if control is not None and self._stop_requested():
-            if not await control.begin_cleanup(request, "SUBMIT_EXIT"):
+            if trace is not None:
+                trace["attempt_journal_saved"] = True  # Only after the original successful _save.
+            gate_started = self._exit_gate_start(trace, "fresh_pre_send")
+            checked = self._exit_quote(position.symbol)
+            checked_stamp, checked_bid = checked.get("observed_ns"), checked.get("bid")
+            control_session_closed = False
+            if control_market:
+                now_local = self.clock().astimezone(ET)
+                control_session_closed = not (9, 30) <= (now_local.hour, now_local.minute) < (16, 0)
+            if (not control_market and (checked_stamp is None or checked_bid is None or checked_bid <= 0
+                    or not 0 <= self.now_ns()-checked_stamp <= 2_000_000_000
+                    or (checked_bid/tick).to_integral_value(rounding=ROUND_FLOOR)*tick != limit)
+                    or control_session_closed):
+                self._exit_gate_end(trace, "fresh_pre_send", gate_started, "wait")
+                # Still in this pre-wire frame: known UNSENT, not a broker rejection
+                # or ambiguous ACK. Mark only this own order; keep the exit armed.
+                await self.service._run_db(lambda unit: self.db.abandon_unsent_exit(unit, request))
+                values["soft_exit_sent"] = False
+                position.reserved = Decimal(0)
+                await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
                 return
-        try:
-            reports = await self._submit(request)
+            self._exit_gate_end(trace, "fresh_pre_send", gate_started, "ready")
+            self._exit_gate_attempt(trace, position, reason, values, "pre_submit")
+            self.service.logger.info("[MOMLIVE1-EXIT] episode=%s symbol=%s attempt=%s quantity=%s limit=%s reason=%s",
+                position.episode_id, position.symbol, attempt, quantity, limit, values["soft_exit_reason"])
+            control = getattr(self.service, "_bot_control_runtime", None)
+            if control is not None and self._stop_requested():
+                if not await control.begin_cleanup(request, "SUBMIT_EXIT"):
+                    return
+            try:
+                reports = await self._submit(request)
+            finally:
+                # An exception/cancel is still UNKNOWN ACK, not a terminal order.
+                # Keep the durable sent fence; only pace from call completion/read.
+                values["soft_exit_dispatch_completed_ns"] = self.now_ns()
+                await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
+            await self._record(request, reports)
+            self.service.logger.info("[MOMLIVE1-EXIT-CHASE] episode=%s attempt=%s action=submit bid=%s quantity=%s result=%s",
+                                     position.episode_id, attempt, bid, quantity,
+                                     ",".join(report.event_type for report in reports) or "UNKNOWN")
+            if any(report.origin == "broker" and report.event_type == "filled" for report in reports):
+                current = await self._inspect(position.episode_id)
+                filled = next((row for row in current["orders"]
+                               if row["request"].client_order_id == request.client_order_id), None)
+                if filled is not None:
+                    await self._read_missing_execution_time(position.episode_id, filled)
+        except BaseException as exc:
+            if trace is not None:
+                trace["outcome"] = "cancelled" if isinstance(exc, asyncio.CancelledError) else "exception"
+            raise
         finally:
-            # An exception/cancel is still UNKNOWN ACK, not a terminal order.
-            # Keep the durable sent fence; only pace from call completion/read.
-            values["soft_exit_dispatch_completed_ns"] = self.now_ns()
-            await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
-        await self._record(request, reports)
-        self.service.logger.info("[MOMLIVE1-EXIT-CHASE] episode=%s attempt=%s action=submit bid=%s quantity=%s result=%s",
-                                 position.episode_id, attempt, bid, quantity,
-                                 ",".join(report.event_type for report in reports) or "UNKNOWN")
-        if any(report.origin == "broker" and report.event_type == "filled" for report in reports):
-            current = await self._inspect(position.episode_id)
-            filled = next((row for row in current["orders"]
-                           if row["request"].client_order_id == request.client_order_id), None)
-            if filled is not None:
-                await self._read_missing_execution_time(position.episode_id, filled)
+            self._exit_gate_finish(trace, position, reason, values)
 
 
 class OwnedNativeBackend:
@@ -1807,6 +2072,12 @@ class OwnedNativeBackend:
             sent.append(identity)
             values[wire_key] = list(sent)
             await runtime._save_handle(handle)
+            try:
+                callback = getattr(runtime, "_exit_gate_cancel_latched", None)
+                if callback is not None:
+                    callback(handle)  # Original save succeeded; NOT native ACK.
+            except Exception:
+                pass
             try:
                 if handle.session == "NORMAL" and provider == "schwab":
                     await adapter.cancel_exit_leg_ids(handle.account, [identity])

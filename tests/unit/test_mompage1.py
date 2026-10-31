@@ -100,10 +100,9 @@ def test_mompage1_recorded_fourteen_trades_survive_stop_and_reload(monkeypatch, 
             assert f"${float(pnl):+.2f}" not in page.text
             assert "Snapshot method" not in page.text and "LIVE (real orders)" in page.text
         assert retained[0] == retained[1]
-        cached = client.get("/api/bots").json()["bots"]
-        cached_bot = next(item for item in cached if item["strategy_code"] == code)
-        assert cached_bot["closed_today"] == []
-        assert cached_bot["daily_pnl"] == (999 if running else 0)
+        # #1168 (10-27): /api/bots replaces the paper momentum bots with one live-fill bot.
+        cached = {item["strategy_code"] for item in client.get("/api/bots").json()["bots"]}
+        assert code not in cached and "momentum_warn_live" in cached
 
 
 def test_mompage1_empty_session_is_empty_without_error(monkeypatch):

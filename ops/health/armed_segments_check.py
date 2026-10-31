@@ -280,6 +280,14 @@ def main() -> int:
                  "the hold cannot be aged. v2 may be silently entry-less. Verify BY HAND.")
             return 2
         if up > BOOT_HOLD_GRACE_SECS:
+            # Operator 10-30 (real alarms only): with an EMPTY watchlist and no armed segment there is
+            # nothing to restore and nothing to trade — the hold releases on the first confirmed stock
+            # (10-27 and 10-30 boots). Not a page; a non-empty watchlist still pages after the grace.
+            if (restoration_raw is False and payload.get("watchlist") == []
+                    and not payload.get("cw_armed_segments")):
+                print(f"OK: entries_held=true {up/60:.1f}min after boot with an empty watchlist and 0 armed "
+                      "segments; the hold releases on the first scanner-confirmed stock")
+                return 0
             if restoration_raw is False:
                 page(
                     "🔴 v2 STATE RESTORATION INCOMPLETE",

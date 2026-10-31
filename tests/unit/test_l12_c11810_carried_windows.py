@@ -7,7 +7,7 @@ import json
 import pytest
 
 from tools.l12_recorded_boot_timeline import (
-    C11810_CARRIED, C11810SeedTracker, FLEET_FILES, FLEET_NAMES,
+    C11810_CARRIED, C11810SeedTracker, FLEET_NAMES,
     SOURCE_ANCHOR_MS, SOURCE_END_NS, RecordedSessionMap,
     _aware_ms, _aware_ns, c11810_candidate_from_records, c11810_old_window_candidate,
     c11810_window_geometry, parse_old_log_lines,

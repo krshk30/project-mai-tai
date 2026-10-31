@@ -8,10 +8,12 @@ import asyncio
 from copy import deepcopy
 from datetime import UTC, date, datetime
 from html.parser import HTMLParser
+import re
 from threading import get_ident
 from types import SimpleNamespace
 
 import httpx
+
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
@@ -175,7 +177,9 @@ def test_metadata_hashes_and_required_caveat_are_tooltips_not_body_paragraphs():
     parser.feed(html)
     visible = ''.join(parser.visible)
     assert '<p>' not in html and '<h2>' not in html
-    assert html.count("SIMULATION - NOT REAL TRADES") == 7
+    # Six SIM tables carry the SIM badge; the one real recorded-trade table carries its own (operator 10-27).
+    assert html.count("SIMULATION - NOT REAL TRADES") == 6
+    assert html.count(ui.REAL_BADGE) == 1
     assert "in-sample replay; reference differences under review" in html
     assert "in-sample replay; reference differences under review" not in visible
     assert "a"*64 in html and "a"*64 not in visible
@@ -200,6 +204,11 @@ def test_untrusted_row_and_source_text_are_escaped_without_modifying_economics()
     value[0]["view"]["outcomes"][0]["row"]["summary"] = '<script>BAD</script>'
     value[0]["view"]["source"]["source_id"] = '<script>BAD</script>'
     html = rendered(value)
+    # Exactly one executable script: the trusted static day filter. Nothing from rows/sources executes.
+    assert re.findall(r'<script\b', html, re.I) == ['<script']
+    assert html.count(ui.DAY_FILTER_SCRIPT) == 1
+    assert '<script' not in html.replace(ui.DAY_FILTER_SCRIPT, '', 1).lower()
+    assert 'BAD' not in ui.DAY_FILTER_SCRIPT
     assert '<script>' not in html and '&lt;script&gt;BAD&lt;/script&gt;' in html
     assert "+$196.87" in html
 
@@ -318,8 +327,10 @@ def test_compact_legacy_still_refuses_invalid_unused_metadata(invalid):
     assert html is None and view["read_status"] == "UNAVAILABLE" and view["rows"] == []
 
 
-def test_actual_queryless_cp_mount_selects_all_default_scopes_and_renders_offloop(monkeypatch):
-    """CONTROLLED binding/empty projection: proves routing, not actual775 DB rows."""
+def test_owned_legacy_routes_keep_bounded_scopes_offloop_while_cp_uses_sim2(monkeypatch):
+    """CONTROLLED binding/empty projection: no actual775 DB or native-row claim."""
+    from project_mai_tai.services import atr_firstbar_routes
+    from project_mai_tai.atr_simulation import sim2_display
     calls, render_threads, captures = [], [], []
     class Recorder:
         def read(self, source, start, end, *, limit):
@@ -328,11 +339,20 @@ def test_actual_queryless_cp_mount_selects_all_default_scopes_and_renders_offloo
     binding = AggregateReadBinding(ui.AGGREGATE_SOURCE, "0"*64, b"{}", "1"*64)
     port = atr_aggregate_routes.AggregateSimulationReadPort(Recorder(), binding)
     monkeypatch.setattr(atr_aggregate_routes, "aggregate_entry_display_view", lambda *args, **kwargs: aggregate_view())
-    actual_render = ui.render_page
-    def observed(*args, **kwargs):
-        render_threads.append(get_ident())
-        return actual_render(*args, **kwargs)
-    monkeypatch.setattr(ui, "render_page", observed)
+    def observe(target, name):
+        actual = getattr(target, name)
+        def observed(*args, **kwargs):
+            render_threads.append(get_ident())
+            return actual(*args, **kwargs)
+        monkeypatch.setattr(target, name, observed)
+    observe(atr_firstbar_routes, "render_firstbar_page")
+    observe(atr_aggregate_routes, "render_aggregate_page")
+    observe(atr_simulation_legacy_routes, "_project_or_unknown")
+    sim2_reads = []
+    def sim2_read(factory, day):
+        sim2_reads.append((day, get_ident()))
+        return None  # CONTROLLED unavailable day, not historical zero trades.
+    monkeypatch.setattr(sim2_display, "load_day", sim2_read)
     template = cp._render_bot_detail_page
     def capture(data, strategy, **kwargs):
         captures.append((deepcopy(data), strategy, kwargs["firstbar_simulation_html"]))
@@ -352,8 +372,20 @@ def test_actual_queryless_cp_mount_selects_all_default_scopes_and_renders_offloo
             loop_thread = get_ident()
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://controlled") as client:
                 response = await client.get("/bot/1m-schwab-v2")
+                assert calls == [] and "No simulation for 2026-10-23 yet" in response.text
+                for path, source, day, days in (
+                    ("/atr-aggregate", ui.AGGREGATE_SOURCE, "2026-09-22", 32),
+                    ("/atr-firstbar", ui.FIRST_SOURCE, "2026-09-22", 32),
+                    ("/atr-simulation", ui.LEGACY_SOURCE, "2026-10-12", 1),
+                    ("/atr-simulation", ui.LEGACY_SOURCE, "2026-10-21", 1),
+                ):
+                    selected = await client.get(path, params={"source_id": source,
+                        "day": day, "days": days})
+                    assert selected.status_code == 200
             assert response.status_code == 200
-            assert all(thread != loop_thread for thread in render_threads)
+            assert render_threads and all(thread != loop_thread for thread in render_threads)
+            assert len(sim2_reads) == 1 and sim2_reads[0][0] == "2026-10-23"
+            assert sim2_reads[0][1] != loop_thread
             assert all(call[-1] != loop_thread for call in calls)
             return response
         response = asyncio.run(request())

@@ -9,7 +9,6 @@ from project_mai_tai.broker_adapters import schwab as schwab_module
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.settings import Settings
-from tests.unit.test_orbroute1_oms_chain import setup as chain_setup
 from tests.unit import test_orbroute1_oms_chain as chain
 from tests.unit import test_l8_orb_control_envelope as envelope
 from tests.unit import test_orbroute1_manual_net_092 as manual
@@ -17,6 +16,9 @@ from tests.unit import test_orbroute1_session_admission as sessions
 from tests.unit import test_orbpurple1_atr_entry as purple
 from tests.unit import test_orb_schwab_order_route as route
 from tests.unit import test_momcancel1_ack as cancel_ack
+
+
+chain_setup = chain.setup
 
 
 def test_existing_native_control_assertions_without_fixture_amendment(chain_setup, monkeypatch):
@@ -76,7 +78,8 @@ async def test_new_orb_selection_cannot_drop_fence_to_use_legacy_contract(monkey
         calls.append((args, kwargs))
         raise AssertionError("unfenced marked/new LIMIT request reached transport")
     monkeypatch.setattr(adapter, "_authorized_request_json", forbidden)
-    metadata = dict(bracket="true", bracket_entry_type=kind, stop_price="1.20", limit_price="1.21",
+    metadata = dict(orb_intended_break_level="1.20",
+                    bracket="true", bracket_entry_type=kind, stop_price="1.20", limit_price="1.21",
                     bracket_target_price="1.26", bracket_stop_price="1.10")
     if policy is not None:
         metadata["orb_pastlevel_policy"] = policy

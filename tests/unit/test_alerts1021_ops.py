@@ -86,12 +86,12 @@ def metric_lines(pair="FAIL", fill="UNEXERCISED", duplicate="PASS", refused="PAS
             f"metric=refused_exits verdict={refused} post_exit_episodes=7"]
 
 
-def test_actual_d6_unexercised_shape_is_status_only():
+def test_d6_pair_failure_is_actionable_even_with_unexercised_fill():
     lines = metric_lines()
     valid, _ = d6._denominator_contract(lines)
     assert valid
-    assert not d6.actionable_nonpass("UNEXERCISED", lines, valid)
-    assert not d6.actionable_nonpass("FAIL", lines, valid)
+    assert d6.actionable_nonpass("UNEXERCISED", lines, valid)
+    assert d6.actionable_nonpass("FAIL", lines, valid)
 
 
 @pytest.mark.parametrize("metric", ["fill", "duplicate", "refused"])
@@ -177,7 +177,9 @@ def test_d6_unexercised_is_reevaluated_without_notification_or_repeated_summary(
 
     def run_report(**_kwargs):
         calls.append(1)
-        return SimpleNamespace(verdict="UNEXERCISED", exit_code=3, lines=metric_lines())
+        lines = metric_lines(pair="UNEXERCISED")
+        lines[0] = "metric=paired_legs verdict=UNEXERCISED paired_legs=0 usable=0 of 0"
+        return SimpleNamespace(verdict="UNEXERCISED", exit_code=3, lines=lines)
 
     for _ in range(2):
         result = d6.run_once(now=now, acceptance=SimpleNamespace(run_report=run_report),
@@ -189,7 +191,8 @@ def test_d6_unexercised_is_reevaluated_without_notification_or_repeated_summary(
     assert "verdict=UNEXERCISED" in status and "[D6-OUTCOME-ACCEPTANCE-SUCCESS]" not in status
 
     failed = SimpleNamespace(run_report=lambda **_kwargs: SimpleNamespace(
-        verdict="UNEXERCISED", exit_code=3, lines=metric_lines(duplicate="FAIL")))
+        verdict="UNEXERCISED", exit_code=3,
+        lines=metric_lines(pair="UNEXERCISED", duplicate="FAIL")))
     d6.run_once(now=now, acceptance=failed, out_dir=tmp_path,
                 notify=lambda *args: notices.append(args) or True)
     assert len(notices) == 1

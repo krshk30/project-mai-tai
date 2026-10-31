@@ -105,13 +105,20 @@ async def test_actual_recovery_clears_clock_and_new_mismatch_starts_new_grace(ow
 @pytest.mark.asyncio
 async def test_non_worx_identity_and_invalid_quantity_errors_remain_error(owned_logs, case):
     actor, ports, episode, position, clock = mismatch_actor()
-    if case == "symbol": position.symbol = "FOREIGN"
-    elif case == "episode": position.episode_id = "foreign"
-    elif case == "strategy": position.strategy = "orb_schwab"
-    elif case == "webull": ports.observe.return_value = replace(ports.observe.return_value, owner_provider="webull")
-    elif case == "account": ports.diagnostic_account = lambda: "live:other"
-    elif case == "nonfinite": position.quantity = Decimal("NaN")
-    elif case == "overfill": ports.observe.return_value = replace(ports.observe.return_value, exited=Decimal(4))
+    if case == "symbol":
+        position.symbol = "FOREIGN"
+    elif case == "episode":
+        position.episode_id = "foreign"
+    elif case == "strategy":
+        position.strategy = "orb_schwab"
+    elif case == "webull":
+        ports.observe.return_value = replace(ports.observe.return_value, owner_provider="webull")
+    elif case == "account":
+        ports.diagnostic_account = lambda: "live:other"
+    elif case == "nonfinite":
+        position.quantity = Decimal("NaN")
+    elif case == "overfill":
+        ports.observe.return_value = replace(ports.observe.return_value, exited=Decimal(4))
     await actor._service_owned(episode.episode_id)
     assert log_records(owned_logs)[-1].levelno == logging.ERROR
     assert episode.episode_id not in actor._quantity_mismatch_since

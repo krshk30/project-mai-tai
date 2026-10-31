@@ -17,7 +17,9 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
 from tests.unit.test_brokerdecides1_entry_hooks import PrivateRedis
 from tests.unit.test_brokerdecides1_reconstructed_first import cap_case
 from tests.unit.test_brokerdecides1_unused_owner_sell import case as owner_case
-from tests.unit.test_brokerdecides1_prewire_protocol import case as journal_case
+from tests.unit.test_brokerdecides1_prewire_protocol import case as _journal_case
+
+journal_case = _journal_case
 
 
 class ForbiddenMemory:

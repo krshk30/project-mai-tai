@@ -6,7 +6,7 @@ from tools import l12_schema_rehearsal_inputs as inputs
 from tools import l12_real_alembic_child as child
 from tests.unit.test_l12_schema_rehearsal_inputs import SQL, review as framed_review
 from tests.unit.test_l12_schema_rehearsal_outcomes import state, parent
-from tests.unit.test_l12_main_nonce_target import capability, owned_files
+from tests.unit.test_l12_main_nonce_target import capability as capability, owned_files as owned_files
 
 README = b"CONTROLLED_C1_DELIVERY_NOT_ACTUAL_AUTHORITY"
 REVISION = b"20261015_bot_control\n"

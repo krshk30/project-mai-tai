@@ -1,7 +1,7 @@
 """Source-authored controls; reviewer trade values are not native replay receipts."""
 
 from copy import deepcopy
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock

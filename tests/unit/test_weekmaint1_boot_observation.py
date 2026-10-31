@@ -8,7 +8,7 @@ import pytest
 
 from ops.weekmaint import backend, policy
 from tests.unit.test_weekmaint1_policy import ACCOUNTS, NOW
-from tests.unit.test_weekmaint1_review_fixes import BOOT, INVOCATION, OP, make_backend  # noqa: F401
+from tests.unit.test_weekmaint1_review_fixes import BOOT, INVOCATION, OP, make_backend as make_backend  # noqa: F401
 
 OMS = "project-mai-tai-oms.service"
 

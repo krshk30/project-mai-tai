@@ -1,0 +1,68 @@
+OCT28-1108-NOCHASELOG1-NEXT-BUILD — C12023 overnight SOURCE rebase
+Original Galileo sole source; Main integration/runtime/package/install owner.
+
+EXACT NEW BASE / OWNERSHIP
+07ebcbaf12e76522e35e2809f0caaf43eb9b68f4, actual installed Group1 operand.
+Own root /private/tmp/oct28-galileo-nochase-07eb-source-20261028
+Branch codex/oct28-nochase-07eb-portable.
+Original /private/tmp/oct28-galileo-nochase-log-source-20261028 remains clean
+83bca06c2a2088e79ec84b1f28e0435f2c6f7794, preserved with earlier raw receipts.
+ATRSIM output874451652546a1b5670e10eeb001f85892832ad0 frozen independently;
+no output helper or any Main/Gibbs paths changed during this rebase.
+
+SOURCE PROOF / NO NEW TRADING BEHAVIOR
+Git32..07eb diff of strategy_core/schwab_1m_v2.py is EMPTY.
+OLD07eb core SHA abf79c2b2fd8a0f9e9f946d6b461f44e924cfdc4d38e92ee4a08d1c7400414bc
+is exactly the OLD32 source already committed in old32_core.py.gz.b64.
+Therefore preserve OLD32 literal fixture/name/provenance without renaming an
+old receipt or pretending a new runtime. Existing CI tests load exact full OLD
+core bytes independent of Git history/private roots/target feature-OFF.
+
+Copied CURRENT NET19-file closure from83bca, NOT the historical commit sequence:
+core52added/0deleted +helper +portable supplied-state replay +four test modules
++committed fixtures/provenance +historical source handoffs. All19 file contents
+are exact83bca blobs. No canceled flag/classifier/threshold implementation revived.
+No ops/nochaselog1_recovery.py or classifier tests added. Earlier withdrawn/
+severity handoffs are history only, not active authority. No Settings newfield.
+
+PROPOSED CORE SHA
+6445eeeec902659200c2a8c0899515daf5feb5099cfeeb14ba0a3a8d42aceb42
+Helper SHA57522cb1923be84f7f526487c6b24a18a906b3a9b8ec946e38e5c77a988389f8.
+Identical to previously reviewed source. Hooks use already-computed refusal;
+no extra guard invocation/clock/provider. New INFO once per observed BUY flip,
+old ERROR/marker severities/decisions/owner/persistence/counters remain unchanged.
+Dynamic annotation lifetime follows SymbolState, not a broker leg. Missing
+BUY identity does NOT invent one; malformed/logging failure affects only the
+new annotation. No stale native/flat or trading authorization claim.
+
+ACTUAL SANITIZED POM/SPRC FIXTURE ALREADY CLOSED BEFORE THIS REBASE
+The C11313 requirement was actually delivered/committed in83bca at13:20:45ET;
+old C11244 handoff's missing-input paragraph is historical/superseded by that
+actual-fixture handoff, not a new current blocker. Do NOT regenerate/re-query.
+tests/fixtures/nochaselog1/pom_sprc_actual.tsv
+SHA3839690d7ab1610ac8e19b0185ce3851b7ddbbf1ee7fbf1a88c5692cc52577e9
+2984bytes/57rows, exact timestamp/symbol/tag ONLY. POM12 admissions+12country
+refusals+1ARM;SPRC16admissions+16countryrefusals. No native/account/token/raw
+payload, no synthetic rows/sorting/retiming. 29th raw text match was a heading,
+not a29th admission. Committed provenance maps every fixture row to source line.
+Original private71182byte217line raw source hash retained in provenance:
+17efb9342d5bc0c3d6ab7a9159b6c8f7e9ee9ee5adffb7afd21b78ee4ccefe0b.
+Tests use ONLY committed sanitized/public source fixtures, never the private log.
+
+CONTROL / RECEIPT SCOPE
+Same62 source selectors unchanged: test_postflip_nochase_log16 +hooks25 +
+lifecycle19 +actual_fixture2. Prior Main60PASS1.56s and actual new2PASS0.48s
+remain original-source receipts, not new07eb runtime claims. No new mirroring
+test or repeated actor authored merely to count the same assertion again.
+All62 source bytes exactly preserved; this author ran NO tests/imports/compile/
+AST/model/parser/DB/SSH/provider/capture. Git/static source/hash operations only.
+Main may review source-byte carry, then choose explicit final related62/ALL-ON
+combo/full/newboot claims as C1 requires; no author execution or automatic GO.
+
+OPEN / QUEUED
+Full original POM/SPRC historical callback/native cause remains UNKNOWN/DEFERRED;
+minimal real marker fixture is not that causal proof. No severity downgrade or
+PHONE implementation. SMARTL3/scanner writer SHADOW/logledger lane next after
+this source handoff, preserving Main sharedcore/Settings/hook integration.
+Overnight package all-reviewed/ALL-ON+boot+complete watch/guard/preopen by02:30ET
+or nextclose; source rebase alone is not package/install completion.

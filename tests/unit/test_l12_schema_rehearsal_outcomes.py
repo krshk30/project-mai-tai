@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.unit.test_l12_main_nonce_target import capability, owned_files
+from tests.unit.test_l12_main_nonce_target import capability as capability, owned_files as owned_files
 from tests.unit.test_l12_schema_rehearsal_inputs import SQL, review
 from tools import l12_production_schema_rehearsal as parent
 from tools.l12_real_alembic_child import SourceReview

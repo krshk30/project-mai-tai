@@ -27,7 +27,7 @@ from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.positions_read_receipt import record_receipts
 from project_mai_tai.settings import Settings
 from tests.unit.test_control_plane import build_test_session_factory
-from tests.unit.test_webull_adapter import _adapter as webull_adapter, _FakeClient, _ServerException, fake_sdk
+from tests.unit.test_webull_adapter import _adapter as webull_adapter, _FakeClient, _ServerException, fake_sdk as fake_sdk
 
 
 @pytest.fixture(autouse=True)

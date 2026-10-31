@@ -1,0 +1,143 @@
+OCT28-211211-SCANNER-WRITER-ON-INTEGRATION — Original Galileo SOURCE checkpoint
+
+OWNERSHIP / EXACT CURRENT BASE
+Own /private/tmp/oct28-galileo-scanner-strategy-parity-source-20261028
+Branch codex/oct28-scanner-strategy-parity
+Parent61a2607857fb502d2a4b436f12c4353bcb3af58b from Main
+/private/tmp/oct28-main-overnight-next-package-07eb-source-20261028.
+Only new focused test +literal public OLD service fixture +this provenance added.
+No APP/Settings/hooks/catalog/shared contract edits. Original8b/874/666/71aa
+roots retained frozen. No author tests/imports/AST/compile/DB/SQL/SSH/provider/
+capture/runtime/push/sharedwrites. Main alone reviews/executes/integrates.
+
+CONTROLLING C1 RULING WHOLE READ
+LATEST21:12:11 exact04ET policy accepted; defaultFalse / installON rule9e.
+MUST-NOT-BREAK real strategy_engine scanner outputs/state/watchlist/confirmfade
+identical except capture session keys. Hook in-memory/no new DB read per event.
+Actual post-install04–04:15 scanner warmup/watchlist/squeeze/error observation
+belongs C1; this fixture is NOT that actual data or an install/boot proof.
+SHADOW/noPHONE/no25-sender retirement remains mandatory elsewhere.
+
+C12135:47 amendment: SCANNER-ONLY portable control closure. This new test has
+NO imports from ops.smartalert1.system, L3 frames or the mixed71aa32-control
+module. If L4/review+combo miss cutoff, L2/L3/L4+held stops_armed all defer;
+scanner writer ON is independent. Main owns final subset filtering. Do not
+ship dormant L3 modules merely because this proposed base61a contains them.
+The ONLY extra fixture dependency is existing scanner_capture_07eb.py.txt SHA
+204a... noted below; include it explicitly in the scanner-only final source.
+Ordinary existing07eb test helper make_snapshot_payload is reused; no private
+fixture path, source Git subprocess, mixed SMART case or phone dependency.
+
+LITERAL PUBLIC OLD07eb SERVICE
+strategy_engine_app_07eb.py.txt is ENTIRE public source file from Git
+07ebcbaf12e76522e35e2809f0caaf43eb9b68f4:
+src/project_mai_tai/services/strategy_engine_app.py
+11051lines/490187bytes,
+SHA73670c64058567f0097e92b2f0880e39f66e5f8eb750a70ac8c512d46f5de330.
+No slicing/reimplementation/target flag-OFF baseline/private path/git process
+inside tests. Source fixture filename intentionally .txt so not collected as
+an APP/test module. Main execution checks hash then loads full literal module
+under a distinct namespace. Uses current common dependencies, not an invented
+whole OLD deployment/native account snapshot.
+Old service's capture dependency is explicitly bound to the already committed
+scanner_capture_07eb.py.txt ENTIRE OLD07eb helper, not current target flagOFF:
+SHA204a5725100c04b4d5bf99cd11c8ad34aaf14db805f3110c156a39682f95721b.
+Current07eb..61a strategy_engine_app diff is EXACTLY the two-line capture_events
+session_day_enabled=getattr(settings,scanner_confirmed_capture_session_day_enabled,False).
+Main's Settings addition/defaultFalse is separately owned/reviewed, not edited.
+
+NEW tests/unit/test_scanner_session_strategy_parity.py —11 EXPANSIONS UNRUN
+8 OLDliteral/OFF/ON cases: PM09:02, RTH13:02, AH16:02,
+and midnight00:02; scanner feed-retention False/True each. Clocks use ET and
+exact caller supplied values. Names are CONTROLLED, not retained incident rows.
+2 adverse real-loop cases: unknown confirm clock and capture DB error followed
+by next-iteration recovery, both on same nonempty scanner fixture.
+1 complete-state serializer adverse proof (private ownerID, exact Decimal last
+digit and deque order remain observable; no normalization/filter).
+
+ACTUAL CALLBACK / NONEMPTY COVERAGE
+Real StrategyEngineState constructor (session_factory=None, no ownership/
+readability/permission overlay), actual public seed/restore and history-prefill
+methods. Then ONLY state.session_factory is bound to capture-only I/O port.
+Bots retain constructor storeNone; capture port cannot answer DB restoration
+or entry/native read. No native-flat/forcedRUN/guard/membership method patch.
+Private tmp cwd isolates the real constructor's ordinary relative history reads;
+no host history or broker/native source is adopted. Test input is CONTROLLED
+preimage; no missing actual account/RAM evidence represented as known.
+
+Real process_snapshot_batch runs real alert engine, confirm tracking, price
+updates, prune/fade, ranking, bot handoff/watchlists and retention. No stub of
+check_alerts/process_alerts/prune/guard logic. History input gives FRESH a real
+VOLUME_SPIKE+squeeze and PATH_C confirmation; CARRY stays stable (no new squeeze
+rewriting its carried timestamp); FADE really drops below original30% rule.
+Assertions require FRESH actual newly_confirmed, CARRY watched, FADE removed,
+nonempty watchlist and real captured FADE. Non-retention cases additionally
+require a real FRESH watchlist ADD. Not an empty-only or permission-stub PASS.
+
+COMPLETE COMPARISON / PRECISE EXCEPTIONS
+Each frame retains entire process output +serialized output bytes, all actual
+watchlists/add-remove sets, full confirmed rows and full reachable instance
+state bytes. State walk includes private fields/IDs, exact Decimal, float bits,
+all dict insertion order/deque maxlen/order, arrays, config and callable closures
+with alias/cycle references. Unknown state types FAIL explicitly, never skipped.
+Exclude ONLY the intended one Settings flag and separately audited external
+clock/capture ports. OLD import namespace/filename/addresses are not economic
+state; actual code-byte/name/constant identity and source hash remain checked.
+No price/volume/time/segment/owner key renaming, rounding or broad filtering.
+
+External business clocks are fixed identically OLD/OFF/ON through existing
+now_provider/now_eastern/utcnow names plus source shared helpers. Actual provider
+call counts are compared. This is deterministic callback/control proof, NOT a
+physical loop-latency benchmark or a new historical clock model.
+
+CAPTURE I/O CONTRACT
+Port accepts ONLY original COUNT/LATEST/INSERT statement strings; unexpected SQL
+recorded and test fails even if APP catches it. No real session/DB/connectivity.
+For proven clocks OLD vs OFF all SQL params/read/write/open/commit cardinality
+identical. ON retains every non-key parameter and statement sequence/cardinality;
+only trade_date/event_at key interpretation differs before04. Ordinary same-day
+keys remain equal. Unknown clock omits only unproved CARRY CONFIRM; FRESH keeps
+the transaction nonempty. Loop state/output/opens/commits/clock counts stay equal,
+capture read count cannot increase. DB error produces no claimed commit and
+the real loop continues/retries naturally on the next supplied iteration.
+
+LIMITS / NEXT ACTION
+No executed/collected tests claimed; proposed11 remains UNRUN until Main claim.
+No new IO, physical performance, actual next-04 scanner output, replay, provider,
+SQL or overnight ALL-ON/boot qualification from source alone. Main inspect exact
+three-path diff/hash fixture, bind memory/source-only test fence and claim11.
+If an unsupported state object occurs, preserve failure and add exact source-
+specific representation for review, never shrink the state comparison.
+
+FIRST11 ACTUAL MAIN RECEIPT / EXACT TIME-TYPE SUCCESSOR
+Main subset8c23 had exact9d three new files. First11 physically closed21:51:26:
+1PASS10FAIL2.40s, fence0/all3471pins unchanged. All10 failures preceded NEW
+comparison: actual OLD Settings contains datetime.time, which the full-state
+walker explicitly refused. Original9d/source/raw first11 remain preserved.
+This successor adds ONLY datetime.time representation: exact ISO text (including
+microseconds/offset), fold and recursively represented timezone identity.
+No fields/types omitted, no rounding/defaultstr/repr fallback, no APP/assertion/
+envelope change. No author tests/imports/runtime. Main onlyfailed10 after review;
+original serializer-adverse1PASS remains retained/not selected again.
+
+SECOND ACTUAL MAIN FAILURE / CONTROLLED PREFIX CORRECTION
+Main c9dd842880dc2debfca35f63939050dec720d451 failed only10 at
+21:54:54..56: OLD run_world's unchanged first-frame FRESH newly_confirmed
+assertion. Exact time representation passed; no NEW comparison was reached.
+Preserve40be and both actual failure generations; original adverse1PASS stays.
+
+Static cause: Settings market_data_snapshot_interval_seconds is5 (settings.py
+103), and literal OLD service4062..4065 passes that configured interval to
+MomentumAlertEngine. The standalone engine default30 does not apply here.
+momentum_alerts.py42..48 requires60/120 history entries for5/10-minute windows.
+The former20-entry controlled prefix plus first record_snapshot yields21:
+neither alert window is eligible. No squeeze reaches the real confirmed scanner.
+
+This test-only successor supplies max(1,600//actual_configured_interval)
+controlled history entries using unchanged public prefill_history, identically
+OLD/OFF/ON. Existing values remain FRESH2.0/100000 ->3.2/1000000; CARRY unchanged;
+FADE3.2->2.1. No threshold, cadence, current snapshot, seed confirmation, clock,
+APP, private warmup state, scanner/permission method or assertion changes.
+The prefix is CONTROLLED alert input, not historical or native evidence.
+All complete-state/watchlist/add/remove/FRESH/FADE/capture/fault comparisons stay.
+Main review and only failed10 execution required; no author runtime performed.

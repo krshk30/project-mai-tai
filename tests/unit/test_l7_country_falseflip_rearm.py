@@ -245,7 +245,8 @@ async def test_second_false_flip_country_keeps_skip_then_atomic_recross(monkeypa
         assert len(calls) == 1  # Release only; the owed skip blocks the rearm.
         assert not case.state.resting_active and not case.routes and not case.identities
         trigger = case.strategy._resting_trigger_for_line(case.state.atr_trail)
-        quote = lambda ask: Quote(case.state.symbol, ask-.01, ask, ask, case.clock[0], case.clock[0])
+        def quote(ask):
+            return Quote(case.state.symbol, ask - 0.01, ask, ask, case.clock[0], case.clock[0])
         assert case.strategy.on_quote(case.state.symbol, quote(trigger)) is None
         await case.bot._falseflip_poll()  # The real native budget CAS consumes exactly one skip.
         assert case.strategy._falseflip_budget(case.state).skipped

@@ -12,7 +12,7 @@ from project_mai_tai.db.models import (
     BrokerDecidesDispatchRetirement as Retirement, BrokerOrder, DashboardSnapshot, Fill, OmsManagedPosition,
 )
 from tests.unit.test_brokerdecides1_install_boot_ruling import installed_case
-from tests.unit.test_brokerdecides1_local_census import ACCOUNTS, census
+from tests.unit.test_brokerdecides1_local_census import ACCOUNTS, census as census
 from tests.unit.test_brokerdecides1_retirement import seal_one
 
 

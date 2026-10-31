@@ -289,6 +289,7 @@ async def test_quote_callback_emits_both_legs_without_waiting_for_bar(monkeypatc
     )
     bot = SimpleNamespace(
         strategy=strategy, _last_tick_at={}, _last_quote_at_ms={},
+        _line_sized_trade_policy_enabled=lambda: False,
         _last_quote_by_symbol={}, _gap_hold_enabled=False,
         _observe_halt_from_quote=lambda *_: None,
         _maybe_emit=AsyncMock(), _emit_webull_fanout_legs=AsyncMock(),

@@ -1,6 +1,7 @@
 """Session-scoped observation membership, separate from permission to buy."""
 from dataclasses import dataclass, field
 from typing import Mapping
+from project_mai_tai.line_entry_receipt import predicate as _entry_predicate
 
 
 @dataclass
@@ -41,7 +42,8 @@ class KeepWatchSession:
             self.awaiting_sell_since_ms.pop(symbol, None)
 
     def allows_entry(self, symbol: str) -> bool:
-        return symbol in self.tradeable and symbol not in self.awaiting_sell
+        return (_entry_predicate(symbol in self.tradeable, "not_tradeable")
+                and _entry_predicate(symbol not in self.awaiting_sell, "awaiting_sell"))
 
     def retained(self, anchor_ms: int) -> set[str]:
         return set(self.first_seen_ms) if anchor_ms == self.anchor_ms else set()

@@ -2,7 +2,7 @@
 
 import pytest
 
-from tests.unit.test_l12_c11810_carried_windows import observe, reason, returns, tracker
+from tests.unit.test_l12_c11810_carried_windows import observe, returns, tracker
 from tools.l12_recorded_boot_timeline import SOURCE_ANCHOR_MS
 
 

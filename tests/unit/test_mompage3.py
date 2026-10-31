@@ -81,8 +81,12 @@ def test_live_note_plain_words_actual_flag_and_no_vwap(monkeypatch, route, enabl
         return build_app(*args, **kwargs)
 
     monkeypatch.setattr(cp, "build_app", configured_app)
-    monkeypatch.setattr(cp, '_read_momentum_page_owner', AsyncMock(return_value={
-        'status': 'READABLE', 'entry_admission_enabled': enabled, 'episodes': []}))
+    import time
+
+    # The page refuses an owner reading older than 3 s (UNKNOWN), so stamp it fresh per call.
+    monkeypatch.setattr(cp, '_read_momentum_page_owner', AsyncMock(side_effect=lambda *a, **k: {
+        'status': 'READABLE', 'entry_admission_enabled': enabled, 'episodes': [],
+        'observed_ns': time.time_ns()}))
     html, _ = page(monkeypatch, route)
     state = "LIVE" if enabled else "OFF"
     assert f'<strong>Status:</strong> {state}</div>' in html

@@ -11,9 +11,9 @@ from sqlalchemy import select
 from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent
 from project_mai_tai.momentum_live.admission import Refusal
 from project_mai_tai.momentum_live.entry_wire import entry_wire_check, entry_wire_guard
-from tests.unit.test_mombuffer1_incap_reprice import priced  # noqa: F401
+from tests.unit.test_mombuffer1_incap_reprice import priced as priced  # noqa: F401
 from tests.unit.test_momstuck2_prewire_refusal import durable, env  # noqa: F401
-from tests.unit.test_webull_adapter import fake_sdk  # noqa: F401
+from tests.unit.test_webull_adapter import fake_sdk as fake_sdk  # noqa: F401
 
 
 def permit(h, request):

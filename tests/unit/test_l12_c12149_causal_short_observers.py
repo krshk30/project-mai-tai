@@ -2,7 +2,6 @@
 
 import asyncio
 from contextvars import ContextVar
-from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 

@@ -1,5 +1,5 @@
 """Session-scoped OMS controls; retained C1 row replay, controlled missing operands."""
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 import json
 import os

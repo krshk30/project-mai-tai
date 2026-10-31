@@ -217,8 +217,8 @@ def reconstruct_study_cases(
         if (symbol, day) not in prepared:
             trades = parse_study_tape(packet, execution_policy)
             bars, uncertain_bars = _bars(trades)
-            oracle_bars = [atr_oracle.Bar(start // 1_000_000, float(o), float(h), float(l), float(c), volume)
-                           for start, o, h, l, c, volume in bars]
+            oracle_bars = [atr_oracle.Bar(start // 1_000_000, float(o), float(h), float(low), float(c), volume)
+                           for start, o, h, low, c, volume in bars]
             rows = atr_oracle.compute_atr_trail(oracle_bars, seed="sma5", period=5, factor=3.5)
             prepared[symbol, day] = trades, bars, rows, uncertain_bars
         trades, bars, rows, uncertain_bars = prepared[symbol, day]

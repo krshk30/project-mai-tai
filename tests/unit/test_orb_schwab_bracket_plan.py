@@ -73,6 +73,8 @@ async def test_schwab_adapter_never_submits_orb_as_a_naked_single_leg() -> None:
         order_type="stop_limit",
         metadata=build_orb_schwab_bracket_metadata(Decimal("3.42")),
     )
+    # The real ORB producer carries the raw entry anchor for the PRICE1 gate.
+    request.metadata["orb_intended_break_level"] = "3.42"
     adapter = SchwabBrokerAdapter(
         Settings(oms_adapter="schwab", schwab_access_token="fake", schwab_account_hash="fake")
     )

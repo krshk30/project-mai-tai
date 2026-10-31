@@ -7,7 +7,7 @@ from threading import Barrier
 from project_mai_tai.brokerdecides1_prewire import PublicationBoundary
 from project_mai_tai.brokerdecides1_prewire_authority import SIDECAR, write_fresh_attempt
 from tests.unit.test_brokerdecides1_entry_hooks import ACCOUNTS
-from tests.unit.test_brokerdecides1_prewire_protocol import case
+from tests.unit.test_brokerdecides1_prewire_protocol import case as case
 
 
 def test_simultaneous_boundaries_claim_one_fresh_capability_once(case):
