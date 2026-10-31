@@ -9116,3 +9116,12 @@ Claude E86 and the preceding neutral-rebase history remain unchanged.
   - ATR exit gap since 09-01: 470 fills; PM worst −8.2%; RTH 9 past −9%.
   - Broker switch parked.
 - **Operator rules:** bug fixes need no approval; the scan job definition was extended with price/speed gaps; finish all + close-out tonight.
+
+## 2026-10-30 / 10-31 — Webull exit regression proven and fixed; four installs; Schwab re-auth
+
+- 10-30 06:23 ET 30c63e0b (WBEXIT3 + diagnostics + L12 waiter expiry) installed pre-market (operator order); later 0deff5f7 sim + 78bad800 health.
+- 10-30 trading: TNMG/ONEG ATR wins (+15.18/+15.48) via native Webull targets; every software Webull exit refused (TNMG 09:35, ONEG 13:31 sell flip, CHOW 15:34 confirmation + 16:00 EOD). CHOW blocked after PRICE_AGGRESSIVE refusals (WBPA2/WBPA3 built, reviewed). ONEG 10:52 "miss" = live 3-bar rule; sim fixed.
+- Root cause (read-only replay of CHOW's real Webull census through installed code): WBEXIT2 demanded literal `WORKING`; Webull sends `SUBMITTED`. WBEXIT2 went live 10-28 evening.
+- 10-30 18:42 ET install 8159cd107 with WBEXIT2/WBEXIT3 OFF (operator rollback ruling), retired four owners, three entry markers and the CHOW phantom row (OMS stopped).
+- 10-31 10:46 ET operator re-authed Schwab (expires 11-07 09:46 ET). 10:48 ET install 6ddb3e6b0 (status fix + EOD step log) with both switches ON (operator order). Clean: NR0, census complete, 0 errors, preopen VERIFY OK.
+- Lesson recorded: when a live check refuses a real broker order, replay the broker's real reply through the installed code first.
