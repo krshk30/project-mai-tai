@@ -1,55 +1,42 @@
-# Session Handoff — CURRENT STATE (read this first)
+# Session Handoff - October 31, 2026 (for Monday November 2)
 
-> **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
-> [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
-> The 10-16 state (Group D install) is in git history of this file (main 54549912).
+Written 2026-10-31 ~11:00 ET by claude-1. Supersedes the 10-27 page (PR #1169). Production facts read on the box 10-31 10:49 ET.
 
-## PRODUCTION NOW — as of Mon 2026-10-19 20:4x ET (claude-1 close-out read of the box)
+## Production NOW
 
-| Item | State now | Evidence (as-of) |
-|---|---|---|
-| Box checkout | **`b79ef160`** = installed `9df73a18` + Track A only: **Q** (O-1019-15 Webull unreadable-ACK never blocks the software stop/exit; list-proof exits; C6 original-pair proof; kill-switch inventory) + **O17** (control-plane survives one malformed DB row) | `git rev-parse` 20:0x; tree clean |
-| Installed tonight | 19:58 ET Track A, operator-approved ("go ahead with the install") **despite node-8 ORB rate absolute FAIL**, which fails identically on installed 9df (O-1019-25) | install receipts `analysis/` |
-| Services | all 8 restarted 19:58 ET; OMS restarted again 20:3x ET (after O-1019-26). Momentum guard + paper inactive since the 18:10 scheduled close → **Tue 03:40 ET timer** | `systemctl` 20:3x |
-| Guard | manifest `gateway_identity` re-pinned to market-data pid 408893 / start 23:58:07Z (backup `install-20261019-trackA/manifest.json.before-repin`); `daily_guard.py --dry-run-prestart` **PASS** 00:35Z; no safety-stop file | 20:35 |
-| Live momentum | boots clean (0 `MOMLIVE1-BOOT-REFUSED`) after O-1019-26 guarded settlement of WORX episode f723 (claimed → terminal_no_fill; codex main+Q+R AGREE 7fa2da28) | 20:3x |
-| Records | YMAT #2 external close booked (operator manual sell 165 @ 1.78 15:53 ET; guarded repair 2684e9c0, dry run then commit); 4 YMAT incidents closed | 19:38 |
-| Pages | ATR page closed=3, day **+$24.33** = broker; momentum live −$19.34; PAGES CLEAN | 20:0x |
-| Positions / orders | flat both brokers; 0 working orders; 0 open managed rows | 20:3x |
-| Backups | DB dump `install-20261019-trackA/project_mai_tai.dump` sha256 3caf4487…; tree 9df tgz f28dd562… | 19:26 |
+- Box checkout: `6ddb3e6b0dc8295ba35419cee817d86ba0f97fba` (installed Sat 10-31 10:48 ET, operator-ordered).
+- Services (all active, NRestarts 0): oms 3759926, schwab-1m-v2 3759942, strategy 3759958, control 3759969, orb-schwab 3759978. market-data / reconciler / capture untouched.
+- Env (/proc verified): `MAI_TAI_STRATEGY_SCHWAB_1M_V2_WBEXIT2_ENABLED=true`, `MAI_TAI_OMS_WEBULL_EXIT3_ENABLED=true`. Backups: `env-backup-pre-install8159-20261030.env`, `env-backup-pre-install6ddb-20261031.env`.
+- Preopen pinned to 6ddb (`/home/trader/after-hours/2026-10-31/pkg-6ddb3e6b0`, expect-flag EXIT3=true); `daily.verify_runtime()` OK.
+- Broker census complete on both accounts; flat; zero open managed rows; zero open WBEXIT2/WBEXIT3 owners.
+- Schwab refresh token: re-authed 10-31 10:46 ET, expires **Sat 11-07 09:46 ET** (re-auth by Fri 11-06).
 
-## TOMORROW (Tue 10-20) — first checks, in order
+## What is in 6ddb (chain since 10-30 06:23 install of 30c63e0b)
 
-| Time ET | Check | Pass looks like |
-|---|---|---|
-| 03:47 | momentum guard + paper start | both active, `live_handoff=True`, no safety-stop file |
-| 04:05 | v2 session roll: prior-session `v2_removed_wait` rows (WORX ec6d28d9 retry_exhausted, EXYN bccca82e) | cleared / not gating; the scan's "WAITING BUY PER WATCHED STOCK" shows no `<<< NO WAITING BUY` from a 10-19 row |
-| 06:20 | preopen | known RED until O-1019-2 re-baseline lands (not a trading block) |
-| 07:00→ | full scan every 30 min + momentum watch every 10 min | first ATR Webull fill: pair attaches or Q list-proof software exit; no `WBATTACH1-BLOCKED` without an "Exit waiting for broker proof" incident |
+| Commit | Change |
+|---|---|
+| 0deff5f7 | ATR sim (FADE-gap cancel, causal print guard, H2 inputs, PM/RTH split) |
+| 78bad800 | health: no page for boot hold with empty watchlist |
+| 24d80deb | `[V2-LINE-RESTORE]` adds `first_false_predicate` + `branch` (logging) |
+| 86a22355 | WBEXIT2 durable-child resolve (stale close obligation after a native OCO fill) + exit-fill exception class logging |
+| c7ed59b4 | atrsim LIVE-rules sim honours the live 3-bar established-short gate |
+| 61ee3d28 | WBPA2: country-routed Webull PRICE_AGGRESSIVE resubmit (8% band, serial, no-working-order proof) |
+| 9ee03a5a | WBPA3: broker-rejected never-accepted open = closure; recovery uses dispatched accounts |
+| 8159cd107 | `[WBEXIT2-GEOMETRY-REFUSED]` refusal-operand log |
+| e58e2497 | WBEXIT2 geometry accepts Webull working vocabulary (adapter `_ACCEPTED_STATUSES`, aliases must agree) |
+| 6ddb3e6b0 | passive `[OMS-V2-EOD-OCO-STEP]` log (no behaviour change) |
 
-## TO BE EXERCISED (installed tonight)
+## Root cause proven 10-30 (Webull exits refused: TNMG, ONEG, CHOW)
 
-| Fix | First live event | Proof |
-|---|---|---|
-| Q (O-1019-15) | first ATR Webull bare fill | no pair cancel on unreadable ACK (`attach_ack_unknown_requires_child_proof` incident instead); any stop/flip/hard-stop exit runs after a complete TODAY-list proof; never a blind sell |
-| O17 | any malformed DB row | page banner + `[CONTROL-PLANE-ROW-SKIPPED]`, rest of the page intact |
+WBEXIT2 (switched on in the 10-28 evening install) required the raw Webull `order_status` to equal the literal `WORKING`. Webull sends `SUBMITTED` for an open order (developer docs; no `WORKING`). Proof: one read-only list-today census of CHOW's real bracket replayed through the installed `original_geometry` — SUBMITTED/PENDING/ACCEPTED/QUEUED refused, WORKING passed; every other predicate passed on real data. WB2/WB3 fixtures used the invented `WORKING`. Last good old-path Webull exit: 10-28 13:31 ELPW. Fixed by e58e2497. Interim 10-30 18:42 install ran with both switches OFF; switched back ON with the fix 10-31.
 
-## OPEN — Track B (tomorrow night; NOT installed)
+## Open (watch, no build)
 
-| ID | Item | Why not tonight |
-|---|---|---|
-| O-1019-18 | fresh-sell owner release counts an `aborted` buy as working (WORX blocked 14:18→) — root cause confirmed by claude-1 + codex | in full set with 63 NEW failures |
-| O-1019-16 | OMS admission refusal never reaches v2 (ghost rest) + momentum unsent order holds shared account | same |
-| O-1019-26 class | momentum ledger keeps a claimed unsent episode active (live release, J) | same; tonight settled by data fix |
-| MOMNEG / N2 | down-day filter; re-price within +1.5% | VPS speed FAIL (93–162 ms / 129–170 ms max handler) |
-| MOMBOOT1, COUNTRYUS2, PAPEREXIT5, M (AAME), M2 (restart orphan) | reviewed | carried with the full set |
-| O-1019-22 | 63 NEW full-suite failures on 1c245c0e | triage per lane |
-| O-1019-23 | guard exits 2 at scheduled close → 2 false pages | policy gap proven; cause of owner-release UNKNOWN open |
-| O-1019-24 / -25 | gateway A 60 s (~100 ms) and ORB aggregate (~90 ms) loop stalls on the box — fail on installed 9df too | diagnose |
+- 16:00 EOD-OCO-TRANSITION `unanswerable` (CHOW 10-30): cause NOT proven (standalone confirm read said released; refusal inside OMS `_release_v2_eod_oco`). The step log in 6ddb names it on the next real case; bring the cause to the operator before any fix.
+- First live Webull v2 exit on Monday: expect `protection=wbexit2_owner` with a sold/closed outcome. Any `[WBEXIT2-GEOMETRY-REFUSED]` line = a new predicate.
 
-## Today's record (10-19)
+## Decided / closed
 
-- ATR +$24.33 (YMAT +0.03, WORX +29.25, YMAT #2 −4.95); momentum live −19.34; ORB 0.
-- O-1019-15 happened twice (YMAT 11:36, 15:33): pair cancelled on unreadable ACK, software exits blocked → flattened by claude-1 (12:07) and by the operator (15:53).
-- Operator rulings: no rollback, fix forward; every root cause validated by codex; scan lists a waiting buy per watched stock; no in-session restarts as band-aids.
-- MOMEXIT2 replay: trails/splits worse (90% of +5% touches fall back within 1 s); "take the bid if ≥ +5% at the touch" best (+0.5 pp mean). `analysis/MOMEXIT2-REPLAY-RESULTS-20261019.md`.
+- 3-bar established-short rule stays (24-day measure: 5 of ~247 sim trades affected, net cost ~$29–42; too small).
+- 10-30 trading closed: TNMG +15.18, ONEG +15.48 (both native targets), JDZG +4.94, WFF −9.98; CHOW 64 closed by the operator by hand.
+- Codex: all workers HOLD, no open lane.
