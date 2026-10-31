@@ -1,0 +1,9 @@
+{
+  "pr_number": 1175,
+  "range_base": "4cd00d6394dd403827db3d77fd7b674914106bee",
+  "range_head": "01d3331e9e89dfd4d1047ea3265a1fb7ab3c0dd0",
+  "reviewed_at": "2026-10-31T23:02:54Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: tests only; lineage content pins + 4 flake fixes (await owned observation, private file SQLite for threaded SAVEPOINT case, cleanup bound, staged POM worlds); all original assertions kept; no app edits."
+}
