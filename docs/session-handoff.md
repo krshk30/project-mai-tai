@@ -28,12 +28,12 @@ Written 2026-10-31 ~11:00 ET by claude-1. Supersedes the 10-27 page (PR #1169). 
 
 ## Root cause proven 10-30 (Webull exits refused: TNMG, ONEG, CHOW)
 
-WBEXIT2 (switched on in the 10-28 evening install) required the raw Webull `order_status` to equal the literal `WORKING`. Webull sends `SUBMITTED` for an open order (developer docs; no `WORKING`). Proof: one read-only list-today census of CHOW's real bracket replayed through the installed `original_geometry` — SUBMITTED/PENDING/ACCEPTED/QUEUED refused, WORKING passed; every other predicate passed on real data. WB2/WB3 fixtures used the invented `WORKING`. Last good old-path Webull exit: 10-28 13:31 ELPW. Fixed by e58e2497. Interim 10-30 18:42 install ran with both switches OFF; switched back ON with the fix 10-31.
+WBEXIT2 (switched on in the 10-28 evening install) required the raw Webull `order_status` to equal the literal `WORKING`; Webull documents `SUBMITTED` for an open order and never `WORKING`. Evidence: CHOW's real bracket read after the close (already CANCELLED by DAY expiry) replayed through the installed `original_geometry` with ONLY the status (and event=accepted) varied — SUBMITTED/PENDING/ACCEPTED/QUEUED refused, WORKING passed; the remaining real operands passed. This proves the status defect conditionally; the original live WORKING-state payloads for TNMG/ONEG/CHOW were not retained, so other predicates on those exact replies are not excluded. WB2/WB3 fixtures used the invented `WORKING`. Last good old-path Webull exit: 10-28 13:31 ELPW. Fixed by e58e2497. Interim 10-30 18:42 install ran with both switches OFF; switched back ON with the fix 10-31.
 
 ## Open (watch, no build)
 
-- 16:00 EOD-OCO-TRANSITION `unanswerable` (CHOW 10-30): cause NOT proven (standalone confirm read said released; refusal inside OMS `_release_v2_eod_oco`). The step log in 6ddb names it on the next real case; bring the cause to the operator before any fix.
-- First live Webull v2 exit on Monday: expect `protection=wbexit2_owner` with a sold/closed outcome. Any `[WBEXIT2-GEOMETRY-REFUSED]` line = a new predicate.
+- 16:00 EOD-OCO-TRANSITION `unanswerable` (CHOW 10-30): cause UNKNOWN (standalone confirm read said released; refusal inside OMS `_release_v2_eod_oco`). The passive step log in 6ddb narrows which branch refused on the next real case; it may not by itself name the cause. Bring the cause to the operator before any fix.
+- First live Webull v2 exit on Monday: expect `protection=wbexit2_owner` with a sold/closed outcome. Any `[WBEXIT2-GEOMETRY-REFUSED]` line: keep the raw operands and classify it (it can also be an unchanged guard refusing correctly).
 
 ## Decided / closed
 
