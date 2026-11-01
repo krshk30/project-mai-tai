@@ -13,6 +13,7 @@ from project_mai_tai.db.models import BrokerOrder, OmsManagedPosition
 from project_mai_tai.oms import managed_sell_prewire as prewire, service as module
 from project_mai_tai.oms.service import OmsRiskService
 from tests.unit.test_managed_sell_prewire import lane  # noqa: F401
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 
 
 @pytest.fixture(autouse=True)

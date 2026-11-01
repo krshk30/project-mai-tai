@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 
 from project_mai_tai.db.models import (
     Base,
