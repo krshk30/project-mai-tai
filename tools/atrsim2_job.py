@@ -200,8 +200,8 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=F
             break
         if triggered and prev_ts is not None and not continuous(symbol, prev_ts, ts):
             triggered, triggered_at = False, None  # a FADE between two prints cancelled the order (no print in the gap)
-        if armed_ms is not None and ts.timestamp() * 1000 < armed_ms:
-            continue  # not armed yet: no waiting buy at the broker, a print here cannot fill or trigger
+        if armed_ms is not None and ts.timestamp() * 1000 <= armed_ms:
+            continue  # not armed yet (codex 11-01: a print AT the arming close cannot be ours): no trigger, no fill
         minute = int(ts.timestamp() // 60) * 60_000
         if minute > series[fi].ts:
             bar_k = k  # after the flip: the last resting price is kept (no new short line)

@@ -208,6 +208,14 @@ def test_delayed_arm_waits_for_the_first_completed_2pct_purple_pullback(monkeypa
         armed = job.live_rules_sim(None, "DIP", series[-1], None, date(2026, 10, 30), t(59), {}, arm_pullback=True)
         assert armed["armed_at"] == "09:17:00"
         assert armed["status"] == "OPEN" and armed["entry_time"] == "09:17:10"  # the 09:15:30 cross is ignored
+        # Codex 11-01 boundary: a cross exactly AT the arming time neither fills nor carries a trigger forward;
+        # the first print after it can trigger and fill.
+        prints[:] = [(t(17, 0), 1.01), (t(17, 0).replace(microsecond=1000), 1.01)]
+        armed = job.live_rules_sim(None, "DIP", series[-1], None, date(2026, 10, 30), t(59), {}, arm_pullback=True)
+        assert armed["order_times"]["triggered_at"] == "09:17:00.001" and armed["order_times"]["filled_at"] == "09:17:00.001"
+        prints[:] = [(t(17, 0), 1.01)]
+        armed = job.live_rules_sim(None, "DIP", series[-1], None, date(2026, 10, 30), t(59), {}, arm_pullback=True)
+        assert armed["status"] == "WAITING" and "entry_time" not in armed  # still resting, never filled AT the arm
     finally:
         job.LINES.pop("FLAT", None)
         job.LINES.pop("DIP", None)
