@@ -1,6 +1,6 @@
 # Session Handoff - November 1, 2026 (for Monday November 2)
 
-Written 2026-11-01 ~13:00 ET by claude-1 (final for the weekend). Supersedes the 10-31 version of this page. Production facts read on the box 11-01.
+Written 2026-11-01 ~13:55 ET by claude-1 (final for the weekend). Supersedes the 10-31 version of this page. Production facts read on the box 11-01.
 
 ## Operator rulings 11-01 (read first)
 
@@ -11,22 +11,22 @@ Written 2026-11-01 ~13:00 ET by claude-1 (final for the weekend). Supersedes the
 
 ## Production NOW
 
-- Box checkout: `6b29bc0547722d6dc58f120cd483a658d0c6aadf` (main at #1181), installed 11-01 15:43 UTC (10:43 ET) on the operator's OK.
-  - Adds the passive OMS loop-lag log `[OMS-LOOP-LAG]` (logs only when lag > 100 ms).
-  - Plus behaviour-neutral lint vs cad483fc.
+- Box checkout: `7f9fad6637f6ee3c31c88a35c13ff70a529765b0` (= main after #1172), installed 11-01 18:45 UTC (13:45 ET), all five services.
+  - The morning install 6b29bc05 (10:43 ET) added the passive OMS loop-lag log `[OMS-LOOP-LAG]` (logs only when lag > 100 ms).
+  - 7f9fad66 adds #1184 (off-order DST date windows on pages and reports; tests) and #1172 (docs-only CI fast path + ATR page panel 5 Pullback check). No order-path change.
 - Services (all active, NRestarts 0):
 
   | Service | PID | Started (UTC) |
   |---|---|---|
-  | oms | 3873635 | 15:43:10 |
-  | schwab-1m-v2 | 3873649 | 15:43:13 |
-  | strategy | 3873669 | 15:43:16 |
-  | control | 3873680 | 15:43:19 |
-  | orb-schwab | 3873690 | 15:43:22 |
+  | oms | 3888320 | 18:45:53 |
+  | schwab-1m-v2 | 3888338 | 18:45:56 |
+  | strategy | 3888355 | 18:45:59 |
+  | control | 3888384 | 18:46:02 |
+  | orb-schwab | 3888394 | 18:46:06 |
 
-  market-data / reconciler / capture / tv-alerts untouched. If #1172 is installed after this page, only control restarts (see Main).
+  market-data / reconciler / capture / tv-alerts untouched.
 - Env: WBEXIT2_ENABLED=true, WEBULL_EXIT3_ENABLED=true, BROKERDECIDES1_ENABLED=true. BROKERDECIDES1-PUBLISH complete=True accounts=2; 0 errors since start.
-- Evidence `/home/trader/after-hours/2026-11-01/pkg-6b29bc05`. Preopen re-pinned to 6b29bc05 (backups `*.claude1-pre6b29`); `daily.verify_runtime()` OK.
+- Evidence `/home/trader/after-hours/2026-11-01/pkg-7f9fad66`. Preopen re-pinned to 7f9fad66 (backups `*.claude1-pre7f9f`); `daily.verify_runtime()` OK.
 - Schwab refresh token expires **Sat 11-07 09:46 ET** (re-auth by Fri 11-06).
 
 ## Main (GitHub)
@@ -36,8 +36,8 @@ Written 2026-11-01 ~13:00 ET by claude-1 (final for the weekend). Supersedes the
   - #1181: OMS loop-lag log (= box).
   - #1184 (b69877fa): five reviewed test PRs combined + the DST reporting-window fix at 6 off-order sites.
     - 3 order-path DST candidates PARKED: keepwatch_producer.py:48, session_line_restore.py:195, oms/service.py TTL 17569. Revisit as Tier 3 before 2027-03-14.
-- #1172: docs-only fast path + its codex P2 fix + **Pullback check panel**. Codex-pinned at bf1de4dd9; merges when validate passes. Install = control restart only.
-- Box vs main after #1172: main adds #1184 (tests + off-order DST windows: control_plane / trade_coach / v2 display / ORB tape) and the panel. Take both at the next after-close install, with the operator's OK.
+- #1172 MERGED (7f9fad66): docs-only fast path + its codex P2 fix + **Pullback check panel**. Installed.
+- **Box = main** (7f9fad66) for Monday.
 - The report-only fresh-process timing step still fails on the shared runner (keepwatch ~55–72 ms > 50). It does not block merges; it is not live proof.
 
 ## Weekend findings (11-01)
@@ -52,6 +52,7 @@ Written 2026-11-01 ~13:00 ET by claude-1 (final for the weekend). Supersedes the
   - Leave-one-day-out +$197..+$332, every case positive.
   - The effect is 09:30 onward; pre-market is weak.
   - In-sample only: score it on new days from 11-02. Nothing live.
+- **Coach round 4 (11-01, Downloads/ROUND4_ATR_STOCK_FEATURES_CURRENT.pdf)** independently reproduces the zero-2% numbers exactly. Rescue exceptions (higher-low −$57.89, prior-high −$120.52) and a FIRSTBAR switch are worse. The coach recommends the simple rule only, on a sequential + new-day test. My reply + keyed 43 CSV are in Downloads. The operator decides the forward window.
 - **Pullback check panel** (ATR page panel 5) shows this per LIVE+2min buy every day. Replay on 22 days = 43 skipped, net +$306.56 exact.
 
 ## 10-31 real defect (fixed and installed)
@@ -85,7 +86,7 @@ Written 2026-11-01 ~13:00 ET by claude-1 (final for the weekend). Supersedes the
 
 ## Monday watch
 
-- 06:20 preopen report (first on 6b29bc05).
+- 06:20 preopen report (first on 7f9fad66).
 - `[OMS-LOOP-LAG]` lines: count and worst lag in the first hour (0 lines = no lag > 100 ms).
 - Close-out: live vs LIVE-rules SIM count with each miss's cause; Pullback check panel numbers for the day.
 - First live Webull v2 exit: expect `protection=wbexit2_owner` with a sold outcome. Any `[WBEXIT2-GEOMETRY-REFUSED]` → keep raw operands, classify.
