@@ -1,0 +1,9 @@
+{
+  "pr_number": 1177,
+  "range_base": "b1933356e1b49122e5b5785ecdf4857079fb00ac",
+  "range_head": "53e521aac0c9b67a771d737bb0a269b698d47563",
+  "reviewed_at": "2026-11-01T07:35:18Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: + compact stall-correlation receipt flushed before rate guards (tests only, additive); no assertion/budget change."
+}
