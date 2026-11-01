@@ -51,9 +51,12 @@ class RecordedSchwab(SchwabBrokerAdapter):
         self.release_count = 0
         self.read_proof = "rejected"
         self.pause = None
+        self.parent_read_started = asyncio.Event()
 
     async def _authorized_request_json(self, method, path, *, body=None):
         self.calls.append((method, path))
+        if method == "GET" and path.endswith("/" + str(self.tree["orderId"])):
+            self.parent_read_started.set()
         if self.pause is not None:
             await self.pause.wait()
         if self.unknown:
@@ -197,6 +200,24 @@ def sell_orders(sessions):
         return list(session.scalars(select(BrokerOrder).where(BrokerOrder.side == "sell")))
 
 
+async def wait_for_parent_read(adapter, owner):
+    """Observe the actual held parent GET, or surface the owned evaluator's result.
+
+    This is fixture coordination, not a latency assertion. The test process has
+    an outer execution deadline; no sleep-poll can cancel valid DB progression.
+    """
+    read = asyncio.create_task(adapter.parent_read_started.wait())
+    try:
+        await asyncio.wait((read, owner), return_when=asyncio.FIRST_COMPLETED)
+        if owner.done():
+            await owner  # Preserve an actual evaluator exception rather than timing out.
+            raise AssertionError("owned evaluation completed before its held parent GET")
+        await read
+    finally:
+        read.cancel()
+        await asyncio.gather(read, return_exceptions=True)
+
+
 def armed_harness(monkeypatch, *, strategy="schwab_1m_v2", **kwargs):
     """APUS broker tree through the actual hard-stop sender; ORB is a 2-share control.
 
@@ -324,17 +345,14 @@ async def test_armed_hard_stop_and_managed_flip_share_one_episode_sell_claim(mon
     adapter.pause = asyncio.Event()
     task = asyncio.create_task(service._evaluate_v2_managed_exit(ACCT, symbol))
     try:
-        async def wait_for_parent_read():
-            while not adapter.calls:
-                await asyncio.sleep(.001)
-        await asyncio.wait_for(wait_for_parent_read(), 1)
-        await asyncio.wait_for(service._trigger_hard_stop(
+        await wait_for_parent_read(adapter, task)
+        await service._trigger_hard_stop(
             stop, trigger_price=Decimal("6.99"), trigger_source="bid",
-        ), 1)
+        )
         assert adapter.requests == [] and adapter.release_count == 1
     finally:
         adapter.pause.set()
-        await asyncio.wait_for(task, 1)
+        await task
     assert len(adapter.requests) == 1 and len(sell_orders(sessions)) == 1
 
 
@@ -568,14 +586,63 @@ async def test_schwab_parallel_quotes_never_submit_two_sells_for_one_lot(monkeyp
     service, sessions, adapter, symbol, _ = harness(monkeypatch)
     adapter.pause = asyncio.Event()
     first = asyncio.create_task(service._evaluate_v2_managed_exit(ACCT, symbol))
-    while not adapter.calls:
-        await asyncio.sleep(0)
     try:
-        await asyncio.wait_for(service._evaluate_v2_managed_exit(ACCT, symbol), timeout=1)
+        await wait_for_parent_read(adapter, first)
+        await service._evaluate_v2_managed_exit(ACCT, symbol)
     finally:
         adapter.pause.set()
         await first
     assert len(adapter.requests) == 1 and len(sell_orders(sessions)) == 1
+
+
+@pytest.mark.asyncio
+async def test_parent_read_completion_requires_actual_held_adapter_entry():
+    adapter = RecordedSchwab(RECORDED["apus"])
+    adapter.pause = asyncio.Event()
+    before_read, allow_read = asyncio.Event(), asyncio.Event()
+
+    async def evaluation():
+        before_read.set()
+        await allow_read.wait()
+        return await adapter._authorized_request_json(
+            "GET", f"/controlled/orders/{adapter.tree['orderId']}")
+
+    owner = asyncio.create_task(evaluation())
+    waiter = asyncio.create_task(wait_for_parent_read(adapter, owner))
+    try:
+        await before_read.wait()
+        assert not adapter.parent_read_started.is_set() and not waiter.done()
+        assert adapter.calls == []
+        allow_read.set()
+        await waiter
+        assert adapter.parent_read_started.is_set() and not owner.done()
+        assert adapter.calls == [("GET", f"/controlled/orders/{adapter.tree['orderId']}")]
+        assert adapter.requests == []
+    finally:
+        allow_read.set()
+        adapter.pause.set()
+        await owner
+        waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fails", [False, True], ids=["no-read-return", "no-read-exception"])
+async def test_parent_read_completion_surfaces_owner_finishing_before_any_read(fails):
+    adapter = RecordedSchwab(RECORDED["apus"])
+    failure = RuntimeError("CONTROLLED owned evaluator failed before broker read")
+
+    async def evaluation():
+        if fails:
+            raise failure
+
+    owner = asyncio.create_task(evaluation())
+    with pytest.raises(RuntimeError if fails else AssertionError) as caught:
+        await wait_for_parent_read(adapter, owner)
+    if fails:
+        assert caught.value is failure
+    assert owner.done() and not owner.cancelled()
+    assert not adapter.parent_read_started.is_set() and adapter.calls == []
 
 
 @pytest.mark.asyncio
