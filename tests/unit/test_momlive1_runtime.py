@@ -20,6 +20,7 @@ from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
 from project_mai_tai.positions_read_receipt import record_receipts, SNAPSHOT_TYPE
 from tests.unit.test_control_plane import build_test_session_factory
+from tests.unit.momlive1_owned_fixtures import complete_owned_observation
 
 
 class ControlledBroker:
@@ -292,6 +293,7 @@ async def test_actual_oms_ports_entry_actual_fill_vwap_native_proof_and_no_resen
     await runtime.start()
     try:
         await offer_and_drain(runtime, event(now[0]))
+        await complete_owned_observation(runtime, next(iter(runtime.book.episodes)))
         assert len(runtime.book.episodes) == 1
         episode = next(iter(runtime.book.episodes.values()))
         assert episode.filled == 33 and episode.state == "held"
@@ -314,10 +316,44 @@ async def test_actual_oms_ports_entry_actual_fill_vwap_native_proof_and_no_resen
 
 
 @pytest.mark.asyncio
+async def test_positive_fixture_reobserves_real_fill_after_cached_pending_order():
+    now, broker, _, runtime = setup()
+    submit = broker.submit_order
+    staged = []
+
+    async def observe_before_ack(request):
+        if request.side == "buy" and request.intent_type == "open":
+            identity = request.metadata["episode_id"]
+            await runtime.actor._service_owned(identity)
+            assert runtime.actor._observations[identity][1].quantity == 0
+            staged.append(identity)
+        return await submit(request)
+
+    broker.submit_order = observe_before_ack
+    await runtime.start()
+    try:
+        await offer_and_drain(runtime, event(now[0]))
+        identity, = staged
+        # The real broker ACK/Fill is committed, but the frozen-clock cache
+        # deliberately retains its earlier pending observation.
+        assert (await runtime._inspect(identity))["quantity"] == 33
+        assert runtime.book.episodes[identity].filled == 0
+        assert identity not in runtime.native.handles
+        await complete_owned_observation(runtime, identity)
+        assert runtime.book.episodes[identity].filled == 33
+        assert runtime.native.handles[identity].quantity == 33
+        assert len([row for row in broker.sent if row.side == "buy"]) == 1
+        assert not [row for row in broker.sent if row.metadata.get("exit_reason")]
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_manual_off_restart_keeps_exact_owned_quote_and_protection_without_new_entry():
     now, broker, service, runtime = setup()
     await runtime.start()
     await offer_and_drain(runtime, event(now[0]))
+    await complete_owned_observation(runtime, next(iter(runtime.book.episodes)))
     await runtime.close()
     service.settings.momentum_live_enabled = False
     restarted = OmsLiveRuntime(service, clock=lambda: now[0], identity="123:456")
@@ -434,6 +470,7 @@ async def test_actual_owned_runtime_unknown_first_uses_durable_send_timer_after_
         broker.fetch_order_update = no_time
     await runtime.start()
     await offer_and_drain(runtime, event(now[0]))
+    await complete_owned_observation(runtime, next(iter(runtime.book.episodes)))
     episode = next(iter(runtime.book.episodes.values()))
     sent = episode.first_submit_ns
     assert episode.first_fill_ns is None

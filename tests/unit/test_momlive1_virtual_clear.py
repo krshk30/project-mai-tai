@@ -18,6 +18,7 @@ from project_mai_tai.momentum_live.admission import Refusal
 from project_mai_tai.momentum_live.runtime import OmsLiveRuntime
 from tests.unit.test_control_plane import build_test_session_factory
 from tests.unit.test_momlive1_runtime import event, offer_and_drain, setup
+from tests.unit.momlive1_owned_fixtures import complete_owned_observation
 from tests.unit.test_oms_risk_service import FakeRedis, _capture_service_log
 
 
@@ -124,6 +125,7 @@ async def test_bbci_missing_target_then_broker_zero_keeps_ownership_until_actual
     await runtime.start()
     try:
         await offer_and_drain(runtime, order)
+        await complete_owned_observation(runtime, next(iter(runtime.book.episodes)))
     finally:
         await runtime.close()
     identity = next(iter(runtime.book.episodes))

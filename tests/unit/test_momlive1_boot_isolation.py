@@ -156,9 +156,11 @@ async def test_base_exceptions_from_mom_start_propagate_before_tick_consumer(fai
 @pytest.mark.asyncio
 async def test_failed_held_restore_logs_inspected_owned_quantity_account_and_preserves_atr(monkeypatch, caplog):
     from tests.unit.test_momlive1_runtime import event, offer_and_drain, setup
+    from tests.unit.momlive1_owned_fixtures import complete_owned_observation
     now, broker, service, runtime = setup()
     await runtime.start()
     await offer_and_drain(runtime, event(now[0]))
+    await complete_owned_observation(runtime, next(iter(runtime.book.episodes)))
     await runtime.close()
     service.redis = BootRedis("held_restore")
     submit, atr_adapter = broker.submit_order, SimulatedBrokerAdapter()
