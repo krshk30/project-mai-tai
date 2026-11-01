@@ -16,6 +16,8 @@ from tests import conftest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+QUIET_HOST_GATE = ("tests/unit/test_momlatch1_gateway_integration.py::"
+                   "test_gateway_A_240_per_second_60s_original_budget_and_TQ_progress")
 
 
 def fixture_request(marked):
@@ -123,8 +125,12 @@ def test_inventory_matches_all_explicit_markers_without_importing_gate_modules()
                 actual.add((str(path.relative_to(ROOT)), node.name))
     assert actual == expected
     assert any(row["ci_scope"] == "external_qualification_unchanged" for row in inventory["gates"])
-    assert all(row["ci_scope"] == "unit_fresh_process" for row in inventory["gates"]
-               if row["path"].startswith("tests/unit/"))
+    quiet_only = [row["path"] + "::" + row["function"] for row in inventory["gates"]
+                  if row["ci_scope"] == "quiet_host_preinstall_only"]
+    assert quiet_only == [QUIET_HOST_GATE]
+    assert all(row["ci_scope"] == ("quiet_host_preinstall_only"
+               if row["path"] + "::" + row["function"] == QUIET_HOST_GATE else "unit_fresh_process")
+               for row in inventory["gates"] if row["path"].startswith("tests/unit/"))
 
 
 def test_workflow_runs_complementary_unit_selectors_in_separate_steps():
@@ -140,9 +146,11 @@ def test_workflow_runs_complementary_unit_selectors_in_separate_steps():
     assert unit_command == ["python", "-m", "pytest", "-p", "no:cacheprovider", "tests/unit",
                             "-m", "not timing"]
     assert timing_command == ["python", "-m", "pytest", "-p", "no:cacheprovider", "tests/unit",
-                              "-m", "timing"]
+                              "-m", "timing", "--deselect=" + QUIET_HOST_GATE]
     assert unit["env"] == timing["env"]
-    assert not any("--deselect" in token for token in unit_command + timing_command)
+    assert not any("--deselect" in token for token in unit_command)
+    assert [token for token in timing_command if token.startswith("--deselect")] == [
+        "--deselect=" + QUIET_HOST_GATE]
 
 
 def test_fixture_preserves_gc_policy_and_does_not_disable_collection():

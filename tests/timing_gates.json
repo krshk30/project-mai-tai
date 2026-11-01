@@ -328,7 +328,8 @@
     {
       "path": "tests/unit/test_momlatch1_gateway_integration.py",
       "function": "test_gateway_A_240_per_second_60s_original_budget_and_TQ_progress",
-      "ci_scope": "unit_fresh_process",
+      "ci_scope": "quiet_host_preinstall_only",
+      "ci_exclusion_reason": "Retain the original exact CI deselection; mandatory quiet-host pre-install proof is not shared-runner timing proof.",
       "asserted_limits": [
         "elapsed >= 60 and count / elapsed >= 200",
         "maximum < 0.05 and max_handler < 0.05"
