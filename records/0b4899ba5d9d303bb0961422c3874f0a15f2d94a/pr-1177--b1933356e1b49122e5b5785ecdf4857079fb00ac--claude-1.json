@@ -1,0 +1,9 @@
+{
+  "pr_number": 1177,
+  "range_base": "b1933356e1b49122e5b5785ecdf4857079fb00ac",
+  "range_head": "0b4899ba5d9d303bb0961422c3874f0a15f2d94a",
+  "reviewed_at": "2026-11-01T03:59:39Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: rebase of reviewed fa7e6a663 onto main b1933356 (#1176); test files byte-identical; tests only, additive."
+}
