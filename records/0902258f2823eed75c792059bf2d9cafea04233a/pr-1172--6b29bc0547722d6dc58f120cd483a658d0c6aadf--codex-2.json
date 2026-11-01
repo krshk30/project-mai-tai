@@ -1,0 +1,9 @@
+{
+  "pr_number": 1172,
+  "range_base": "6b29bc0547722d6dc58f120cd483a658d0c6aadf",
+  "range_head": "0902258f2823eed75c792059bf2d9cafea04233a",
+  "reviewed_at": "2026-11-01T16:12:53Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Actual operator publication approval verified from original typed turn and explicit PR1172 question. Rebased workflow range equals reviewed bf4 changes composed with merged 6b29 main. New inheritance issue fixed: isolated timing step now has the exact docs-only condition; all other workflow semantics, timing body/env/budgets/exclusion and trusted non-docs review coverage remain unchanged. New scope guard preserves prior test AST. C1 reported 13 related controls passing and missing-condition negative failing; prior 10 related and 19 Git/shell controls retained, no unchanged test rerun. No application or packaging input changes."
+}
