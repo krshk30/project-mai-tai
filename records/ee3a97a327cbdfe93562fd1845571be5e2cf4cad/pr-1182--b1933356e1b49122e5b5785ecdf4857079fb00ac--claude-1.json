@@ -1,0 +1,9 @@
+{
+  "pr_number": 1182,
+  "range_base": "b1933356e1b49122e5b5785ecdf4857079fb00ac",
+  "range_head": "ee3a97a327cbdfe93562fd1845571be5e2cf4cad",
+  "reviewed_at": "2026-11-01T10:22:23Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: DST off-order fix: 6 ET day/session ends computed as next ET wall-clock boundary (combine(date+1, local time, ET).astimezone(UTC)) \u2014 control_plane x3, trade_coach, v2 bot closed_today window (display only), ORB decision tape cap; DST + normal-day tests; no order path."
+}
