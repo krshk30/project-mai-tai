@@ -1,0 +1,9 @@
+{
+  "pr_number": 1175,
+  "range_base": "4cd00d6394dd403827db3d77fd7b674914106bee",
+  "range_head": "af7d8368fc9aba86c6f5df6283e2ad7fc6ccbf87",
+  "reviewed_at": "2026-11-01T00:34:09Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: tests only; lineage content pins + CI flake fixes (owned-observation completion helper, private file SQLite, cleanup bound, staged POM worlds, rate prelude); no assertion removed; budgets unchanged."
+}
