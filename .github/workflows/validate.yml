@@ -86,6 +86,7 @@ jobs:
         run: python -m pytest -p no:cacheprovider tests/unit -m "not timing"
 
       - name: Run timing gates in a fresh process
+        if: steps.scope.outputs.docs_only != 'true'
         # timing marker: mandatory quiet-host pre-install speed gate; not shared-runner timing proof.
         continue-on-error: true
         env:
