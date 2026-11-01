@@ -9125,3 +9125,16 @@ Claude E86 and the preceding neutral-rebase history remain unchanged.
 - 10-30 18:42 ET install 8159cd107 with WBEXIT2/WBEXIT3 OFF (operator rollback ruling), retired four owners, three entry markers and the CHOW phantom row (OMS stopped).
 - 10-31 10:46 ET operator re-authed Schwab (expires 11-07 09:46 ET). 10:48 ET install 6ddb3e6b0 (status fix + EOD step log) with both switches ON (operator order). Clean: NR0, census complete, 0 errors, preopen VERIFY OK.
 - Lesson recorded: when a live check refuses a real broker order, replay the broker's real reply through the installed code first.
+
+## 2026-10-31 (afternoon/evening) — main green, phone-pin defect fixed, ATRSIM4 stock inputs
+
+- Operator: "we have to fix all the issues". Main validate was red since ≥10-17 and main was behind the box.
+- 62 + 109 unit + 43 golden failures fixed, all stale (Mac-only paths, missing service.settings, PRICE1-era fixtures, catalog counts, squash-only git objects); 0 app bugs. Ruff 830 → 0.
+- #1174 squash (pin gate needs one agent marker per commit) merged 17:16 ET → main 4cd00d6394dd, green.
+- Real defect: BROKERDECIDES1 owner-phone channel refused since 10-30 18:42 (sha pin vs 78bad800 health edit). Replayed on the box; fix 178a9aa5 installed 13:13 ET (v2-only restart).
+- ATRSIM4 (sim only): round-4 hot/cold STOCK inputs, provenance stamp, EXIT UNKNOWN for capture-ended exits.
+  - Codex found two look-ahead defects; the coach sent five measurement corrections; all fixed.
+  - 22 days re-run → LIVE+2min +$97.24 (241 trades).
+  - Box cad483fc.
+- CI flake class found (≈1–2 timing tests per run); 4 fixed in #1175, 1 open.
+- Operator rulings: codex communicates only through the file; docs-only PRs need no pin; refine H2 into a stock-level label (round 4).
