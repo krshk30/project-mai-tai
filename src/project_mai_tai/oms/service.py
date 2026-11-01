@@ -70,6 +70,7 @@ from project_mai_tai.fanout_identity import carry_fanout_identity, merge_broker_
 from project_mai_tai.log import configure_logging
 from project_mai_tai.services.strategy_engine_app import current_scanner_session_start_utc
 from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.oms.loop_lag import with_oms_loop_lag_logging
 from project_mai_tai.oms.eod_oco_step_log import eod_oco_step as _eod_oco_step
 from project_mai_tai.oms.price_binding import stored_price
 from project_mai_tai.oms.webull_attach_riskoff import atr_handoff_call
@@ -1144,6 +1145,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 return await wbexit2.joined(self, call, work)
         return await work
 
+    @with_oms_loop_lag_logging
     async def run(self) -> None:
         receipt_boot_id, receipt_started_monotonic = uuid4().hex, time.monotonic()
         self._webull_identity_loop = asyncio.get_running_loop()
