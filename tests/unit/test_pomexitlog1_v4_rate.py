@@ -154,6 +154,7 @@ async def test_existing_native_rate_60s_at_least200_stall_under50_with_timing_in
     monkeypatch.setattr(service.logger, "info", measured_info)
     # STALL-CORRELATION diagnostics BEGIN
     correlation = StallCorrelation()
+    correlation_physical_start = None
     # STALL-CORRELATION diagnostics END
     fixture_started = time.monotonic()
     try:
@@ -277,6 +278,9 @@ async def test_existing_native_rate_60s_at_least200_stall_under50_with_timing_in
         # blocking awaits/IO still require Main's outer deadline and join proof.
         # Main reviews that caller envelope before execution. No clock stub.
         start, base, count = time.monotonic(), now[0], 0
+        # STALL-CORRELATION diagnostics BEGIN
+        correlation_physical_start = start
+        # STALL-CORRELATION diagnostics END
         prelude_seconds = start - fixture_started
         try:
             while time.monotonic()-start < 120:
@@ -305,6 +309,10 @@ async def test_existing_native_rate_60s_at_least200_stall_under50_with_timing_in
             await watcher
             if seed_task is not None:
                 await seed_task
+            # STALL-CORRELATION diagnostics BEGIN
+            correlation.emit_summary(session=session, physical_start=correlation_physical_start,
+                                     active_start=counter.window_start)
+            # STALL-CORRELATION diagnostics END
         # STALL-CORRELATION diagnostics BEGIN
         correlation.close()
         # STALL-CORRELATION diagnostics END
@@ -369,6 +377,8 @@ async def test_existing_native_rate_60s_at_least200_stall_under50_with_timing_in
     finally:
         # STALL-CORRELATION diagnostics BEGIN
         correlation.close()
+        correlation.emit_summary(session=session, physical_start=correlation_physical_start,
+                                 active_start=counter.window_start)
         # STALL-CORRELATION diagnostics END
         service._momentum_live_actor = None
         service._momentum_live_quote_dispatch = None

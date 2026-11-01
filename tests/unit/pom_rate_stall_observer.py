@@ -2,6 +2,8 @@
 
 import asyncio
 import gc
+import json
+import sys
 import threading
 import time
 import weakref
@@ -24,6 +26,61 @@ class StallCorrelation:
         self.ended_ns = None
         self.closed = False
         self._callback = None
+        self.receipt_emitted = False
+        self.receipt_emit_error = None
+
+    def emit_summary(self, *, session, physical_start=None, active_start=None, stream=None):
+        """Emit once after measurement, including on a failing guard/cleanup path."""
+        if self.receipt_emitted:
+            return
+        payload = {"session": session, "interpretation": "CORRELATION_ONLY_NOT_CAUSE",
+                   "emission_status": "UNKNOWN", "max_stall": None}
+        try:
+            self.close()
+            active_end = active_start + 60 if active_start is not None else None
+            receipt = self.receipt(active_start=active_start, active_end=active_end)
+            maximum = receipt["max_stall"]
+            seed_end = physical_start + 30 if physical_start is not None else None
+            phase = "UNKNOWN_NO_LAG_SAMPLE"
+            if maximum is not None:
+                phase = maximum["phase"]
+                if seed_end is not None:
+                    boundary = round(seed_end * 1e9)
+                    physical_ns = round(physical_start * 1e9)
+                    if maximum["derived_sample_ns"] < physical_ns:
+                        phase = "before_physical_feed"
+                    elif maximum["deadline_ns"] < physical_ns:
+                        phase = "crosses_physical_feed_start"
+                    elif maximum["derived_sample_ns"] < boundary:
+                        phase = "initial_30s_seed_phase"
+                    elif maximum["deadline_ns"] < boundary:
+                        phase = "crosses_30s_seed_boundary"
+                maximum = {**maximum,
+                    "overlapping_steps": maximum["overlapping_steps"][:32],
+                    "overlapping_gc": maximum["overlapping_gc"][:32],
+                    "omitted_step_overlaps": max(0, len(maximum["overlapping_steps"]) - 32),
+                    "omitted_gc_overlaps": max(0, len(maximum["overlapping_gc"]) - 32)}
+            payload.update(emission_status="OBSERVED", max_stall=maximum,
+                measurement_phase=phase, physical_start_monotonic=physical_start,
+                seed_30s_end_monotonic=seed_end, active_start_monotonic=active_start,
+                active_end_monotonic=active_end, recording_complete=receipt["recording_complete"],
+                errors=receipt["errors"], dropped=receipt["dropped"],
+                sample_time_basis=receipt["sample_time_basis"],
+                sample_counts={key: len(value) for key, value in self.rows.items()})
+        except Exception as error:
+            payload.update(emission_status="UNKNOWN_ASSEMBLY_ERROR",
+                           assembly_error=type(error).__name__)
+        finally:
+            try:
+                target = sys.stdout if stream is None else stream
+                # One bounded line and explicit flush keep the useful window
+                # visible before the original assertion's captured traceback.
+                target.write("POMEXITLOG1_STALL_CORRELATION=" + json.dumps(payload, sort_keys=True) + "\n")
+                target.flush()
+                self.receipt_emitted = True
+            except Exception as error:
+                # Diagnostics must not replace the original assertion/exception.
+                self.receipt_emit_error = type(error).__name__
 
     def _now(self):
         try:

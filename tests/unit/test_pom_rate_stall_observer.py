@@ -4,6 +4,7 @@ import asyncio
 import ast
 import gc
 import hashlib
+from io import StringIO
 import json
 from pathlib import Path
 import socket
@@ -268,3 +269,116 @@ def test_original_rate_assertions_and_code_identical_after_diagnostic_strip():
     assert len(assertions) == 22
     assert hashlib.sha256(json.dumps(assertions).encode()).hexdigest() == (
         "d7bcc1b690743a2f92bd90696ca557ae427975877d64214bd0aa9ac34f5724af")
+
+
+class FlushedOutput(StringIO):
+    def __init__(self):
+        super().__init__()
+        self.writes = self.flushes = 0
+
+    def write(self, value):
+        self.writes += 1
+        return super().write(value)
+
+    def flush(self):
+        self.flushes += 1
+        return super().flush()
+
+
+@pytest.mark.parametrize("due,lag,active,expected", [
+    (8, .98, 40, "initial_30s_seed_phase"),
+    (29.9, .2, 40, "crosses_30s_seed_boundary"),
+    (35, .2, 40, "pre_active"),
+    (45, .2, 40, "active"),
+    (105, .2, 40, "post_active"),
+])
+def test_compact_emit_preserves_original_window_and_seed_active_phase(due, lag, active, expected):
+    observer = StallCorrelation(clock_ns=lambda: round((due + lag) * 1e9) + 4000)
+    observer.lag_sample(due, lag)
+    output = FlushedOutput()
+    observer.emit_summary(session="AM", physical_start=0, active_start=active, stream=output)
+    observer.emit_summary(session="AM", physical_start=0, active_start=active, stream=output)
+    line = output.getvalue()
+    receipt = json.loads(line.split("=", 1)[1])
+    assert output.writes == output.flushes == 1 and line.endswith("\n")
+    assert receipt["session"] == "AM" and receipt["measurement_phase"] == expected
+    assert receipt["max_stall"]["original_lag_seconds"] == lag
+    assert receipt["max_stall"]["deadline_ns"] == round(due * 1e9)
+    assert receipt["max_stall"]["derived_sample_ns"] == round((due + lag) * 1e9)
+    assert receipt["max_stall"]["observation_uncertainty_ns"] == 4000
+    assert receipt["interpretation"] == "CORRELATION_ONLY_NOT_CAUSE"
+
+
+def test_compact_emit_is_flushed_before_original_failure_reaches_capture(capsys):
+    observer = StallCorrelation(clock_ns=lambda: 9_000_004_000)
+    observer.lag_sample(8, 1)
+    original = AssertionError("original unchanged rate guard")
+    with pytest.raises(AssertionError) as caught:
+        try:
+            pass
+        finally:
+            observer.emit_summary(session="AM", physical_start=0, active_start=40)
+        raise original
+    assert caught.value is original
+    receipt = json.loads(capsys.readouterr().out.split("=", 1)[1])
+    assert receipt["max_stall"]["original_lag_seconds"] == 1
+    assert receipt["measurement_phase"] == "initial_30s_seed_phase"
+
+
+def test_compact_emit_discloses_unknown_assembly_without_masking_failure(monkeypatch):
+    observer = StallCorrelation()
+    def broken(**kwargs):
+        raise ValueError("controlled diagnostic assembly error")
+    monkeypatch.setattr(observer, "receipt", broken)
+    output = FlushedOutput()
+    observer.emit_summary(session="NORMAL", stream=output)
+    receipt = json.loads(output.getvalue().split("=", 1)[1])
+    assert receipt["emission_status"] == "UNKNOWN_ASSEMBLY_ERROR"
+    assert receipt["assembly_error"] == "ValueError" and receipt["max_stall"] is None
+    assert observer.closed and output.flushes == 1
+
+
+def test_compact_emit_io_failure_cannot_replace_original_guard_failure():
+    observer = StallCorrelation()
+    class BrokenOutput:
+        def write(self, value):
+            raise OSError("controlled stdout failure")
+    original = AssertionError("original performance guard")
+    with pytest.raises(AssertionError) as caught:
+        try:
+            raise original
+        finally:
+            observer.emit_summary(session="AM", stream=BrokenOutput())
+    assert caught.value is original and observer.receipt_emit_error == "OSError"
+    assert not observer.receipt_emitted
+
+
+def test_compact_emit_retains_gc_overlap_and_discloses_overlap_cap():
+    observer = StallCorrelation(clock_ns=lambda: 9_000_004_000)
+    observer.lag_sample(8, 1)
+    for _ in range(35):
+        observer.rows["gc"].extend([("start", 7_999_000_000, 2, 123, 0, 0),
+                                    ("stop", 9_100_000_000, 2, 123, 10, 0)])
+    output = FlushedOutput()
+    observer.emit_summary(session="AM", physical_start=0, active_start=40, stream=output)
+    receipt = json.loads(output.getvalue().split("=", 1)[1])
+    maximum = receipt["max_stall"]
+    assert maximum["overlapping_steps"] == [] and len(maximum["overlapping_gc"]) == 32
+    assert maximum["omitted_gc_overlaps"] == 3 and maximum["omitted_step_overlaps"] == 0
+    assert all(row["generation"] == 2 and row["thread_id"] == 123
+               and row["overlap_basis"] == "DERIVED_LAG_WINDOW" for row in maximum["overlapping_gc"])
+    assert receipt["sample_counts"]["gc"] == 70
+
+
+def test_rate_source_emits_in_measurement_finally_before_guards_and_has_outer_fallback():
+    tree = ast.parse(Path(__file__).with_name("test_pomexitlog1_v4_rate.py").read_text())
+    function = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef))
+    outer = next(n for n in function.body if isinstance(n, ast.Try))
+    measurement = next(n for n in outer.body if isinstance(n, ast.Try))
+    def emits(nodes):
+        return [n for node in nodes for n in ast.walk(node) if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute) and n.func.attr == "emit_summary"]
+    assert len(emits(measurement.finalbody)) == 1 and len(emits(outer.finalbody)) == 1
+    guard = next(n for n in outer.body if isinstance(n, ast.Assert)
+                 and "max(stalls)" in ast.unparse(n))
+    assert emits(measurement.finalbody)[0].lineno < guard.lineno
