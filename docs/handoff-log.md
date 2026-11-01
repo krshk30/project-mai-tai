@@ -15,6 +15,14 @@
 
 ---
 
+## 2026-11-01 (Sun) — claude-1
+
+- Installed main 6b29bc05 at 10:43 ET (operator OK). It adds the OMS loop-lag log. Preopen re-pinned.
+- Merged #1180, #1181 and #1184 (combined test fixes + DST reporting windows). #1172 = docs fast path + Pullback check panel.
+- Pullback backtest: 'no 2% pullback in purple' → +$306.56 on 241 LIVE+2min trades, in-sample. H2 dropped by the operator.
+- Friday live vs sim: 3 of 7 taken. The 4 misses were WBPA3 (CHOW ×3, fixed) and the ONEG exit refusal (fixed).
+- Operator rulings: freeze from 11-02; chat before 'bug' and get approval for each fix unless a window is granted.
+
 ## 2026-09-30 — a why answered from the log, twice; the */5 cron pile-up; ORB goes live; Momentum's install stops on its own checks
 
 **The day in one line:** seven PRs merged and pinned (#1070 FLAGGATE, #1071, #1072 Option A, #1073 restart gate, #1074 stop guard, #1075 ORB late-bar wait, #1076), ORB Schwab went LIVE at 19:31 ET (Mode B), Momentum's Option A install stopped at 18:41 ET on two check defects (both gateways were healthy by content) and was rescheduled to 05:15 ET 10-01, and the row-38 root cause was found: every */5 minute 13 cron jobs start together, the gateway's publish loop starves trades behind quotes, and the OMS's 2-second freshness guard drops the Webull leg.
