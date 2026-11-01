@@ -1,0 +1,9 @@
+{
+  "pr_number": 1179,
+  "range_base": "b1933356e1b49122e5b5785ecdf4857079fb00ac",
+  "range_head": "8c1ffe7aa7ce56131c8c222cf9d0fc2977bcd777",
+  "reviewed_at": "2026-11-01T06:24:37Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: tests only (114 files); shared OwnedSqlite fixture = private file-backed NullPool SQLite per test + owned _run_db futures joined before dispose (early dispose fails loudly); replaces StaticPool cross-thread sharing (SIGSEGV class); no assertion removed, no app change."
+}
