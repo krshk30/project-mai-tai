@@ -1,0 +1,9 @@
+{
+  "pr_number": 1172,
+  "range_base": "b69877fa5ccf00f9e8c900347e775257fa091d56",
+  "range_head": "bf1de4dd983d52fb1e0e26e3637bc17d2f076eee",
+  "reviewed_at": "2026-11-01T17:14:46Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Original typed operator approval and exact panel replacement proposal verified. Entire five-commit workflow plus display range independently reviewed; rebase patch IDs all equal and final tree exactly old qualified head plus merged b698 main. Workflow docs-only conditions, non-docs independent coverage, timing body/budgets/exclusion unchanged. New display only replaces H2 panel with frozen recorded pullback fields; original four panels and input payloads exact across 26 retained real stored days, 22-day sample241 trades43 hypothetical skips563.38 avoided256.82 lost net306.56. Original C1 tool receipt80 related tests passed and Ruff passed verified without repeat. Existing test AST exact plus new guard. No producer/order/OMS/storage changes or local rate/PG test. Backtest is hypothetical gross scoring, not live efficacy proof."
+}
