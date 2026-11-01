@@ -1,4 +1,4 @@
-"""Historical9c fallback closure plus CURRENT L14 preservation on combined724.
+"""Historical9c fallback closure plus the explicit installed L14 successor.
 
 The existing fixture is immutable. Historical APP code is read as pinned Git
 blobs only, never imported/checked out. Current metadata/GET assertions still use
@@ -197,14 +197,14 @@ def test_settings_are_a2_plus_only_three_opt_in_receipt_fields():
     assert "strategy_schwab_1m_v2_brokerdecides1_enabled" not in fields
 
 
-def test_current_l14_runtime_preserves_exact_historical_9c_bytes():
-    # CURRENT successor is separately pinned; all55 historical preimages retained.
+def test_installed_l14_successor_matches_reviewed_content_postimages():
+    # Historical-only tests retain9c proofs; CURRENT guard requires no old Git objects.
     from tests.unit.test_l14_ui_current_lineage_successor import assert_current_protected_l14_successor
     assert_current_protected_l14_successor()
 
 
-def test_current_runtime_path_closure_matches_reviewed_combined_component():
-    # Literal724 membership plus exactly one pinned CP display module, never HEAD.
+def test_current_runtime_path_closure_matches_reviewed_installed_successor():
+    # Installed6ddb membership plus exact reviewed source-only changes, never HEAD.
     from tests.unit.test_l14_ui_current_lineage_successor import assert_current_runtime_membership_successor
     assert_current_runtime_membership_successor()
 

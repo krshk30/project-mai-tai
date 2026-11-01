@@ -12,6 +12,7 @@ import pytest
 
 from project_mai_tai.events import QuoteTickEvent, QuoteTickPayload
 from tests.unit.test_momlive1_runtime import event, offer_and_drain, setup
+from tests.unit.momlive1_owned_fixtures import complete_owned_observation
 
 
 @pytest.mark.asyncio
@@ -22,6 +23,7 @@ async def test_active_mom_native_240_per_second_60_seconds_slow_offloop(enabled,
     try:
         broker.entry_quantity, broker.entry_status = D(1), "partially_filled"
         await offer_and_drain(runtime, event(now[0]))
+        await complete_owned_observation(runtime, next(iter(runtime.book.episodes)))
         broker.entry_quantity, broker.entry_status = D(0), "accepted"
         second = event(now[0])
         data = json.loads(second.payload.metadata["momlive_signal"])

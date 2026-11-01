@@ -6,18 +6,20 @@ from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
-from project_mai_tai.db.models import BrokerOrder, SystemIncident, TradeIntent
+from project_mai_tai.db.models import Base, BrokerOrder, SystemIncident, TradeIntent
 from project_mai_tai.oms import webull_order_identity as identity
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
 from tests.unit.test_v2_exit_paper_isolation import _FakeRedis, _make_sf
 
 
-def setup(*, broker_id=None, provider="webull"):
-    sessions = _make_sf()
+def setup(*, broker_id=None, provider="webull", sessions=None):
+    sessions = _make_sf() if sessions is None else sessions
     adapter = AsyncMock()
     service = OmsRiskService(
         Settings(_env_file=None, oms_adapter="simulated", oms_cancel_verify_interval_seconds=0,
@@ -91,21 +93,35 @@ async def test_unchanged_status_identity_is_id_only_off_loop(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_real_sync_unchanged_accepted_saves_id_without_fill_or_new_read(monkeypatch):
-    service, sessions, order_id, report = setup()
+async def test_real_sync_unchanged_accepted_saves_id_without_fill_or_new_read(monkeypatch, tmp_path):
+    # The actual sync reader and dedicated identity writer overlap. StaticPool's
+    # single in-memory connection lets one Session release the other's SAVEPOINT.
+    # Keep this threaded case on private file-backed, independent connections.
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'identity.sqlite'}",
+        connect_args={"check_same_thread": False}, poolclass=NullPool)
+    tables = [table for table in Base.metadata.sorted_tables
+        if table.name not in {"market_trade_ticks", "market_quote_ticks"}]
+    Base.metadata.create_all(engine, tables=tables)
+    sessions = sessionmaker(engine, expire_on_commit=False)
+    service, sessions, order_id, report = setup(sessions=sessions)
     before = snapshot(sessions, order_id)
     service.broker_adapter.fetch_order_update.return_value = report
     monkeypatch.setattr(service, "_should_refresh_working_order", lambda row: False)
     service._refresh_drift_working_cache = AsyncMock()
-    result = await service.sync_broker_orders(account_names=["live:orb"])
-    await service._drain_webull_order_identities()
-    assert result == {"orders": 0, "terminal_orders": 0}
-    service.broker_adapter.fetch_order_update.assert_awaited_once()
-    after = snapshot(sessions, order_id)
-    assert after.pop("broker_order_id") == "CONTROLLED-venue"
-    before.pop("broker_order_id")
-    assert after == before
-    await service._webull_identity_writer.close()
+    try:
+        result = await service.sync_broker_orders(account_names=["live:orb"])
+        await service._drain_webull_order_identities()
+        assert result == {"orders": 0, "terminal_orders": 0}
+        service.broker_adapter.fetch_order_update.assert_awaited_once()
+        after = snapshot(sessions, order_id)
+        assert after.pop("broker_order_id") == "CONTROLLED-venue"
+        before.pop("broker_order_id")
+        assert after == before
+    finally:
+        writer = service.__dict__.get("_webull_identity_writer")
+        if writer is not None:
+            await writer.close()
+        engine.dispose()
 
 
 @pytest.mark.asyncio

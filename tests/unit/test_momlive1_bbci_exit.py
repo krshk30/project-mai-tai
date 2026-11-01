@@ -215,6 +215,12 @@ async def test_entry_deadline_marks_fresh_read_without_resending():
 @pytest.mark.asyncio
 async def test_filled_entry_with_unmeasurable_first_time_does_not_starve_native_detail_budget():
     _, broker, _, runtime, identity = await held()
+    # Inbox/work-queue drain is not a receipt that the actor's one-second
+    # observation cache refreshed after the entry fill committed. Establish the
+    # real owned observation and protection before measuring subsequent reads.
+    observation = await runtime._observe(identity)
+    assert observation.position is not None and observation.quantity == D(33)
+    await runtime._protect(observation.position)
     assert runtime.runtime[identity]["first_execution_time_status"] == "UNKNOWN"
     fetch = broker.fetch_order_update
     reads = []

@@ -11,6 +11,7 @@ from project_mai_tai.momentum_live.runtime import OmsLiveRuntime
 from project_mai_tai.positions_read_receipt import record_receipts
 from tests.unit.test_momlive1_exit_recovery import fresh, sells
 from tests.unit.test_momlive1_runtime import event, offer_and_drain, setup
+from tests.unit.momlive1_owned_fixtures import complete_owned_observation
 
 
 def exit_orders(broker):
@@ -73,6 +74,7 @@ async def prepared(provider="webull", hour=12, *, send_exit=True):
     await runtime.start()
     try:
         await offer_and_drain(runtime, event(now[0], route=provider))
+        await complete_owned_observation(runtime, next(iter(runtime.book.episodes)))
     finally:
         await runtime.close()
     identity = next(iter(runtime.book.episodes))
