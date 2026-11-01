@@ -1,0 +1,9 @@
+{
+  "pr_number": 1179,
+  "range_base": "b1933356e1b49122e5b5785ecdf4857079fb00ac",
+  "range_head": "b3654ab57692f5da6c66cbabfbdfecd699c04c92",
+  "reviewed_at": "2026-11-01T10:13:46Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: tests only; owned SQLite fixture imports in the remaining importer modules; no assertion weakened, no app change."
+}

@@ -1,0 +1,9 @@
+{
+  "pr_number": 1177,
+  "range_base": "b1933356e1b49122e5b5785ecdf4857079fb00ac",
+  "range_head": "20b97ee66ed7941a742e17cd192dcedfa72d8769",
+  "reviewed_at": "2026-11-01T10:13:46Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: tests only; false-flip offload test: off-loop for each write + commit/ack/rearm order (no worker-affinity assumption); no assertion weakened, no app change."
+}

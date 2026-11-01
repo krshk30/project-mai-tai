@@ -1,0 +1,9 @@
+{
+  "pr_number": 1180,
+  "range_base": "b1933356e1b49122e5b5785ecdf4857079fb00ac",
+  "range_head": "7cd60a17b94236fabffa0a4ab8985c8236123779",
+  "reviewed_at": "2026-11-01T10:13:47Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: tests only; EOD owned work retained across fixture completion waits; no assertion weakened, no app change."
+}

@@ -1,0 +1,9 @@
+{
+  "pr_number": 1181,
+  "range_base": "b1933356e1b49122e5b5785ecdf4857079fb00ac",
+  "range_head": "7e473f5a529f9fc6a5a2b145851803b63bc64861",
+  "reviewed_at": "2026-11-01T10:13:47Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: tests only; AST lock strips exactly the loop_lag import + run() decorator; no assertion weakened, no app change."
+}
