@@ -1,0 +1,9 @@
+{
+  "pr_number": 1182,
+  "range_base": "b1933356e1b49122e5b5785ecdf4857079fb00ac",
+  "range_head": "b38b10f4b6d7c77873bcd328a526c91252399084",
+  "reviewed_at": "2026-11-01T12:10:48Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: L14 reviewed-successor postimages updated for exactly the 4 DST source files; tests only."
+}
