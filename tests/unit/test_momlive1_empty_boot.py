@@ -13,6 +13,7 @@ from project_mai_tai.momentum_live.admission import EpisodeLedger, Refusal, Sign
 from project_mai_tai.momentum_live.owner_proof import owner_proof
 from project_mai_tai.momentum_live.runtime import OmsLiveRuntime
 from tests.unit.test_momlive1_runtime import event, offer_and_drain, setup
+from tests.unit.momlive1_owned_fixtures import complete_owned_observation
 
 
 @pytest.mark.asyncio
@@ -21,6 +22,7 @@ async def test_next_day_off_empty_book_clears_stale_owner_only_after_actual_empt
     now, broker, service, runtime = setup()
     await runtime.start()
     await offer_and_drain(runtime, event(now[0]))
+    await complete_owned_observation(runtime, next(iter(runtime.book.episodes)))
     episode = next(iter(runtime.book.episodes.values()))
     old = owner_proof(runtime.book, observed_ns=runtime.now_ns(), producer_instance_id="123:456",
         account_names=runtime.accounts, bindings=runtime.bindings, entry_admission_enabled=True)

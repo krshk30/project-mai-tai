@@ -7,13 +7,17 @@ import pytest
 from project_mai_tai.momentum_live.ledger import load_live_ledger
 from project_mai_tai.momentum_live.runtime import OmsLiveRuntime
 from tests.unit.test_momlive1_runtime import event, offer_and_drain, setup
+from tests.unit.momlive1_owned_fixtures import complete_owned_observation
 
 
 async def held():
     now, broker, service, runtime = setup()
     await runtime.start()
-    await offer_and_drain(runtime, event(now[0]))
-    await runtime.close()
+    try:
+        await offer_and_drain(runtime, event(now[0]))
+        await complete_owned_observation(runtime, next(iter(runtime.book.episodes)))
+    finally:
+        await runtime.close()
     identity = next(iter(runtime.book.episodes))
     now[0] += timedelta(seconds=301)
     fresh(now, service)

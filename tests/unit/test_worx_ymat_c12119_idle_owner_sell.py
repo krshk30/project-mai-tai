@@ -10,9 +10,7 @@ this is a pure owner-state control, NOT a full a823 runtime/world comparison.
 
 from dataclasses import asdict
 import hashlib
-import os
 from pathlib import Path
-import subprocess
 import sys
 from types import ModuleType
 
@@ -39,20 +37,12 @@ CASES = [
 
 @pytest.fixture(scope="module")
 def exact_old_core():
-    # One immutable local Git read, for Main's explicit existing test fence.
-    # No Git state changes, shell, provider, child APP or new test runner.
-    framed = subprocess.check_output(
-        ["/usr/bin/git", "--no-replace-objects", "-C", str(ROOT), "cat-file", "--batch"],
-        input=f"{OLD}:{CORE}\n".encode(), timeout=5,
-        env={"PATH": os.defpath, "GIT_CONFIG_NOSYSTEM": "1",
-             "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_OPTIONAL_LOCKS": "0",
-             "GIT_NO_REPLACE_OBJECTS": "1"})
-    assert len(framed) <= 2 * 1024 * 1024
-    header, content = framed.split(b"\n", 1)
-    oid, kind, size = header.split()
-    assert oid == OLD_BLOB and kind == b"blob"
-    raw = content[:int(size)]
-    assert content[int(size):] == b"\n"
+    # Frozen exact source survives squash merges and branch deletion. Verify
+    # both historical content identities without depending on Git objects.
+    raw = (ROOT / "tests/fixtures/a823_schwab_1m_v2_core_preimage.txt").read_bytes()
+    assert len(raw) <= 2 * 1024 * 1024
+    framed = b"blob " + str(len(raw)).encode() + b"\0" + raw
+    assert hashlib.sha1(framed).hexdigest().encode() == OLD_BLOB
     assert hashlib.sha256(raw).hexdigest() == OLD_SHA
     name = "_c12119_exact_a823_owner_core"
     assert name not in sys.modules

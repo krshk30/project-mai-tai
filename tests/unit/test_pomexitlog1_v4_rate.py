@@ -154,6 +154,18 @@ async def test_existing_native_rate_60s_at_least200_stall_under50_with_timing_in
         assert await runtime.start()
         broker.entry_quantity, broker.entry_status = D(1), "partially_filled"
         await offer_and_drain(runtime, event(now[0]))
+        held = next(ep for ep in runtime.book.episodes.values() if ep.symbol == "SCNI")
+        # A queue join can retain the actor's pre-fill observation while this
+        # fixture's business clock is frozen. Invalidate only that cached read
+        # under its real owner lock, then await the actual observation/save/
+        # protection path. No expected quantity, geometry or counter is seeded;
+        # all original positive preconditions below still have to be earned.
+        prelude_clock = now[0]
+        async with runtime.state_lock:
+            runtime.actor._observations.pop(held.episode_id, None)
+        await asyncio.wait_for(runtime.actor._service_owned(held.episode_id), 10)
+        await asyncio.wait_for(runtime.actor.work.queue.join(), 10)
+        assert now[0] == prelude_clock
         broker.entry_quantity, broker.entry_status = D(0), "accepted"
         second = event(now[0])
         data = json.loads(second.payload.metadata["momlive_signal"])

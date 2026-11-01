@@ -1,0 +1,20 @@
+{
+  "scope": "installed6ddb_plus_reviewed_G2_Ruff_and_C1_owner_phone",
+  "runtime_path_count": 642,
+  "runtime_paths_sha256": "f3b68d58ddec539d2c93579a1a769ba6c0ba04320ef5d1146af1d7f23d410e97",
+  "changed_source_sha256": {
+    "src/project_mai_tai/atr_simulation/firstbar_binding.py": "ce3cf7aeca52845473a1c7f815f9d5b74e02dfa95f413b88df5b40468a5b4a95",
+    "src/project_mai_tai/atr_simulation/firstbar_live_baseline.py": "65fd9075f62b998d5d1147ee6ffc8f7bfed99abc04aff6b918f16c70d76e636a",
+    "src/project_mai_tai/atr_simulation/firstbar_study.py": "ca81f94d8d924f3b1021e850aa0c6fbbeee9ffc8a60fe6aa2bdb11956adc6325",
+    "src/project_mai_tai/atr_simulation/models.py": "6d110baaabef6fab1d3cf42e0945b895fa195fe3744e4a757d1b3485e429a1df",
+    "src/project_mai_tai/atr_simulation/same_sip_binding.py": "46aa82f2d72dbbe6670341a52dcbc7b1df89512772dae5e33bb05dbb53dc98e4",
+    "src/project_mai_tai/atr_simulation/same_sip_firstbar_live_baseline.py": "6ac7e960e9fa35e69fef895030307f02aec0ba188b89c85426a1a784dfa16406",
+    "src/project_mai_tai/atr_simulation/same_sip_types.py": "fc052a6e2b163cdcaa79d0577301a26d3a83087b31ed7ce2eae3bbae5129230e",
+    "src/project_mai_tai/brokerdecides1_owner_phone.py": "bb0882775ae95726fd303108ea0a29a9c13eb690e329de8e5d251d1bf2927255",
+    "src/project_mai_tai/brokerdecides1_sync.py": "a4d414d6e835362aa789d052065cb57b292d87c79e541aa6d670224a86d4e670",
+    "src/project_mai_tai/oms/wbexit3_stop.py": "85d1ba824643d975d543884326a3e8992036cd7e9422c03451e32aca06da4ecc",
+    "src/project_mai_tai/oms/webull_attach_riskoff.py": "694ec7b705a1e173f2dcc38a6af2ff7aa18ee3938ee337ad4ff3c4513d6f55ab",
+    "src/project_mai_tai/services/control_plane.py": "853fba857bed463fd3aa05f239db0949326409f41c5bcfe8a1e5aa960ab1801e"
+  },
+  "cp_sim_display_sha256": "68ffd4c2aafe6d3995bb992e1715d954f7c887ec2fe70a1804b910dafa96414c"
+}
