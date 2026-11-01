@@ -1,0 +1,9 @@
+{
+  "pr_number": 1181,
+  "range_base": "b1933356e1b49122e5b5785ecdf4857079fb00ac",
+  "range_head": "912481c71506aa5c67907cb757898953242cab0a",
+  "reviewed_at": "2026-11-01T07:52:14Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: logging-only OMS loop-lag watchdog wrapping OmsRiskService.run: 1 s sleep-drift task, logs [OMS-LOOP-LAG] only when lag>100 ms, max 1/10 s; gen2 GC duration via gc.callbacks (no logging/alloc in callback, no GC policy change); owned close detaches callback + joins task; nfq2 200 eps 60 s rate test runs with it active. Off the tick path, no behaviour change."
+}
