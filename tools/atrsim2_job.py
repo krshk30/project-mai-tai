@@ -153,10 +153,16 @@ LIVE_OFFSET, LIVE_BAND, LIVE_TARGET, LIVE_STOP = 0.005, 0.005, 0.05, 0.08
 # waiting buy is placed only after the line has been short for 3 closed bars (TNMG 10-30: SELL bar
 # 09:13, rested at 09:17). A shorter short never gets a waiting buy (ONEG 10-30 10:50, 1 bar).
 LIVE_MIN_SHORT_BARS = 3
+# Operator 11-01 (coach round 4, delayed arming): the waiting buy is armed only once a COMPLETED purple
+# 1-minute close is >= 2% below the running high of purple closes (same zigzag as the recorded pullbacks).
+# Qualification resets at every new purple stretch; no pullback before the BUY flip = never armed.
+ARM_PULLBACK = 0.02
+ARM_TABLE = "LIVE+2min PB2-ARM SIM"
 
 
-def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=False):
-    """Same signal, the live bot's own entry and exit rules (simulation, not real fills)."""
+def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=False, arm_pullback=False):
+    """Same signal, the live bot's own entry and exit rules (simulation, not real fills). With arm_pullback
+    the waiting buy is armed only after the first qualifying 2% pullback in this purple stretch."""
     series, rows = LINES[symbol]
     fi = next(i for i, b in enumerate(series) if b.ts == flip_bar.ts)
     si = max((i for i in range(fi) if rows[i]["flip"] == "SELL"), default=None)
@@ -172,6 +178,15 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=F
     if rows[first - 1]["trail"] is None:
         return dict(base, status="SKIPPED", reason="no resting bar before the flip")
     seg_start = max(at(first), open_from)
+    armed_ms = None
+    if arm_pullback:
+        for j in range(si + 1, fi + 1):  # purple bars si..fi-1; bar j-1 completes at series[j-1].ts + 60 s
+            if _pullbacks([b.close for b in series[si:j]], ARM_PULLBACK) >= 1:
+                armed_ms = series[j - 1].ts + 60_000
+                break
+        if armed_ms is None:
+            return dict(base, status="SKIPPED", reason="no 2% pullback in the purple stretch (never armed)")
+        base = dict(base, armed_at=datetime.fromtimestamp(armed_ms / 1000, timezone.utc).astimezone(ET).strftime("%H:%M:%S"))
     # The live waiting buy stays after the flip bar closes until it fills, a sell flip, or 15:45.
     seg_end = min(sell_close or cutoff, cutoff)
     if seg_end <= seg_start:
@@ -185,6 +200,8 @@ def live_rules_sim(conn, symbol, flip_bar, sell_close, day, now, base, two_min=F
             break
         if triggered and prev_ts is not None and not continuous(symbol, prev_ts, ts):
             triggered, triggered_at = False, None  # a FADE between two prints cancelled the order (no print in the gap)
+        if armed_ms is not None and ts.timestamp() * 1000 <= armed_ms:
+            continue  # not armed yet (codex 11-01: a print AT the arming close cannot be ours): no trigger, no fill
         minute = int(ts.timestamp() // 60) * 60_000
         if minute > series[fi].ts:
             bar_k = k  # after the flip: the last resting price is kept (no new short line)
@@ -477,7 +494,14 @@ def stock_features(conn, symbol, flip_bar, at, price, previous):
             up = max(up, c / low_so_far - 1) if low_so_far < math.inf else up
             down = max(down, 1 - c / high_so_far) if high_so_far else down
             low_so_far, high_so_far = min(low_so_far, c), max(high_so_far, c)
+        def clock(ms):
+            return datetime.fromtimestamp(ms / 1000, timezone.utc).astimezone(ET).strftime("%H:%M:%S")
         out["purple"] = {"minutes": round((min(series[fi].ts, decision_ms) - series[si].ts) / 60_000, 1),
+                         # Coach 11-01: the window's clocks, so durations can be reconciled. minutes = from the SELL
+                         # bar's start to the earlier of the BUY flip bar's start and the decision.
+                         "sell_bar_start": clock(series[si].ts), "short_available": clock(series[si].ts + 60_000),
+                         "last_bar_completed": clock(series[end - 1].ts + 60_000),
+                         "window_end": clock(min(series[fi].ts, decision_ms)),
                          "bars": len(closes),
                          "pullbacks": {f"{int(sz * 100)}pct": _pullbacks(closes, sz) for sz in PULLBACK_SIZES},
                          "max_swing_up_pct": round(up * 100, 2), "max_swing_down_pct": round(down * 100, 2)}
@@ -579,14 +603,14 @@ def run(now=None):
     anchor = datetime.combine(day, datetime.min.time(), ET).replace(hour=4)
     url = os.environ["MAI_TAI_DATABASE_URL"]
     engine = create_engine(url, pool_pre_ping=True)
-    tables = {"FIRSTBAR": [], "FIRSTBAR+2min": [], "LIVE rules SIM": [], "LIVE+2min SIM": []}
+    tables = {"FIRSTBAR": [], "FIRSTBAR+2min": [], "LIVE rules SIM": [], "LIVE+2min SIM": [], ARM_TABLE: []}
     global WINDOWS
     with engine.connect() as conn:
         conn.execute(text("set statement_timeout = 20000"))
         windows = WINDOWS = confirmed_windows(conn, day)
         fills = live_fills(conn, anchor)
         session_end = datetime.combine(day, datetime.min.time(), ET).replace(hour=20)
-        last_trade = {"LIVE rules SIM": {}, "LIVE+2min SIM": {}}
+        last_trade = {"LIVE rules SIM": {}, "LIVE+2min SIM": {}, ARM_TABLE: {}}
 
         def at_clock(hms):
             hh, mm, ss = (int(x) for x in hms.split(":"))
@@ -632,6 +656,10 @@ def run(now=None):
                     live2["h2"] = h2_check(symbol, fill_at)
                 record("LIVE+2min SIM", symbol, bar, live2)
                 tables["LIVE+2min SIM"].append(live2)
+                armed = live_rules_sim(conn, symbol, bar, sell_close, day, now,
+                    {"symbol": symbol, "signal": a["signal"], "trigger": a["trigger"]}, two_min=True, arm_pullback=True)
+                record(ARM_TABLE, symbol, bar, armed)
+                tables[ARM_TABLE].append(armed)
     for rows in tables.values():
         rows.sort(key=lambda r: (r.get("entry_time") or "99", r["signal"], r["symbol"]))
     doc = {"schema": "ATRSIM2_DAY_V1", "trading_day": day.isoformat(), "generated_at": now.isoformat(),

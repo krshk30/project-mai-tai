@@ -179,6 +179,48 @@ def test_live_rules_waiting_buy_needs_an_established_three_bar_short(monkeypatch
         job.LINES.pop("TNMG", None)
 
 
+def test_delayed_arm_waits_for_the_first_completed_2pct_purple_pullback(monkeypatch):
+    # Operator/coach 11-01: the waiting buy is armed only after a completed purple close >= 2% below the running
+    # purple high; prints before that cannot fill; no pullback in the stretch = never armed.
+    from datetime import date
+    def t(m, s=0):
+        return datetime(2026, 10, 30, 13, m, s, tzinfo=timezone.utc)
+    def build(closes):  # long bar 13:10, SELL bar 13:11, purple 13:12.., BUY flip bar last
+        n = 1 + len(closes) + 1
+        cl = [1.0] + closes + [1.0]
+        series = [job.Bar(int(t(10 + i).timestamp() * 1000), cl[i], cl[i], cl[i], cl[i], 10_000) for i in range(n)]
+        rows = [dict(flip=None, trail=1.0, state="long") for _ in range(n)]
+        rows[1]["flip"], rows[-1]["flip"] = "SELL", "BUY"
+        return series, rows
+    prints = [(t(15, 30), 1.01), (t(17, 10), 1.01)]
+    monkeypatch.setattr(job, "trades", lambda *a, **k: list(prints))
+    monkeypatch.setattr(job, "confirmed", lambda *a, **k: True)
+    monkeypatch.setattr(job, "continuous", lambda *a, **k: True)
+    try:
+        series, rows = build([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])  # no pullback
+        job.LINES["FLAT"] = (series, rows)
+        plain = job.live_rules_sim(None, "FLAT", series[-1], None, date(2026, 10, 30), t(59), {})
+        assert plain["entry_time"] == "09:15:30"  # the original rule fills on the first cross
+        armed = job.live_rules_sim(None, "FLAT", series[-1], None, date(2026, 10, 30), t(59), {}, arm_pullback=True)
+        assert armed["status"] == "SKIPPED" and "never armed" in armed["reason"]
+        series, rows = build([1.0, 1.0, 1.0, 1.0, 1.0, 0.97])  # -3% close in the 13:16 bar, completed 13:17
+        job.LINES["DIP"] = (series, rows)
+        armed = job.live_rules_sim(None, "DIP", series[-1], None, date(2026, 10, 30), t(59), {}, arm_pullback=True)
+        assert armed["armed_at"] == "09:17:00"
+        assert armed["status"] == "OPEN" and armed["entry_time"] == "09:17:10"  # the 09:15:30 cross is ignored
+        # Codex 11-01 boundary: a cross exactly AT the arming time neither fills nor carries a trigger forward;
+        # the first print after it can trigger and fill.
+        prints[:] = [(t(17, 0), 1.01), (t(17, 0).replace(microsecond=1000), 1.01)]
+        armed = job.live_rules_sim(None, "DIP", series[-1], None, date(2026, 10, 30), t(59), {}, arm_pullback=True)
+        assert armed["order_times"]["triggered_at"] == "09:17:00.001" and armed["order_times"]["filled_at"] == "09:17:00.001"
+        prints[:] = [(t(17, 0), 1.01)]
+        armed = job.live_rules_sim(None, "DIP", series[-1], None, date(2026, 10, 30), t(59), {}, arm_pullback=True)
+        assert armed["status"] == "WAITING" and "entry_time" not in armed  # still resting, never filled AT the arm
+    finally:
+        job.LINES.pop("FLAT", None)
+        job.LINES.pop("DIP", None)
+
+
 def test_round4_pullbacks_count_down_legs_on_closes_at_each_size():
     closes = [5.00, 5.20, 5.05, 5.30, 5.10, 5.40, 5.00]  # legs: -2.9%, -3.8%, -7.4%
     assert job._pullbacks(closes, 0.02) == 3
@@ -288,3 +330,14 @@ def test_pullback_panel_replaces_h2_and_scores_skip_keep_unknown():
             " · 1 could not be checked") in html
     assert "<td>0 / 0 / 0</td>" in html and "<td>2 / 1 / 0</td>" in html and "<td>— / — / —</td>" in html
     assert "NOTRADE" not in html.split('data-sim-mode="Pullback check"')[1]
+
+
+def test_delayed_arm_table_is_shown_after_the_pullback_check_only_when_recorded():
+    day = doc()
+    assert "6 · LIVE bot buy + 2-minute cut, waiting buy only after a 2% pullback" not in render_day(
+        day, render_row=render, day="2026-10-29")  # older day rows have no arm table
+    day["tables"]["LIVE+2min PB2-ARM SIM"] = [row(armed_at="13:19:00"), row(symbol="SKIP", status="SKIPPED",
+                                                  reason="no 2% pullback in the purple stretch (never armed)")]
+    html = render_day(day, render_row=render, day="2026-10-29")
+    assert html.index('data-sim-mode="Pullback check"') < html.index('data-sim-mode="LIVE+2min PB2-ARM SIM"')
+    assert "armed 13:19:00" in html and "1 trades, 1 signals without a trade" in html

@@ -16,6 +16,7 @@ from .cp_sim_display import panel
 ET = ZoneInfo("America/New_York")
 SNAPSHOT_TYPE = "atr_sim2_day"
 TITLES = ("FIRSTBAR", "FIRSTBAR+2min", "LIVE rules SIM", "LIVE+2min SIM")
+ARM_TITLE = "LIVE+2min PB2-ARM SIM"  # shown after the pullback check (operator/coach 11-01)
 # Operator 10-29 20:0x: the names confused him — each table says plainly how it BUYS and how it SELLS.
 # The keys above stay as stored in the day rows; only the heading and description shown change.
 _LIVE_BUY = ("BUY like the live bot: waiting buy at the line +0.5% (limit +0.5% more), following the line every "
@@ -30,6 +31,10 @@ SHOWN = {
                        + ", or the confirmation exit (the bar after the buy does not close long)."),
     "LIVE+2min SIM": ("4 · LIVE bot buy + 2-minute cut", _LIVE_BUY + " " + _SELL
                       + ", or the confirmation exit" + _TWO_MIN),
+    ARM_TITLE: ("6 · LIVE bot buy + 2-minute cut, waiting buy only after a 2% pullback",
+                "Same as table 4, but the waiting buy is armed only once a completed purple 1-minute close is 2% or"
+                " more below the highest purple close so far (checked again in every new purple stretch). No 2%"
+                " pullback before the buy flip = no waiting buy. Simulation only — the live bot does not use it."),
 }
 NOTE = ("Simulations, not real trades: every momentum-scanner-confirmed buy flip today, $600 per trade. "
         "Tables 1–2 buy the FIRSTBAR way, tables 3–4 buy the LIVE bot way; tables 2 and 4 add the 2-minute cut.")
@@ -66,6 +71,8 @@ def _display(row):
     traded = row.get("status") in ("CLOSED", "OPEN")
     pnl = row.get("pnl", 0.0) if traded else 0.0
     summary = row.get("reason", "") + " · signal " + row.get("signal", "?") + " · buy at " + str(row.get("trigger", "?"))
+    if row.get("armed_at"):
+        summary += " · armed " + str(row["armed_at"])
     return {
         "ticker": row.get("symbol", ""),
         "path": row.get("status", ""),
@@ -90,7 +97,7 @@ def render_day(doc, *, render_row, day: str):
                 '<h3>ATR simulation (4 tables)</h3><p>' + escape(note) + '</p></section></div>')
     generated = datetime.fromisoformat(doc["generated_at"]).astimezone(ET).strftime("%H:%M:%S")
     panels = []
-    for title in TITLES:
+    for title in TITLES + ((ARM_TITLE,) if ARM_TITLE in doc["tables"] else ()):
         rows = doc["tables"].get(title, [])
         traded = [r for r in rows if r.get("status") in ("CLOSED", "OPEN")]
         skipped = len(rows) - len(traded)
@@ -107,7 +114,8 @@ def render_day(doc, *, render_row, day: str):
         panels.append(panel(heading, [_display(r) for r in shown], render_row=render_row, marker=title,
                             updated_text=updated, description=description))
     return ('<div id="atr-sim2" class="full" data-atrsim2="day" data-firstbar-mount="true" data-atrsim-firstbar="true">'
-            + STYLE + '<p class="sim-desc">' + escape(NOTE) + "</p>" + "".join(panels) + pullback_panel(doc) + "</div>")
+            + STYLE + '<p class="sim-desc">' + escape(NOTE) + "</p>" + "".join(panels[:4]) + pullback_panel(doc)
+            + "".join(panels[4:]) + "</div>")
 
 
 def _num(value, fmt):
