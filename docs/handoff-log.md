@@ -15,6 +15,14 @@
 
 ---
 
+## 2026-11-01 (Sun) — claude-1
+
+- Installed main 6b29bc05 at 10:43 ET (operator OK). It adds the OMS loop-lag log. Preopen re-pinned.
+- Merged #1180, #1181 and #1184 (combined test fixes + DST reporting windows). #1172 = docs fast path + Pullback check panel.
+- Pullback backtest: 'no 2% pullback in purple' → +$306.56 on 241 LIVE+2min trades, in-sample. H2 dropped by the operator.
+- Friday live vs sim: 3 of 7 taken. The 4 misses were WBPA3 (CHOW ×3, fixed) and the ONEG exit refusal (fixed).
+- Operator rulings: freeze from 11-02; chat before 'bug' and get approval for each fix unless a window is granted.
+
 ## 2026-09-30 — a why answered from the log, twice; the */5 cron pile-up; ORB goes live; Momentum's install stops on its own checks
 
 **The day in one line:** seven PRs merged and pinned (#1070 FLAGGATE, #1071, #1072 Option A, #1073 restart gate, #1074 stop guard, #1075 ORB late-bar wait, #1076), ORB Schwab went LIVE at 19:31 ET (Mode B), Momentum's Option A install stopped at 18:41 ET on two check defects (both gateways were healthy by content) and was rescheduled to 05:15 ET 10-01, and the row-38 root cause was found: every */5 minute 13 cron jobs start together, the gateway's publish loop starves trades behind quotes, and the OMS's 2-second freshness guard drops the Webull leg.
@@ -9116,3 +9124,25 @@ Claude E86 and the preceding neutral-rebase history remain unchanged.
   - ATR exit gap since 09-01: 470 fills; PM worst −8.2%; RTH 9 past −9%.
   - Broker switch parked.
 - **Operator rules:** bug fixes need no approval; the scan job definition was extended with price/speed gaps; finish all + close-out tonight.
+
+## 2026-10-30 / 10-31 — Webull exit regression proven and fixed; four installs; Schwab re-auth
+
+- 10-30 06:23 ET 30c63e0b (WBEXIT3 + diagnostics + L12 waiter expiry) installed pre-market (operator order); later 0deff5f7 sim + 78bad800 health.
+- 10-30 trading: TNMG/ONEG ATR wins (+15.18/+15.48) via native Webull targets; every software Webull exit refused (TNMG 09:35, ONEG 13:31 sell flip, CHOW 15:34 confirmation + 16:00 EOD). CHOW blocked after PRICE_AGGRESSIVE refusals (WBPA2/WBPA3 built, reviewed). ONEG 10:52 "miss" = live 3-bar rule; sim fixed.
+- Root cause (conditional proof): WBEXIT2 demanded literal `WORKING`; Webull documents `SUBMITTED`. Replay of CHOW's post-close (CANCELLED) census through installed code with only status/event varied: SUBMITTED refused, WORKING passed. Original live payloads not retained. WBEXIT2 went live 10-28 evening. EOD 16:00 cause UNKNOWN.
+- 10-30 18:42 ET install 8159cd107 with WBEXIT2/WBEXIT3 OFF (operator rollback ruling), retired four owners, three entry markers and the CHOW phantom row (OMS stopped).
+- 10-31 10:46 ET operator re-authed Schwab (expires 11-07 09:46 ET). 10:48 ET install 6ddb3e6b0 (status fix + EOD step log) with both switches ON (operator order). Clean: NR0, census complete, 0 errors, preopen VERIFY OK.
+- Lesson recorded: when a live check refuses a real broker order, replay the broker's real reply through the installed code first.
+
+## 2026-10-31 (afternoon/evening) — main green, phone-pin defect fixed, ATRSIM4 stock inputs
+
+- Operator: "we have to fix all the issues". Main validate was red since ≥10-17 and main was behind the box.
+- 62 + 109 unit + 43 golden failures fixed, all stale (Mac-only paths, missing service.settings, PRICE1-era fixtures, catalog counts, squash-only git objects); 0 app bugs. Ruff 830 → 0.
+- #1174 squash (pin gate needs one agent marker per commit) merged 17:16 ET → main 4cd00d6394dd, green.
+- Real defect: BROKERDECIDES1 owner-phone channel refused since 10-30 18:42 (sha pin vs 78bad800 health edit). Replayed on the box; fix 178a9aa5 installed 13:13 ET (v2-only restart).
+- ATRSIM4 (sim only): round-4 hot/cold STOCK inputs, provenance stamp, EXIT UNKNOWN for capture-ended exits.
+  - Codex found two look-ahead defects; the coach sent five measurement corrections; all fixed.
+  - 22 days re-run → LIVE+2min +$97.24 (241 trades).
+  - Box cad483fc.
+- CI flake class found (≈1–2 timing tests per run); 4 fixed in #1175, 1 open.
+- Operator rulings: codex communicates only through the file; docs-only PRs need no pin; refine H2 into a stock-level label (round 4).

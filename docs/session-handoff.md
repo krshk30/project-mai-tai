@@ -1,55 +1,120 @@
-# Session Handoff — CURRENT STATE (read this first)
+# Session Handoff - November 1, 2026 (for Monday November 2)
 
-> **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
-> [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
-> The 10-16 state (Group D install) is in git history of this file (main 54549912).
+Written 2026-11-01 ~13:55 ET by claude-1 (final for the weekend). Supersedes the 10-31 version of this page. Production facts read on the box 11-01.
 
-## PRODUCTION NOW — as of Mon 2026-10-19 20:4x ET (claude-1 close-out read of the box)
+## Operator rulings 11-01 (read first)
 
-| Item | State now | Evidence (as-of) |
-|---|---|---|
-| Box checkout | **`b79ef160`** = installed `9df73a18` + Track A only: **Q** (O-1019-15 Webull unreadable-ACK never blocks the software stop/exit; list-proof exits; C6 original-pair proof; kill-switch inventory) + **O17** (control-plane survives one malformed DB row) | `git rev-parse` 20:0x; tree clean |
-| Installed tonight | 19:58 ET Track A, operator-approved ("go ahead with the install") **despite node-8 ORB rate absolute FAIL**, which fails identically on installed 9df (O-1019-25) | install receipts `analysis/` |
-| Services | all 8 restarted 19:58 ET; OMS restarted again 20:3x ET (after O-1019-26). Momentum guard + paper inactive since the 18:10 scheduled close → **Tue 03:40 ET timer** | `systemctl` 20:3x |
-| Guard | manifest `gateway_identity` re-pinned to market-data pid 408893 / start 23:58:07Z (backup `install-20261019-trackA/manifest.json.before-repin`); `daily_guard.py --dry-run-prestart` **PASS** 00:35Z; no safety-stop file | 20:35 |
-| Live momentum | boots clean (0 `MOMLIVE1-BOOT-REFUSED`) after O-1019-26 guarded settlement of WORX episode f723 (claimed → terminal_no_fill; codex main+Q+R AGREE 7fa2da28) | 20:3x |
-| Records | YMAT #2 external close booked (operator manual sell 165 @ 1.78 15:53 ET; guarded repair 2684e9c0, dry run then commit); 4 YMAT incidents closed | 19:38 |
-| Pages | ATR page closed=3, day **+$24.33** = broker; momentum live −$19.34; PAGES CLEAN | 20:0x |
-| Positions / orders | flat both brokers; 0 working orders; 0 open managed rows | 20:3x |
-| Backups | DB dump `install-20261019-trackA/project_mai_tai.dump` sha256 3caf4487…; tree 9df tgz f28dd562… | 19:26 |
+- **FREEZE from Mon 11-02:** fix only what actually breaks in the live market. New ideas and findings go on the board as one line each.
+- **Chat before "bug" and before ANY fix:** every fix needs the operator's approval for that fix, unless he grants a window (e.g. an overnight session). Scans keep finding and proving causes freely. Codex starts no fix build without a claude-1 block that quotes his approval.
+- **H2 dropped.** ATR page panel 5 is now the **Pullback check** (see below).
+- **Daily close-out line:** "live took X of Y LIVE-rules-SIM trades; missed N", each miss with its proven cause.
 
-## TOMORROW (Tue 10-20) — first checks, in order
+## Production NOW
 
-| Time ET | Check | Pass looks like |
-|---|---|---|
-| 03:47 | momentum guard + paper start | both active, `live_handoff=True`, no safety-stop file |
-| 04:05 | v2 session roll: prior-session `v2_removed_wait` rows (WORX ec6d28d9 retry_exhausted, EXYN bccca82e) | cleared / not gating; the scan's "WAITING BUY PER WATCHED STOCK" shows no `<<< NO WAITING BUY` from a 10-19 row |
-| 06:20 | preopen | known RED until O-1019-2 re-baseline lands (not a trading block) |
-| 07:00→ | full scan every 30 min + momentum watch every 10 min | first ATR Webull fill: pair attaches or Q list-proof software exit; no `WBATTACH1-BLOCKED` without an "Exit waiting for broker proof" incident |
+- Box checkout: `7f9fad6637f6ee3c31c88a35c13ff70a529765b0` (= main after #1172), installed 11-01 18:45 UTC (13:45 ET), all five services.
+  - The morning install 6b29bc05 (10:43 ET) added the passive OMS loop-lag log `[OMS-LOOP-LAG]` (logs only when lag > 100 ms).
+  - 7f9fad66 adds #1184 (off-order DST date windows on pages and reports; tests) and #1172 (docs-only CI fast path + ATR page panel 5 Pullback check). No order-path change.
+- Services (all active, NRestarts 0):
 
-## TO BE EXERCISED (installed tonight)
+  | Service | PID | Started (UTC) |
+  |---|---|---|
+  | oms | 3888320 | 18:45:53 |
+  | schwab-1m-v2 | 3888338 | 18:45:56 |
+  | strategy | 3888355 | 18:45:59 |
+  | control | 3888384 | 18:46:02 |
+  | orb-schwab | 3888394 | 18:46:06 |
 
-| Fix | First live event | Proof |
-|---|---|---|
-| Q (O-1019-15) | first ATR Webull bare fill | no pair cancel on unreadable ACK (`attach_ack_unknown_requires_child_proof` incident instead); any stop/flip/hard-stop exit runs after a complete TODAY-list proof; never a blind sell |
-| O17 | any malformed DB row | page banner + `[CONTROL-PLANE-ROW-SKIPPED]`, rest of the page intact |
+  market-data / reconciler / capture / tv-alerts untouched.
+- Env: WBEXIT2_ENABLED=true, WEBULL_EXIT3_ENABLED=true, BROKERDECIDES1_ENABLED=true. BROKERDECIDES1-PUBLISH complete=True accounts=2; 0 errors since start.
+- Evidence `/home/trader/after-hours/2026-11-01/pkg-7f9fad66`. Preopen re-pinned to 7f9fad66 (backups `*.claude1-pre7f9f`); `daily.verify_runtime()` OK.
+- Schwab refresh token expires **Sat 11-07 09:46 ET** (re-auth by Fri 11-06).
 
-## OPEN — Track B (tomorrow night; NOT installed)
+## Main (GitHub)
 
-| ID | Item | Why not tonight |
-|---|---|---|
-| O-1019-18 | fresh-sell owner release counts an `aborted` buy as working (WORX blocked 14:18→) — root cause confirmed by claude-1 + codex | in full set with 63 NEW failures |
-| O-1019-16 | OMS admission refusal never reaches v2 (ghost rest) + momentum unsent order holds shared account | same |
-| O-1019-26 class | momentum ledger keeps a claimed unsent episode active (live release, J) | same; tonight settled by data fix |
-| MOMNEG / N2 | down-day filter; re-price within +1.5% | VPS speed FAIL (93–162 ms / 129–170 ms max handler) |
-| MOMBOOT1, COUNTRYUS2, PAPEREXIT5, M (AAME), M2 (restart orphan) | reviewed | carried with the full set |
-| O-1019-22 | 63 NEW full-suite failures on 1c245c0e | triage per lane |
-| O-1019-23 | guard exits 2 at scheduled close → 2 false pages | policy gap proven; cause of owner-release UNKNOWN open |
-| O-1019-24 / -25 | gateway A 60 s (~100 ms) and ORB aggregate (~90 ms) loop stalls on the box — fail on installed 9df too | diagnose |
+- Merged 11-01:
+  - #1180: timing gates in a fresh process, report-only.
+  - #1181: OMS loop-lag log (= box).
+  - #1184 (b69877fa): five reviewed test PRs combined + the DST reporting-window fix at 6 off-order sites.
+    - 3 order-path DST candidates PARKED: keepwatch_producer.py:48, session_line_restore.py:195, oms/service.py TTL 17569. Revisit as Tier 3 before 2027-03-14.
+- #1172 MERGED (7f9fad66): docs-only fast path + its codex P2 fix + **Pullback check panel**. Installed.
+- **Box = main** (7f9fad66) for Monday.
+- The report-only fresh-process timing step still fails on the shared runner (keepwatch ~55–72 ms > 50). It does not block merges; it is not live proof.
 
-## Today's record (10-19)
+## Weekend findings (11-01)
 
-- ATR +$24.33 (YMAT +0.03, WORX +29.25, YMAT #2 −4.95); momentum live −19.34; ORB 0.
-- O-1019-15 happened twice (YMAT 11:36, 15:33): pair cancelled on unreadable ACK, software exits blocked → flattened by claude-1 (12:07) and by the operator (15:53).
-- Operator rulings: no rollback, fix forward; every root cause validated by codex; scan lists a waiting buy per watched stock; no in-session restarts as band-aids.
-- MOMEXIT2 replay: trails/splits worse (90% of +5% touches fall back within 1 s); "take the bid if ≥ +5% at the touch" best (+0.5 pp mean). `analysis/MOMEXIT2-REPLAY-RESULTS-20261019.md`.
+- **Friday 10-30 live vs LIVE-rules SIM:** live took 3 of 7 and missed 4. Sim P&L of the misses ≈ +$5 net.
+  - CHOW 12:01 / 13:15 / 14:35 = one cause, WBPA3. Webull refused CHOW waiting buys PRICE_AGGRESSIVE 11:29–11:45. The refused-never-accepted open was never closed, so CHOW was stuck in flight for the rest of the day.
+    - Fix `entry_rejected_closure.py`, installed 10-30 night, in 6b29bc05.
+  - ONEG 14:39: live was still holding the 13:18 ONEG. Its sell-flip exit was refused (WBEXIT status words). Fixed and installed 10-31.
+  - Monday is the first exercise of both fixes.
+- **Pullback backtest** (Downloads/PULLBACK_BACKTEST_claude1_1101.md), LIVE+2min, 241 trades:
+  - No 2% pullback inside purple = 43 trades, 28% win, −$306.56. The rule "skip if no 2% pullback" gives +$306.56.
+  - Leave-one-day-out +$197..+$332, every case positive.
+  - The effect is 09:30 onward; pre-market is weak.
+  - In-sample only: score it on new days from 11-02. Nothing live.
+- **Coach round 4 (11-01, Downloads/ROUND4_ATR_STOCK_FEATURES_CURRENT.pdf)** independently reproduces the zero-2% numbers exactly. Rescue exceptions (higher-low −$57.89, prior-high −$120.52) and a FIRSTBAR switch are worse. The coach recommends the simple rule only, on a sequential + new-day test. My reply + keyed 43 CSV are in Downloads. The operator decides the forward window.
+- **Pullback check panel** (ATR page panel 5) shows this per LIVE+2min buy every day. Replay on 22 days = 43 skipped, net +$306.56 exact.
+
+## 10-31 real defect (fixed and installed)
+
+- BROKERDECIDES1 owner-phone channel was refused at every v2 boot since the 10-30 18:42 install.
+  - Cause: our 10-30 health edit 78bad800 changed `ops/health/armed_segments_check.py`, whose sha256 the channel pins.
+  - 0 alerts were attempted, so nothing was missed.
+  - Box replay: old pin REFUSED, new pin channel_ok. Fix 178a9aa5.
+- Rule: any edit to that file must re-pin `CHANNEL_SOURCE_SHA`. The test catches it now that CI is green.
+
+## ATR simulation / coach (ATRSIM4, simulation only, no order path)
+
+- Every LIVE rules / LIVE+2min row records "stock" inputs as of the buy decision (operator round 4, "hot/cold STOCK at the buy"):
+  - order_times;
+  - previous_trade;
+  - purple minutes and pullbacks at 2/3/5% on 1-minute closes, plus max swings;
+  - 5/10-min time & sales buy/sell/between with UNKNOWN buckets and coverage;
+  - below_day_high_pct + coverage.
+- Provenance stamped on every day row. Session-end exits with a >15 min no-print gap = EXIT UNKNOWN.
+- Codex caught two look-ahead defects (purple bars after the decision; eventual EXIT UNKNOWN in previous_trade). Both fixed before the final run.
+- 22-day baseline re-run 10-31 (archive `/home/trader/after-hours/2026-10-31/atrsim4-archive/`). Changes: 3-bar gate rows + RENT/AHT EXIT UNKNOWN.
+
+  | Table | New total | Trades | Pre-market | Regular hours |
+  |---|---|---|---|---|
+  | LIVE+2min | +$97.24 | 241 | +$204.80 | −$107.56 |
+  | LIVE rules | −$227.38 | | | |
+  | FIRSTBAR | −$491.49 | | | |
+  | FIRSTBAR+2min | −$530.65 | | | |
+
+- Coach files: Downloads/COACH_BRIEF_round4_stock_features_1031.md, COACH_BASELINE_ATRSIM4_1031.md, COACH_PROVENANCE_reply_1031.md. Coach next: winners vs losers per input, no thresholds yet.
+
+## Monday watch
+
+- 06:20 preopen report (first on 7f9fad66).
+- `[OMS-LOOP-LAG]` lines: count and worst lag in the first hour (0 lines = no lag > 100 ms).
+- Close-out: live vs LIVE-rules SIM count with each miss's cause; Pullback check panel numbers for the day.
+- First live Webull v2 exit: expect `protection=wbexit2_owner` with a sold outcome. Any `[WBEXIT2-GEOMETRY-REFUSED]` → keep raw operands, classify.
+- 16:00 `[OMS-V2-EOD-OCO-STEP]` lines if a v2 position is open at the close.
+- WBPA2/WBPA3 first exercise on a country-routed Webull PRICE_AGGRESSIVE reject.
+- ATR page: today's stock inputs appear on new rows (sim timer every 5 min).
+
+## Process (operator 10-31)
+
+- Three tiers:
+  - docs/tools: same hour;
+  - off-order-path: + real-data replay;
+  - order path: + replay + tests + rate test.
+- Docs-only PRs need no pin and skip the heavy validate steps (live once #1172 merges).
+- Codex talks only to claude-1 through `claude1-reviews/LATEST.md`, never to the operator.
+- claude-1's file instructions carry operator authority for Tier 1/2 mechanics (pins, labels, fast-forward review fixes). From 11-02, any FIX of a live finding still needs the operator's approval first (rulings 11-01).
+
+## Root cause 10-30 — status defect proven conditionally (Webull exits refused: TNMG, ONEG, CHOW)
+
+WBEXIT2 (switched on in the 10-28 evening install) required the raw Webull `order_status` to equal the literal `WORKING`; Webull documents `SUBMITTED` for an open order and never `WORKING`. Evidence: CHOW's real bracket read after the close (already CANCELLED by DAY expiry) replayed through the installed `original_geometry` with ONLY the status (and event=accepted) varied — SUBMITTED/PENDING/ACCEPTED/QUEUED refused, WORKING passed; the remaining real operands passed. This proves the status defect conditionally; the original live WORKING-state payloads for TNMG/ONEG/CHOW were not retained, so other predicates on those exact replies are not excluded. WB2/WB3 fixtures used the invented `WORKING`. Last good old-path Webull exit: 10-28 13:31 ELPW. Fixed by e58e2497. Interim 10-30 18:42 install ran with both switches OFF; switched back ON with the fix 10-31.
+
+## Open (watch, no build)
+
+- 16:00 EOD-OCO-TRANSITION `unanswerable` (CHOW 10-30): cause UNKNOWN (standalone confirm read said released; refusal inside OMS `_release_v2_eod_oco`). The passive step log in 6ddb narrows which branch refused on the next real case; it may not by itself name the cause. Bring the cause to the operator before any fix.
+- First live Webull v2 exit on Monday: expect `protection=wbexit2_owner` with a sold/closed outcome. Any `[WBEXIT2-GEOMETRY-REFUSED]` line: keep the raw operands and classify it (it can also be an unchanged guard refusing correctly).
+
+## Decided / closed
+
+- 3-bar established-short rule stays (24-day measure: 5 of ~247 sim trades affected, net cost ~$29–42; too small).
+- 10-30 trading closed: TNMG +15.18, ONEG +15.48 (both native targets), JDZG +4.94, WFF −9.98; CHOW 64 closed by the operator by hand.
+- Codex open lanes at hand-off: none (all reviewed work merged or pinned). Results come back in claude1-reviews/LATEST.md.
