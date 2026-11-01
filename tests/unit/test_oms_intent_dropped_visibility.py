@@ -24,6 +24,9 @@ would upgrade it. [[feedback_a_watch_that_fails_to_a_false_clean]]
 """
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import own_service
+
 import inspect
 from decimal import Decimal
 
@@ -109,7 +112,7 @@ def test_production_flag_values_are_what_these_fixtures_assume() -> None:
 async def test_schwab_ineligible_drop_emits_a_named_line_at_runtime() -> None:
     """BEHAVIOURAL. Drive the real service: first intent gets refused by the broker and caches the
     symbol; the SECOND is dropped by the cache short-circuit and must name itself."""
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -119,7 +122,7 @@ async def test_schwab_ineligible_drop_emits_a_named_line_at_runtime() -> None:
         redis_client=FakeRedis(),
         session_factory=build_test_session_factory(),
         broker_adapter=FakeRejectSchwabIneligibleBrokerAdapter(),
-    )
+    ))
     service.logger = _CapturingLogger()
 
     await service.process_trade_intent(_open_intent())
@@ -146,7 +149,7 @@ async def test_the_first_broker_refusal_is_not_counted_as_a_dropped_intent() -> 
     broker and was refused there — it is a broker reject, not a suppressed intent. If the marker
     ever fires on that path the tape would over-report drops, and an inflated count is as wrong as
     a missing one."""
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -156,7 +159,7 @@ async def test_the_first_broker_refusal_is_not_counted_as_a_dropped_intent() -> 
         redis_client=FakeRedis(),
         session_factory=build_test_session_factory(),
         broker_adapter=FakeRejectSchwabIneligibleBrokerAdapter(),
-    )
+    ))
     service.logger = _CapturingLogger()
 
     first = await service.process_trade_intent(_open_intent())

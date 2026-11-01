@@ -1,4 +1,6 @@
 """Recorded prices/events; DB delay, SDK and concurrency are controlled offline."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 import asyncio
 from copy import deepcopy
 from datetime import datetime

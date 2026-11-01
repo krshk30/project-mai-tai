@@ -1,5 +1,7 @@
 """Synthetic obligation controls, NOT SAIQ/POM native or historical replay."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from dataclasses import replace
 from uuid import uuid4
 

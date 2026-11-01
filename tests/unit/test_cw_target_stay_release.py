@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import new_unit_service
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
@@ -23,7 +27,7 @@ from tests.unit.test_webull_adapter import _FakeClient, _adapter, _order, fake_s
 
 
 def _service(**overrides) -> OmsRiskService:
-    service = OmsRiskService.__new__(OmsRiskService)
+    service = new_unit_service()
     service.settings = Settings(**overrides)
     return service
 
@@ -133,11 +137,11 @@ class _Redis:
 
 
 def _db_service(monkeypatch):
-    engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    engine = private_sqlite_engine(connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
     broker = _Broker()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         Settings(
             redis_stream_prefix="target-test",
             oms_v2_exit_management_enabled=True,
@@ -150,7 +154,7 @@ def _db_service(monkeypatch):
             oms_working_order_refresh_seconds=1,
         ),
         redis_client=_Redis(), session_factory=factory, broker_adapter=broker,
-    )
+    ))
     monkeypatch.setattr("project_mai_tai.oms.service._extended_hours_session", lambda now=None: "AM")
     monkeypatch.setattr(service, "_market_is_fillable", lambda: True)
     return service, factory, broker

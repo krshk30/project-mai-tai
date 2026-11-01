@@ -7,13 +7,16 @@ canceled``.  The first reply was authoritative; the next 47 requests could not l
 
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 from decimal import Decimal
 import json
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.base import Base
@@ -94,12 +97,7 @@ class _LaseDeadTargetAdapter:
 
 
 def _session_factory() -> sessionmaker[Session]:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
 
@@ -125,12 +123,12 @@ def _intent(symbol: str, intent_type: str, *, target: str = "") -> TradeIntentEv
 
 def _service(adapter: _LaseDeadTargetAdapter):
     sessions = _session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=_Redis(),
         session_factory=sessions,
         broker_adapter=adapter,
-    )
+    ))
     return service, sessions
 
 

@@ -1,5 +1,7 @@
 """Controlled SCNI/MEDS shapes, not invented historical broker answers."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock

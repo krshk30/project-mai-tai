@@ -28,6 +28,9 @@ import pytest
 
 from project_mai_tai.events import QuoteTickEvent, QuoteTickPayload
 from project_mai_tai.positions_read_receipt import record_receipts
+# STALL-CORRELATION diagnostics BEGIN
+from tests.unit.pom_rate_stall_observer import StallCorrelation
+# STALL-CORRELATION diagnostics END
 from tests.unit.test_momlive1_runtime import event, offer_and_drain, setup
 
 
@@ -149,8 +152,16 @@ async def test_existing_native_rate_60s_at_least200_stall_under50_with_timing_in
                                  message.startswith("[MOMLIVE1-EXIT-ATTEMPT-TIMING]"))
 
     monkeypatch.setattr(service.logger, "info", measured_info)
+    # STALL-CORRELATION diagnostics BEGIN
+    correlation = StallCorrelation()
+    correlation_physical_start = None
+    # STALL-CORRELATION diagnostics END
     fixture_started = time.monotonic()
     try:
+        # STALL-CORRELATION diagnostics BEGIN
+        correlation.bind_steps(runtime, monkeypatch)
+        correlation.install_gc()
+        # STALL-CORRELATION diagnostics END
         assert await runtime.start()
         broker.entry_quantity, broker.entry_status = D(1), "partially_filled"
         await offer_and_drain(runtime, event(now[0]))
@@ -245,6 +256,9 @@ async def test_existing_native_rate_60s_at_least200_stall_under50_with_timing_in
                 deadline += .005
                 await asyncio.sleep(max(0, deadline-time.monotonic()))
                 stalls.append(max(0, time.monotonic()-deadline))
+                # STALL-CORRELATION diagnostics BEGIN
+                correlation.lag_sample(deadline, stalls[-1])
+                # STALL-CORRELATION diagnostics END
 
         watcher = asyncio.create_task(watch())
         max_handler, max_queue, max_inbox = 0., 0, 0
@@ -264,6 +278,9 @@ async def test_existing_native_rate_60s_at_least200_stall_under50_with_timing_in
         # blocking awaits/IO still require Main's outer deadline and join proof.
         # Main reviews that caller envelope before execution. No clock stub.
         start, base, count = time.monotonic(), now[0], 0
+        # STALL-CORRELATION diagnostics BEGIN
+        correlation_physical_start = start
+        # STALL-CORRELATION diagnostics END
         prelude_seconds = start - fixture_started
         try:
             while time.monotonic()-start < 120:
@@ -292,6 +309,13 @@ async def test_existing_native_rate_60s_at_least200_stall_under50_with_timing_in
             await watcher
             if seed_task is not None:
                 await seed_task
+            # STALL-CORRELATION diagnostics BEGIN
+            correlation.emit_summary(session=session, physical_start=correlation_physical_start,
+                                     active_start=counter.window_start)
+            # STALL-CORRELATION diagnostics END
+        # STALL-CORRELATION diagnostics BEGIN
+        correlation.close()
+        # STALL-CORRELATION diagnostics END
         gate_calls = sum(value["gate"] for value in counter.episodes.values())
         attempt_calls = sum(value["attempt"] for value in counter.episodes.values())
         active_events = sum(bucket["quote_events"] for bucket in counter.buckets)
@@ -330,6 +354,11 @@ async def test_existing_native_rate_60s_at_least200_stall_under50_with_timing_in
             "owned_exit_wires": sum(row.side == "sell" and row.intent_type == "close"
                                     and bool(row.metadata.get("exit_reason"))
                                     for row in broker.sent)}
+        # STALL-CORRELATION diagnostics BEGIN
+        receipt["stall_correlation"] = correlation.receipt(
+            active_start=counter.window_start,
+            active_end=counter.window_start + 60 if counter.window_start is not None else None)
+        # STALL-CORRELATION diagnostics END
         print("POMEXITLOG1_NATIVE_RATE="+json.dumps(receipt, sort_keys=True))
         assert activity, "POMEXITLOG1_ACTIVITY_INCONCLUSIVE: need saved-attempt INFO AND200Hz in every10s bucket"
         assert duration >= 60 and active_seconds >= 60 and count/duration >= 200
@@ -346,6 +375,11 @@ async def test_existing_native_rate_60s_at_least200_stall_under50_with_timing_in
                    for key, value in runtime._exit_gate_states.items())
         assert len(runtime._exit_gate_states) <= 2 and len(runtime._exit_gate_frames) <= 2
     finally:
+        # STALL-CORRELATION diagnostics BEGIN
+        correlation.close()
+        correlation.emit_summary(session=session, physical_start=correlation_physical_start,
+                                 active_start=counter.window_start)
+        # STALL-CORRELATION diagnostics END
         service._momentum_live_actor = None
         service._momentum_live_quote_dispatch = None
         try:

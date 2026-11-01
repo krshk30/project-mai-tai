@@ -1,5 +1,7 @@
 """Synthetic all-site controls. No WORX/SAIQ/POM historical/native claims."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from decimal import Decimal
 import asyncio
 from threading import Event, Lock

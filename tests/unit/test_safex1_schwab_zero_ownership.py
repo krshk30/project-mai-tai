@@ -1,5 +1,7 @@
 """SAFEX1 R4: report zero-own/nonzero-broker without granting a sell."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 import logging
 
 import pytest

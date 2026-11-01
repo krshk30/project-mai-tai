@@ -1,5 +1,7 @@
 """Transactional adversaries on a synthetic 13-row copy; real frozen copy is a separate receipt."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 import json
 from datetime import UTC, datetime
 from decimal import Decimal

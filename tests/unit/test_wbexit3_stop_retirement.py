@@ -4,6 +4,8 @@ This is NOT native/whole-driver acceptance. The inherited fixture's release
 callbacks are never called here; no owner, lease, proof or ceiling is patched to
 permit a wire. Only the explicit external ExecutionReport is controlled.
 """
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from datetime import UTC, timedelta
 from dataclasses import replace
 from decimal import Decimal

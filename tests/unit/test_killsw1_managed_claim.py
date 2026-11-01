@@ -1,5 +1,8 @@
 """Exercise the real claimed emit's admission/commit boundary, with a paused sender."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import own_service
 import asyncio
 from datetime import datetime
 from uuid import UUID, uuid4
@@ -23,7 +26,7 @@ async def postboot_apus_stop(monkeypatch):
             "bot_control_enabled": True,
             "strategy_schwab_1m_v2_country_route_enabled": True,
         })
-        service = OmsRiskService(settings, **kwargs)
+        service = own_service(OmsRiskService(settings, **kwargs))
         # The real reserve fixture adds its APUS exposure AFTER construction.
         asyncio.run(service._bot_control_runtime.refresh())
         assert service._bot_control_runtime.boot_managed_ids == frozenset()

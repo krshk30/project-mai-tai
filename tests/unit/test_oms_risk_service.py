@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 from datetime import UTC, datetime, timedelta
 import json
 import logging
@@ -7,9 +11,8 @@ from decimal import Decimal
 
 import pytest
 from tests.unit.managed_entry_fixtures import bind_managed_entry
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot, ExecutionReport
@@ -946,12 +949,7 @@ class FakeRejectSchwabIneligibleBrokerAdapter:
 
 
 def build_test_session_factory() -> sessionmaker[Session]:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
 
@@ -974,7 +972,7 @@ def test_runtime_registry_can_route_macd_30s_to_schwab_only() -> None:
 
 
 def test_oms_service_builds_routing_adapter_for_mixed_brokers() -> None:
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -983,7 +981,7 @@ def test_oms_service_builds_routing_adapter_for_mixed_brokers() -> None:
         ),
         redis_client=FakeRedis(),
         session_factory=build_test_session_factory(),
-    )
+    ))
 
     assert isinstance(service.broker_adapter, RoutingBrokerAdapter)
 
@@ -1010,11 +1008,11 @@ def test_runtime_registry_can_route_tos_to_schwab_only() -> None:
 async def test_oms_service_persists_filled_intent_and_positions() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
-    )
+    ))
 
     events = await service.process_trade_intent(
         TradeIntentEvent(
@@ -1062,11 +1060,11 @@ async def test_oms_service_persists_filled_intent_and_positions() -> None:
 async def test_oms_service_rejects_non_positive_quantity() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
-    )
+    ))
 
     events = await service.process_trade_intent(
         TradeIntentEvent(
@@ -1099,7 +1097,7 @@ async def test_oms_service_rejects_intents_for_protected_symbols() -> None:
     risk evaluator, regardless of strategy code or broker account."""
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -1107,7 +1105,7 @@ async def test_oms_service_rejects_intents_for_protected_symbols() -> None:
         ),
         redis_client=redis,
         session_factory=session_factory,
-    )
+    ))
 
     cases = [
         ("open", "buy", Decimal("10")),
@@ -1153,12 +1151,12 @@ async def test_oms_service_blocks_not_tradable_symbol_for_rest_of_session() -> N
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeRejectNotTradableBrokerAdapter()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
 
     first = await service.process_trade_intent(
         TradeIntentEvent(
@@ -1219,7 +1217,7 @@ async def test_oms_service_caches_schwab_ineligible_symbol_for_session_day(reaso
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeRejectSchwabIneligibleBrokerAdapter(reason)
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -1228,7 +1226,7 @@ async def test_oms_service_caches_schwab_ineligible_symbol_for_session_day(reaso
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
 
     first = await service.process_trade_intent(
         TradeIntentEvent(
@@ -1279,11 +1277,11 @@ async def test_oms_service_caches_schwab_ineligible_symbol_for_session_day(reaso
 async def test_oms_service_syncs_account_positions_from_broker_truth() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
-    )
+    ))
 
     await service.process_trade_intent(
         TradeIntentEvent(
@@ -1322,7 +1320,7 @@ async def test_oms_service_syncs_account_positions_from_broker_truth() -> None:
 async def test_oms_service_sync_clears_virtual_positions_without_broker_backing() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -1330,7 +1328,7 @@ async def test_oms_service_sync_clears_virtual_positions_without_broker_backing(
         ),
         redis_client=redis,
         session_factory=session_factory,
-    )
+    ))
 
     with session_factory() as session:
         strategy = service.store.ensure_strategy(session, "macd_30s")
@@ -1366,12 +1364,12 @@ async def test_oms_service_sync_clears_virtual_positions_without_broker_backing(
 async def test_oms_service_cancels_open_order_using_existing_order_identity() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=FakeCancelBrokerAdapter(),
-    )
+    ))
 
     open_events = await service.process_trade_intent(
         TradeIntentEvent(
@@ -1424,12 +1422,12 @@ async def test_oms_service_cancels_open_order_using_existing_order_identity() ->
 async def test_oms_service_keeps_open_order_status_when_cancel_is_rejected() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=FakeCancelBrokerAdapter(cancel_event_type="rejected"),
-    )
+    ))
 
     await service.process_trade_intent(
         TradeIntentEvent(
@@ -1480,12 +1478,12 @@ async def test_oms_service_syncs_open_order_status_from_broker() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeOrderSyncBrokerAdapter()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
     service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
 
     await service.process_trade_intent(
@@ -1565,12 +1563,12 @@ async def test_oms_service_sync_publishes_terminal_order_event_for_strategy_runt
             ),
         ]
     )
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
     service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
 
     await service.process_trade_intent(
@@ -1618,12 +1616,12 @@ async def test_oms_service_sync_skips_duplicate_partial_without_new_fill_progres
             metadata={},
         )
     )
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
     service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
 
     await service.process_trade_intent(
@@ -1655,12 +1653,12 @@ async def test_oms_service_sync_skips_duplicate_partial_without_new_fill_progres
 async def test_oms_service_sync_terminalizes_intent_when_all_linked_orders_are_cancelled() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=FakeOrderSyncBrokerAdapter(None),
-    )
+    ))
 
     with session_factory() as session:
         strategy = service.store.ensure_strategy(session, "macd_30s", name="MACD 30s")
@@ -1722,12 +1720,12 @@ async def test_oms_service_sync_terminalizes_intent_when_all_linked_orders_are_c
 async def test_oms_service_sync_terminalizes_native_stop_cancel_intent_when_target_is_terminal() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=FakeOrderSyncBrokerAdapter(None),
-    )
+    ))
 
     with session_factory() as session:
         strategy = service.store.ensure_strategy(session, "macd_30s", name="MACD 30s")
@@ -1793,7 +1791,7 @@ async def test_oms_service_refreshes_stale_working_limit_buy_order() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeWorkingOrderRefreshBrokerAdapter()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -1802,7 +1800,7 @@ async def test_oms_service_refreshes_stale_working_limit_buy_order() -> None:
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
     service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
 
     await service.process_trade_intent(
@@ -1868,7 +1866,7 @@ async def test_oms_service_refreshes_remaining_quantity_for_stale_sell_order() -
         fill_price=Decimal("2.50"),
         bid_price=2.41,
     )
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -1877,7 +1875,7 @@ async def test_oms_service_refreshes_remaining_quantity_for_stale_sell_order() -
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
 
     store = OmsStore()
     with session_factory() as session:
@@ -1973,7 +1971,7 @@ async def test_whlr_managed_exit_refresh_uses_current_session(
     )
     session_factory = build_test_session_factory()
     adapter = FakeWorkingOrderRefreshBrokerAdapter(bid_price=5.00, ask_price=5.02)
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -1982,7 +1980,7 @@ async def test_whlr_managed_exit_refresh_uses_current_session(
         redis_client=FakeRedis(),
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
     service._latest_quotes_by_symbol["WHLR"] = {"bid": 5.00}
     store = OmsStore()
     with session_factory() as session:
@@ -2041,7 +2039,7 @@ async def test_oms_service_refreshes_stop_guard_sell_order_with_wider_panic_limi
         fetch_event_type="accepted",
         bid_price=2.41,
     )
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -2055,7 +2053,7 @@ async def test_oms_service_refreshes_stop_guard_sell_order_with_wider_panic_limi
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
 
     store = OmsStore()
     with session_factory() as session:
@@ -2127,7 +2125,7 @@ async def test_oms_service_refreshes_stop_guard_sell_order_with_wider_panic_limi
 @pytest.mark.asyncio
 async def test_oms_service_builds_second_stage_stop_guard_refresh_with_five_percent_buffer() -> None:
     adapter = FakeWorkingOrderRefreshBrokerAdapter(bid_price=2.41)
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -2137,7 +2135,7 @@ async def test_oms_service_builds_second_stage_stop_guard_refresh_with_five_perc
         redis_client=FakeRedis(),
         session_factory=build_test_session_factory(),
         broker_adapter=adapter,
-    )
+    ))
 
     order = BrokerOrder(
         strategy_id=None,  # type: ignore[arg-type]
@@ -2176,7 +2174,7 @@ async def test_oms_service_builds_second_stage_stop_guard_refresh_with_five_perc
 @pytest.mark.asyncio
 async def test_oms_service_uses_catastrophic_after_hours_stop_guard_refresh_when_quote_is_far_below_stop() -> None:
     adapter = FakeWorkingOrderRefreshBrokerAdapter(bid_price=2.10, ask_price=2.12)
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -2186,7 +2184,7 @@ async def test_oms_service_uses_catastrophic_after_hours_stop_guard_refresh_when
         redis_client=FakeRedis(),
         session_factory=build_test_session_factory(),
         broker_adapter=adapter,
-    )
+    ))
 
     order = BrokerOrder(
         strategy_id=None,  # type: ignore[arg-type]
@@ -2230,7 +2228,7 @@ async def test_oms_service_uses_catastrophic_after_hours_stop_guard_refresh_when
 @pytest.mark.asyncio
 async def test_oms_service_uses_fast_broker_sync_interval_when_stop_guard_order_is_active() -> None:
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -2239,7 +2237,7 @@ async def test_oms_service_uses_fast_broker_sync_interval_when_stop_guard_order_
         ),
         redis_client=FakeRedis(),
         session_factory=session_factory,
-    )
+    ))
 
     store = OmsStore()
     with session_factory() as session:
@@ -2283,7 +2281,7 @@ async def test_oms_service_applies_after_hours_stop_guard_overrides_when_arming_
         "project_mai_tai.oms.service.utcnow",
         lambda: datetime(2026, 5, 1, 21, 0, tzinfo=UTC),
     )
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -2293,7 +2291,7 @@ async def test_oms_service_applies_after_hours_stop_guard_overrides_when_arming_
         redis_client=FakeRedis(),
         session_factory=build_test_session_factory(),
         broker_adapter=FakeAcceptedOnlyBrokerAdapter(),
-    )
+    ))
 
     service._update_hard_stop_registry_from_fill(
         strategy_code="schwab_1m",
@@ -2329,12 +2327,12 @@ async def test_oms_service_arms_hard_stop_from_open_fill_and_triggers_close_on_q
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeTickDrivenHardStopBrokerAdapter(open_fill_price=Decimal("4.00"))
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
 
     await service.process_trade_intent(
         TradeIntentEvent(
@@ -2394,12 +2392,12 @@ async def test_oms_service_uses_trade_trigger_when_fresh_bid_has_not_breached_st
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeTickDrivenHardStopBrokerAdapter(open_fill_price=Decimal("4.00"))
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
 
     await service.process_trade_intent(
         TradeIntentEvent(
@@ -2472,12 +2470,12 @@ async def test_oms_service_arms_native_stop_guard_in_regular_hours(
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeNativeStopGuardBrokerAdapter(open_fill_price=Decimal("4.00"))
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
 
     await service.process_trade_intent(
         TradeIntentEvent(
@@ -2535,12 +2533,12 @@ async def test_oms_service_cancels_and_rearms_native_stop_guard_around_regular_h
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeNativeStopGuardBrokerAdapter(open_fill_price=Decimal("4.00"))
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
 
     await service.process_trade_intent(
         TradeIntentEvent(
@@ -2603,11 +2601,11 @@ async def test_oms_service_cancels_and_rearms_native_stop_guard_around_regular_h
 async def test_oms_service_refreshes_broker_positions_before_rejecting_exit() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
-    )
+    ))
 
     await service.process_trade_intent(
         TradeIntentEvent(
@@ -2659,11 +2657,11 @@ async def test_oms_service_refreshes_broker_positions_before_rejecting_exit() ->
 async def test_oms_service_still_rejects_exit_when_broker_refresh_confirms_no_position() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
-    )
+    ))
 
     await service.process_trade_intent(
         TradeIntentEvent(
@@ -2713,11 +2711,11 @@ async def test_oms_service_still_rejects_exit_when_broker_refresh_confirms_no_po
 @pytest.mark.asyncio
 async def test_oms_exit_unreadable_broker_position_keeps_account_and_virtual_position(monkeypatch) -> None:
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=FakeRedis(),
         session_factory=session_factory,
-    )
+    ))
     await service.process_trade_intent(TradeIntentEvent(
         source_service="strategy-engine",
         payload=TradeIntentPayload(
@@ -2768,10 +2766,10 @@ async def test_oms_exit_unreadable_broker_position_keeps_account_and_virtual_pos
 @pytest.mark.asyncio
 async def test_oms_unreadable_position_sync_and_protection_read_keep_holdings(monkeypatch) -> None:
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=FakeRedis(), session_factory=session_factory,
-    )
+    ))
     await service.process_trade_intent(TradeIntentEvent(
         source_service="strategy-engine",
         payload=TradeIntentPayload(
@@ -2800,10 +2798,10 @@ async def test_oms_unreadable_position_sync_and_protection_read_keep_holdings(mo
 async def test_oms_stop_reject_unreadable_recheck_reports_unknown_without_fallback(monkeypatch) -> None:
     session_factory = build_test_session_factory()
     adapter = FakeStopGuardCloseRejectFallbackBrokerAdapter()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=FakeRedis(), session_factory=session_factory, broker_adapter=adapter,
-    )
+    ))
     await service.process_trade_intent(TradeIntentEvent(
         source_service="strategy-engine",
         payload=TradeIntentPayload(
@@ -2841,12 +2839,12 @@ async def test_oms_stop_reject_unreadable_recheck_reports_unknown_without_fallba
 async def test_oms_service_rejects_duplicate_exit_in_flight() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=FakePendingExitBrokerAdapter(),
-    )
+    ))
 
     await service.process_trade_intent(
         TradeIntentEvent(
@@ -2907,12 +2905,12 @@ async def test_oms_service_hard_stop_preempts_existing_scale_exit() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     broker_adapter = FakeScaleThenHardStopBrokerAdapter()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=broker_adapter,
-    )
+    ))
 
     await service.process_trade_intent(
         TradeIntentEvent(
@@ -2990,12 +2988,12 @@ async def test_oms_service_hard_stop_preempts_existing_stop_guard_close() -> Non
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     broker_adapter = FakeHardStopThenHardStopBrokerAdapter()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=broker_adapter,
-    )
+    ))
 
     await service.process_trade_intent(
         TradeIntentEvent(
@@ -3088,12 +3086,12 @@ async def test_oms_service_stop_guard_close_gets_market_fallback_on_stop_rejecti
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     broker_adapter = FakeStopGuardCloseRejectFallbackBrokerAdapter()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=broker_adapter,
-    )
+    ))
 
     open_events = await service.process_trade_intent(
         TradeIntentEvent(
@@ -3162,12 +3160,12 @@ async def test_oms_service_submits_market_fallback_after_stop_rejection() -> Non
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     broker_adapter = FakeStopRejectedFallbackBrokerAdapter()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=broker_adapter,
-    )
+    ))
 
     events = await service.process_trade_intent(
         TradeIntentEvent(
@@ -3203,12 +3201,12 @@ async def test_oms_service_submits_market_fallback_after_stop_rejection() -> Non
 async def test_oms_service_shared_account_exit_uses_strategy_virtual_quantity() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=FakeAcceptedOnlyBrokerAdapter(),
-    )
+    ))
 
     with session_factory() as session:
         tos = service.store.ensure_strategy(session, "tos")
@@ -3273,12 +3271,12 @@ async def test_oms_service_shared_account_exit_uses_strategy_virtual_quantity() 
 async def test_oms_service_shared_account_exit_respects_pending_exit_reservations() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=FakeAcceptedOnlyBrokerAdapter(),
-    )
+    ))
 
     with session_factory() as session:
         tos = service.store.ensure_strategy(session, "tos")
@@ -3427,7 +3425,7 @@ async def test_oms_service_cancels_buy_limit_when_ask_drifts_past_limit() -> Non
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeWorkingOrderRefreshBrokerAdapter(ask_price=2.13, bid_price=2.11)
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -3436,7 +3434,7 @@ async def test_oms_service_cancels_buy_limit_when_ask_drifts_past_limit() -> Non
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
     service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
 
     await service.process_trade_intent(
@@ -3501,7 +3499,7 @@ async def test_oms_service_does_not_cancel_when_ask_within_tolerance() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeWorkingOrderRefreshBrokerAdapter(ask_price=2.115, bid_price=2.10)
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -3510,7 +3508,7 @@ async def test_oms_service_does_not_cancel_when_ask_within_tolerance() -> None:
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
     service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
 
     await service.process_trade_intent(
@@ -3566,7 +3564,7 @@ async def test_oms_service_abandons_intent_after_max_age_instead_of_refresh() ->
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeWorkingOrderRefreshBrokerAdapter()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -3578,7 +3576,7 @@ async def test_oms_service_abandons_intent_after_max_age_instead_of_refresh() ->
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
     service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
 
     await service.process_trade_intent(
@@ -3639,7 +3637,7 @@ async def test_oms_service_abandons_intent_when_setup_no_longer_matches() -> Non
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeWorkingOrderRefreshBrokerAdapter()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -3651,7 +3649,7 @@ async def test_oms_service_abandons_intent_when_setup_no_longer_matches() -> Non
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
     service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
 
     await service.process_trade_intent(
@@ -3747,11 +3745,11 @@ def _bar(code: str, sym: str, status: str, path: str, bar_time: datetime) -> Str
 
 
 def _svc(session_factory):
-    return OmsRiskService(
+    return own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=FakeRedis(),
         session_factory=session_factory,
-    )
+    ))
 
 
 def test_setup_revalidation_failopen_for_tapeless_v2_atr() -> None:
@@ -3850,7 +3848,7 @@ async def test_oms_abandons_close_intent_when_market_not_fillable() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeWorkingOrderRefreshBrokerAdapter()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -3859,7 +3857,7 @@ async def test_oms_abandons_close_intent_when_market_not_fillable() -> None:
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
     service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
     # Market CLOSED regardless of wall-clock run time.
     service._market_is_fillable = lambda now=None: False  # type: ignore[assignment,method-assign]
@@ -3886,7 +3884,7 @@ async def test_oms_refreshes_close_intent_when_market_fillable() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeWorkingOrderRefreshBrokerAdapter()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -3895,7 +3893,7 @@ async def test_oms_refreshes_close_intent_when_market_fillable() -> None:
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
     service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
     service._market_is_fillable = lambda now=None: True  # type: ignore[assignment,method-assign]
 
@@ -3962,11 +3960,11 @@ def _manual_stop_row(session_factory, symbols):
 
 
 def _mstop_service(session_factory):
-    return OmsRiskService(
+    return own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=FakeRedis(),
         session_factory=session_factory,
-    )
+    ))
 
 
 def _risk(service, symbol, intent_type="open", side="buy", quantity=Decimal("2")):
@@ -4067,11 +4065,11 @@ def test_manual_stop_is_cached_not_queried_per_intent() -> None:
 
 def _oco_service(session_factory, *, enabled=True):
     import types as _t
-    svc = OmsRiskService(
+    svc = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=FakeRedis(),
         session_factory=session_factory,
-    )
+    ))
     object.__setattr__(svc.settings, "oms_record_native_oco_exit_fills_enabled", enabled) \
         if not isinstance(svc.settings, _t.SimpleNamespace) else None
     return svc
@@ -4421,11 +4419,11 @@ async def test_an_adapter_without_the_method_is_skipped() -> None:
 # next signal filled 5.6200 = +2.46% worse against a +2% target. 7 of 9 lost signals that day.
 
 def _poll_service(sf, *, enabled=True, min_secs=0.0):
-    svc = OmsRiskService(
+    svc = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=FakeRedis(),
         session_factory=sf,
-    )
+    ))
     object.__setattr__(svc.settings, "oms_native_oco_exit_poll_enabled", enabled)
     object.__setattr__(svc.settings, "oms_native_oco_exit_poll_min_secs", min_secs)
     object.__setattr__(svc.settings, "oms_record_native_oco_exit_fills_enabled", True)
@@ -4945,7 +4943,7 @@ async def test_sync_broker_state_LOGS_the_symbols_it_zeroed() -> None:
         _seed_virtual(session, symbol="DSY", virtual_qty="1", account_qty="0")
         session.commit()
 
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -4953,7 +4951,7 @@ async def test_sync_broker_state_LOGS_the_symbols_it_zeroed() -> None:
         ),
         redis_client=FakeRedis(),
         session_factory=session_factory,
-    )
+    ))
 
     async def _no_positions(_name):
         return []
@@ -4986,7 +4984,7 @@ async def test_sync_broker_state_defers_fresh_false_zero_with_named_denominator(
         _seed_virtual(session, symbol="YYGH", virtual_qty="1", account_qty="0")
         session.commit()
 
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -4994,7 +4992,7 @@ async def test_sync_broker_state_defers_fresh_false_zero_with_named_denominator(
         ),
         redis_client=FakeRedis(),
         session_factory=session_factory,
-    )
+    ))
 
     async def _no_positions(_name):
         return []
@@ -5028,11 +5026,11 @@ async def test_sync_broker_state_stays_QUIET_when_nothing_was_cleared() -> None:
         _seed_virtual(session, symbol="DSY", virtual_qty="0", account_qty="0")
         session.commit()
 
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=FakeRedis(),
         session_factory=session_factory,
-    )
+    ))
 
     async def _no_positions(_name):
         return []
@@ -5097,11 +5095,11 @@ def _entry_intent() -> TradeIntentEvent:
 
 
 def _q12_service(session_factory):  # noqa: ANN001, ANN202
-    return OmsRiskService(
+    return own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=FakeRedis(),
         session_factory=session_factory,
-    )
+    ))
 
 
 @pytest.mark.asyncio
@@ -5292,11 +5290,11 @@ def test_the_ledger_writes_come_before_the_audit_write_on_the_record_path() -> N
 
 
 def _sync_service() -> OmsRiskService:
-    return OmsRiskService(
+    return own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=FakeRedis(),
         session_factory=build_test_session_factory(),
-    )
+    ))
 
 
 def _capture(service: OmsRiskService) -> tuple[list[logging.LogRecord], object]:

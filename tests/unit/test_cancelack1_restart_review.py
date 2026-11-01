@@ -1,11 +1,15 @@
 """Source-authored durable-history controls; not original-case/native receipts."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
 from datetime import timedelta
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm.attributes import flag_modified
 
 from project_mai_tai.cancelack1 import ObligationScope, load_flat_obligations, load_proven_accounts, working_buy_present
@@ -304,8 +308,10 @@ def test_resolved_replacement_needs_old_and_successor_proof_not_status(monkeypat
 async def test_dispose_reopen_db_history_not_ram_proves_restart_barrier(monkeypatch, tmp_path, required, roll, working):
     import tests.unit.test_v2_fresh_sell_owner_release as original
 
-    database = f"sqlite:///{tmp_path / 'restart.sqlite'}"
-    monkeypatch.setattr(original, "create_engine", lambda _url, **kwargs: create_engine(database, **kwargs))
+    database_path = tmp_path / "restart.sqlite"
+    database = f"sqlite:///{database_path}"
+    monkeypatch.setattr(original, "private_sqlite_engine", lambda **kwargs:
+                        private_sqlite_engine(database_path=database_path, **kwargs))
     bot, state, clock, request, writes, engine = synthetic_case(monkeypatch, required=required)
     settings = bot.settings
     terminal_buys(bot, request)
@@ -324,7 +330,7 @@ async def test_dispose_reopen_db_history_not_ram_proves_restart_barrier(monkeypa
     refresh(bot, clock)
     engine.dispose()
     del bot, state, engine
-    reopened = create_engine(database)
+    reopened = create_engine(database, poolclass=NullPool)
     try:
         factory = sessionmaker(reopened, expire_on_commit=False)
         restored = RemovedWaitStore(factory).restore()

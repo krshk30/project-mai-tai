@@ -1,3 +1,8 @@
+
+from tests.unit.oms_sqlite_fixtures import new_unit_service
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
 from decimal import Decimal
 import inspect
 import logging
@@ -18,9 +23,8 @@ from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.strategy_core.schwab_1m_v2 import TradeIntentDraft
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
 from project_mai_tai.strategy_core.v2_entry_sizing import resting_wire_limit, sized_entry_quantity
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 
 @pytest.mark.parametrize(
@@ -90,7 +94,7 @@ def _v2_event(account: str, quantity: int, price: str) -> TradeIntentEvent:
 
 
 def test_oms_refuses_oversized_v2_buy_before_broker():
-    service = object.__new__(OmsRiskService)
+    service = new_unit_service()
     service.settings = Settings(
         _env_file=None,
         strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
@@ -107,7 +111,7 @@ def test_oms_refuses_oversized_v2_buy_before_broker():
 
 
 def test_oms_cap_uses_the_webull_wire_tick_and_refuses_missing_price():
-    service = object.__new__(OmsRiskService)
+    service = new_unit_service()
     service.settings = Settings(
         _env_file=None,
         strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
@@ -124,7 +128,7 @@ def test_oms_cap_uses_the_webull_wire_tick_and_refuses_missing_price():
 
 
 def test_zero_notional_bypasses_new_oms_guard_byte_for_byte():
-    service = object.__new__(OmsRiskService)
+    service = new_unit_service()
     service.settings = Settings(
         _env_file=None,
         strategy_schwab_1m_v2_entry_notional_usd=0,
@@ -223,7 +227,7 @@ def test_native_resting_cancel_uses_quantity_at_final_schwab_wire_limit(monkeypa
     assert placed.metadata["entry_size_price"] == "3.07"
     assert placed.quantity == Decimal("195")
 
-    service = object.__new__(OmsRiskService)
+    service = new_unit_service()
     service.settings = settings
     service.logger = logging.getLogger(__name__)
     service._cw_target_pct = 5.0
@@ -284,7 +288,7 @@ def test_partial_schwab_fill_claims_one_independently_sized_webull_leg():
 
 
 def test_oms_resizes_at_final_limit_before_submit():
-    service = object.__new__(OmsRiskService)
+    service = new_unit_service()
     service.settings = Settings(
         _env_file=None,
         strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
@@ -340,13 +344,10 @@ class _PartialEntryBroker:
 
 @pytest.mark.asyncio
 async def test_v2_dollar_open_refuses_unconfigured_account_before_broker():
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     broker = _PartialEntryBroker()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             _env_file=None, redis_stream_prefix="test", oms_adapter="simulated",
             strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
@@ -357,7 +358,7 @@ async def test_v2_dollar_open_refuses_unconfigured_account_before_broker():
         redis_client=_Redis(),
         session_factory=sessionmaker(bind=engine, expire_on_commit=False),
         broker_adapter=broker,
-    )
+    ))
     event = _v2_event("live:unconfigured", 2, "3.05")
     intent = SimpleNamespace(quantity=event.payload.quantity, payload={"metadata": {}})
 
@@ -371,21 +372,18 @@ async def test_v2_dollar_open_refuses_unconfigured_account_before_broker():
 
 @pytest.mark.asyncio
 async def test_large_partial_entry_books_only_filled_shares_and_leaves_remainder_working():
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     broker = _PartialEntryBroker()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             _env_file=None, redis_stream_prefix="test", oms_adapter="simulated",
             strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
             strategy_schwab_1m_v2_webull_account_name="live:orb",
         ),
         redis_client=_Redis(), session_factory=sessions, broker_adapter=broker,
-    )
+    ))
 
     async def no_sync(*, account_names=None):
         return None
@@ -456,7 +454,7 @@ async def test_oms_refresh_recomputes_dollar_size_net_of_prior_fills_but_legacy_
                 origin="broker",
             )]
 
-    service = object.__new__(OmsRiskService)
+    service = new_unit_service()
     service.settings = Settings(
         _env_file=None, strategy_schwab_1m_v2_entry_notional_usd=schwab_notional,
         strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",

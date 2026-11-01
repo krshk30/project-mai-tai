@@ -6,12 +6,14 @@ The gate keeps the OMS from placing/refreshing exit orders when they cannot fill
 """
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.db.base import Base
 from project_mai_tai.oms.service import OmsRiskService
@@ -28,19 +30,17 @@ class _NoopRedis:
 
 
 def _session_factory():
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = private_sqlite_engine(connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)
 
 
 def _svc(**settings_kwargs) -> OmsRiskService:
-    return OmsRiskService(
+    return own_service(OmsRiskService(
         settings=Settings(oms_adapter="simulated", **settings_kwargs),
         redis_client=_NoopRedis(),
         session_factory=_session_factory(),
-    )
+    ))
 
 
 def test_market_is_fillable_uses_real_settings_window() -> None:

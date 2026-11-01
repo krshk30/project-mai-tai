@@ -10,6 +10,8 @@ Webull row and a broker that answers like Webull did.
 
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+
 import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal

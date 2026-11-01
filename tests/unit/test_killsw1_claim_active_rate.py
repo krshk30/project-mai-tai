@@ -3,6 +3,8 @@
 Broker execution is deliberately paused. This measures an actual held managed
 owner's nonblocking refusal, NOT a broker lifecycle or a historical exit rate.
 """
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 import asyncio
 import json
 import threading

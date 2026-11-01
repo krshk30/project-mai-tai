@@ -9,13 +9,15 @@ sync loop calls it the rotation is inert. This file pins the call site by BEHAVI
 
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.db.base import Base
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
@@ -50,19 +52,15 @@ class _BudgetedStatusAdapter:
 
 
 def _service(adapter, *, orders: int) -> OmsRiskService:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     sf = sessionmaker(bind=engine, expire_on_commit=False)
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         Settings(redis_stream_prefix="test", oms_adapter="simulated"),
         redis_client=_FakeRedis(),
         session_factory=sf,
         broker_adapter=adapter,
-    )
+    ))
     with sf() as session:
         strategy = service.store.ensure_strategy(session, "schwab_1m_v2", name="v2")
         account = service.store.ensure_broker_account(

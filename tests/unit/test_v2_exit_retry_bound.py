@@ -16,13 +16,16 @@ resolves it — which is what actually recovered AMIX on 07-29.
 """
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import new_unit_service
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+
 import asyncio
 import logging
 from types import SimpleNamespace
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.db.models import SystemIncident
 from project_mai_tai.oms.service import OmsRiskService, _PositionRead
@@ -34,7 +37,7 @@ SCHWAB_KEY = (SCHWAB_ACCT, SYM)
 
 
 def _svc(state: _PositionRead):
-    svc = OmsRiskService.__new__(OmsRiskService)
+    svc = new_unit_service()
     svc.settings = SimpleNamespace()  # WBEXIT2/3 read service.settings since 10-28; absent switch = off
     svc.logger = logging.getLogger("test-retry-bound")
     svc._v2_exit_close_failures = {}
@@ -240,7 +243,7 @@ def _emit_svc(*, statuses, close_on_fill=False, row=_UNBOUND_ROW):
         row = SimpleNamespace(id="retry-ceiling-row", entry_order_id=None,
             strategy_code="schwab_1m_v2", broker_account_name=KEY[0], symbol=KEY[1],
             status="open", current_quantity=10)
-    svc = OmsRiskService.__new__(OmsRiskService)
+    svc = new_unit_service()
     svc.settings = SimpleNamespace()  # WBEXIT2/3 read service.settings since 10-28; absent switch = off
     svc.logger = logging.getLogger("test-ceiling")
     svc._v2_exit_close_failures = {}
@@ -631,19 +634,14 @@ def test_sil1_incident_write_failure_cannot_change_the_live_exit_result() -> Non
 
 
 def _incident_session_factory():
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     SystemIncident.__table__.create(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
 def test_sil1_persists_the_symbol_and_closes_only_when_the_episode_ends() -> None:
     sf = _incident_session_factory()
-    svc = OmsRiskService.__new__(OmsRiskService)
+    svc = new_unit_service()
     svc.settings = SimpleNamespace()  # WBEXIT2/3 read service.settings since 10-28; absent switch = off
     svc.logger = logging.getLogger("test-sil1-incident")
     svc.settings = SimpleNamespace(strategy_schwab_1m_v2_account_name=SCHWAB_ACCT)

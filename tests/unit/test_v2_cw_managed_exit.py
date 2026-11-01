@@ -9,15 +9,18 @@ arms the in-memory pending set only when CW is enabled.
 """
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 from tests.unit.managed_entry_fixtures import bind_managed_entry
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
@@ -65,10 +68,7 @@ class _ConfirmationAdapter(SimulatedBrokerAdapter):
 
 
 def _make_sf() -> sessionmaker:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:", future=True,
-        connect_args={"check_same_thread": False}, poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     tables = [t for t in Base.metadata.sorted_tables
               if t.name not in ("market_trade_ticks", "market_quote_ticks")]
     Base.metadata.create_all(engine, tables=tables)
@@ -92,10 +92,10 @@ def _svc(
         strategy_schwab_1m_v2_dual_broker_fanout_enabled=dual,
         oms_v2_cw_floor_exit_enabled=floor,
     )
-    svc = OmsRiskService(
+    svc = own_service(OmsRiskService(
         settings, redis_client=_FakeRedis(), session_factory=sf,
         broker_adapter=adapter or SimulatedBrokerAdapter(),
-    )
+    ))
     with sf() as s:
         svc.store.ensure_strategy(s, "schwab_1m_v2", name="v2")
         svc.store.ensure_broker_account(s, ACCT, provider="simulated", environment="test")

@@ -1,6 +1,9 @@
 """Lane B controlled replays: recorded inputs, never invented broker receipts."""
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import own_service
+
 import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -196,7 +199,7 @@ async def test_all_on_current_proc_flags_controlled_mndr_replay(monkeypatch, acc
     assert settings.oms_v2_rth_edge_bracket_enabled
     assert settings.oms_native_oco_stand_down_enabled
     assert settings.oms_v2_cw_target_pct == 5 and settings.oms_v2_cw_hard_stop_pct == 8
-    svc = module.OmsRiskService(settings, redis_client=svc.redis, session_factory=sf, broker_adapter=broker)
+    svc = own_service(module.OmsRiskService(settings, redis_client=svc.redis, session_factory=sf, broker_adapter=broker))
     svc._rehydrate_managed_v2_symbols()
     monkeypatch.setattr(svc, "_market_is_fillable", lambda: True)
     # Recorded archive reception, explicitly substituted for missing OMS arrival time.
@@ -298,8 +301,8 @@ async def test_unfilled_target_no_chase_safety_cancels_before_one_sell(monkeypat
 @pytest.mark.asyncio
 async def test_quote_hotpath_225_per_second_60_seconds(monkeypatch):
     initial, sf, broker = setup(monkeypatch)
-    svc = module.OmsRiskService(current_settings(), redis_client=initial.redis,
-        session_factory=sf, broker_adapter=broker)
+    svc = own_service(module.OmsRiskService(current_settings(), redis_client=initial.redis,
+        session_factory=sf, broker_adapter=broker))
     svc._rehydrate_managed_v2_symbols()
     monkeypatch.setattr(svc, "_market_is_fillable", lambda: True)
     evaluations = 0
