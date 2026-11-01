@@ -1,0 +1,9 @@
+{
+  "pr_number": 1183,
+  "range_base": "b1933356e1b49122e5b5785ecdf4857079fb00ac",
+  "range_head": "1ab9c3aa1ee98a4443bc8a9bf9d2e2c47d5667e2",
+  "reviewed_at": "2026-11-01T12:04:41Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: tests only; ORBroute1 receipt lifecycle: held writer runs in an owned single-worker pool (not the shared default executor) and signals entry via call_soon_threadsafe asyncio.Event; no assertion removed."
+}
