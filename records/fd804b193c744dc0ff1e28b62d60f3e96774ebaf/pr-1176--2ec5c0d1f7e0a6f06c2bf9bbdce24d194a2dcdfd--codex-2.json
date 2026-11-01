@@ -1,0 +1,9 @@
+{
+  "pr_number": 1176,
+  "range_base": "2ec5c0d1f7e0a6f06c2bf9bbdce24d194a2dcdfd",
+  "range_head": "fd804b193c744dc0ff1e28b62d60f3e96774ebaf",
+  "reviewed_at": "2026-11-01T02:18:40Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Rebased four Claude commits reviewed: exact two simulation files byte-identical to reviewed ab6; inherited main matches merged1175 tests. Prior 15 related controls and preserved causality assertions pass; no unchanged tests rerun. Prior retained baseline output comparison independently verified; latest nine-day replay remains C1-reported. No order-path change."
+}
