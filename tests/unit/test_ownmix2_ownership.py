@@ -476,6 +476,7 @@ def test_flat_local_gate_has_bounded_select_only_query_cost_without_fill_or_raw_
         case.engine.dispose()
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_quote_rate_60s_includes_actual_ownership_poll_query_cost(monkeypatch):
     """AUTHOR ONLY until main's serial rate slot; same strict 60s/200/s/50ms gates."""

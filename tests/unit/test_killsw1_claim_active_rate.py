@@ -120,6 +120,7 @@ async def test_probe_detects_missing_early_index_instead_of_accepting_a_fake_ref
             service._control_managed_exit_symbol_owners[key[:2]] = owner
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_original_240_events_60_seconds_with_actual_c6_held_claim(lane, monkeypatch):
     async with held_owner(lane, monkeypatch) as (service, contend, counts, _):

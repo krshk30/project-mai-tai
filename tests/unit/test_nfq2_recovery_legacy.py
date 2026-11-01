@@ -373,6 +373,7 @@ async def test_cancel_ack_without_explicit_zero_does_not_finish_or_recover(servi
     assert event.payload.metadata["nfq2_retry_token"] == held.dispatch["generation"]
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_recovery_busy_fence_sends_one_read_and_never_queues(service):
     held, _, _, adapter = await uncertain(service)

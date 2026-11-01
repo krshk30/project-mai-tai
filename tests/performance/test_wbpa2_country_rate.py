@@ -35,6 +35,7 @@ async def physical_join(task):
     task.result()
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_actual_country_deferred_slot_240_quote_callbacks_per_second_for_60_seconds(
     tmp_path, monkeypatch, record_property,

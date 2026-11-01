@@ -13,6 +13,7 @@ from project_mai_tai.oms import wbexit2
 from tests.unit.wbexit_stale1_episode_port import seed_episode, hydrate, snapshot, WB2_ID, WB3_ID
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_existing_DB_scan_60s_held_owner_with_240Hz_foreground(tmp_path, record_property):
     if not os.environ.get('WBSTALE1_EPISODE_SOURCE'):

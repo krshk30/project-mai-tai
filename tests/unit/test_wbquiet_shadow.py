@@ -90,6 +90,7 @@ async def test_nominal_due_clock_truthful_readers_and_unreadable_veto():
                for r in receipts)
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_worker_timeout_is_bounded_and_has_no_backlog(monkeypatch):
     monkeypatch.setattr(shadow, "WAIT_SECONDS", 0.01)
@@ -118,6 +119,7 @@ async def test_worker_timeout_is_bounded_and_has_no_backlog(monkeypatch):
             await asyncio.sleep(0.005)
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_240_events_per_second_have_no_observer_sql_or_tick_work():
     observer = shadow.ShadowObserver()

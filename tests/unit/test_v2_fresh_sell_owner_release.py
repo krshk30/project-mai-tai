@@ -624,6 +624,7 @@ async def test_exact_15_second_own_cancel_boundary(monkeypatch, account, status)
     engine.dispose()
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_pending_slow_commit_does_not_block_bar_or_release_at_buy(monkeypatch):
     bot, state, clock, request, _, engine = setup(monkeypatch)

@@ -69,6 +69,7 @@ def test_lock_can_be_acquired_after_short_contention_without_waiting_full_budget
     assert len(attempts) == 3 and clock[0] == pytest.approx(0.02)
 
 
+@pytest.mark.timing
 def test_actual_held_local_lock_fails_open_before_watchdog_without_journal_write(tmp_path):
     import time
 

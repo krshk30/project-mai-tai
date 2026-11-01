@@ -1,0 +1,609 @@
+{
+  "scope": "Actual native-clock speed/rate/stall/shutdown budgets, including delegated rate bodies; marker does not authorize external qualification.",
+  "exclusions": [
+    {
+      "category": "business/model clocks and data limits",
+      "examples": [
+        "test_l12_three_index_statement_budget.py",
+        "test_brokerdecides1_background_budget_diagnostics.py",
+        "test_momwarn1_measurements.py"
+      ],
+      "reason": "Literal SQL timeout configuration, counts, and controlled event timestamps are deterministic behavior assertions, not measured execution speed."
+    },
+    {
+      "category": "synchronization and teardown wait guards",
+      "examples": [
+        "test_wbpa2_claim_lifetime.py::test_cancelled_serial_handler_physically_joins_actual_offloop_claim_before_return",
+        "test_momlatch1_gateway_integration.py::test_timed_out_worker_cannot_consume_a_real_error_and_allow_resume",
+        "test_momwarn_stage_diagnostics.py::test_timeout_and_cancel_are_not_swallowed_or_relaxed"
+      ],
+      "reason": "Timeouts only bound fixture readiness/cleanup or exercise the timeout mechanism; no actual callback speed/rate/stall gate."
+    },
+    {
+      "category": "synthetic timing/threshold mechanism controls",
+      "examples": [
+        "tests/perf/test_wbattach1_o14_active_oms_rate.py::test_monitor_covers_initial_producer_block_and_final_interval",
+        "test_l13_g2_control_contract.py",
+        "test_momentum_gateway_throughput.py::test_frozen_replay_threshold_boundaries_are_pinned"
+      ],
+      "reason": "Injected clocks or precomputed metrics validate the gate itself; native wall-clock latency is not measured."
+    },
+    {
+      "category": "diagnostic-only measurements",
+      "examples": [
+        "test_mompage1.py::test_mompage1_page_load_receipt",
+        "tests/performance/test_wbpa3_reader_diagnostics.py"
+      ],
+      "reason": "Prints/records time without an asserted speed limit."
+    }
+  ],
+  "gates": [
+    {
+      "path": "tests/perf/test_groupd_d3_held_query_rate.py",
+      "function": "test_prior_held_unknown_actual_live_callbacks_60s_200_each_under_50ms",
+      "ci_scope": "external_qualification_unchanged",
+      "asserted_limits": [
+        "all((entry.filled_at < prior_boundary for entry in entries))",
+        "duration >= 60.0 and delivered / duration >= 200",
+        "max(stalls) < 50 and max(quote_ms) < 50 and (max(bar_ms) < 50)",
+        "counts['redis_publications'] <= 16"
+      ]
+    },
+    {
+      "path": "tests/perf/test_l12_background_waiter_expiry_rate.py",
+      "function": "test_actual_background_claim_rate_under_controlled_waiter_load",
+      "ci_scope": "external_qualification_unchanged",
+      "asserted_limits": [
+        "elapsed >= 1.0 and durations and (max(durations) < 50000000)"
+      ]
+    },
+    {
+      "path": "tests/perf/test_line_entry_receipt_rate.py",
+      "function": "test_publication_receipt_240eps_60seconds",
+      "ci_scope": "external_qualification_unchanged",
+      "asserted_limits": [
+        "elapsed >= 60 and len(latencies) == len(formatted) == 14401",
+        "len(latencies) / elapsed >= 200",
+        "max(latencies) < 50 and max(wake_lateness) < 50",
+        "all((count >= 3600 for count in counts))"
+      ]
+    },
+    {
+      "path": "tests/perf/test_orbroute1_active_oms_rate.py",
+      "function": "test_enabled_orb_actual_oms_quote_and_owned_protection_aggregate_60s",
+      "ci_scope": "external_qualification_unchanged",
+      "asserted_limits": [
+        "elapsed >= 60 and count / elapsed >= 200",
+        "max_stall[0] < 0.05 and callback_max[0] < 0.05",
+        "counters['actual_owned_poll_pass'] >= 10",
+        "counters[f'actual_native_probe:{WEBULL}'] >= 10",
+        "counters[f'native_poll:{SCHWAB}'] >= 10",
+        "counters[f'actual_quote_callback:{target.account}'] >= 6000",
+        "counters[f'actual_resolve:{target.account}'] >= 1000"
+      ]
+    },
+    {
+      "path": "tests/perf/test_wbattach1_o14_active_oms_rate.py",
+      "function": "test_actual_oms_quote_attach_and_durable_exit_owner_aggregate_60s",
+      "ci_scope": "external_qualification_unchanged",
+      "asserted_limits": [
+        "elapsed >= 60 and count / elapsed >= 200",
+        "stall < 0.05 and callback_max < 0.05",
+        "counts['actual_atr_attach:returned'] >= 2",
+        "counts['actual_atr_claimed_handoff:returned'] >= 1",
+        "counts['actual_o14_prepare:returned'] >= 2",
+        "counts['exact_child_absence:WRISK'] >= 1",
+        "counts['exact_child_absence:ORISK'] >= 1",
+        "counts[f'actual_quote_callback:{symbol}'] >= 2900"
+      ]
+    },
+    {
+      "path": "tests/perf/test_wbexit2_active_oms_rate.py",
+      "function": "test_WBEXIT2_real_quote_callback_pending_resume_60s_unchanged_limits",
+      "ci_scope": "external_qualification_unchanged",
+      "asserted_limits": [
+        "elapsed >= 60 and count / elapsed >= 200",
+        "monitor.max_stall < 0.05 and callback_max < 0.05"
+      ]
+    },
+    {
+      "path": "tests/perf/test_wbexit3_active_oms_rate.py",
+      "function": "test_WBEXIT3_ON_original_both_broker_pipeline_60s",
+      "ci_scope": "external_qualification_unchanged",
+      "asserted_limits": []
+    },
+    {
+      "path": "tests/perf/test_wbexit3_active_oms_rate.py",
+      "function": "test_WBEXIT3_real_quote_callback_pending_resume_60s_unchanged_limits",
+      "ci_scope": "external_qualification_unchanged",
+      "asserted_limits": [
+        "elapsed >= 60 and count / elapsed >= 200",
+        "monitor.max_stall < 0.05 and callback_max < 0.05",
+        "start <= recovery_evidence['actor_start'] < recovery_evidence['actor_end'] <= end",
+        "start <= entry['entered_at'] <= entry['returned_at'] <= end",
+        "entry['foreground_reads_at_entry'] >= 1"
+      ]
+    },
+    {
+      "path": "tests/performance/test_wbexit_stale1_scan_rate.py",
+      "function": "test_existing_DB_scan_60s_held_owner_with_240Hz_foreground",
+      "ci_scope": "external_qualification_unchanged",
+      "asserted_limits": [
+        "elapsed >= 60 and len(callbacks) / elapsed >= 200",
+        "max(callbacks) < 0.05 and max(lateness) < 0.05 and (max(scans) < 0.05)",
+        "len(formatted) >= 122"
+      ]
+    },
+    {
+      "path": "tests/performance/test_wbpa2_country_rate.py",
+      "function": "test_actual_country_deferred_slot_240_quote_callbacks_per_second_for_60_seconds",
+      "ci_scope": "external_qualification_unchanged",
+      "asserted_limits": [
+        "begin <= evidence['serial_start'] <= evidence['serial_end'] <= end",
+        "end - begin >= 60 and counters['callbacks'] / (end - begin) >= 200",
+        "monitor.max_stall < 0.05 and counters['callback_max_seconds'] < 0.05",
+        "counters['wake_lateness_max_seconds'] < 0.05",
+        "counters['evaluations'] >= 12000 and counters['evaluations_with_country_slot'] >= 12000"
+      ]
+    },
+    {
+      "path": "tests/performance/test_wbpa3_closure_rate.py",
+      "function": "test_actual_oms_quote_rate_with_wbpa3_closure_readers_for_60_seconds",
+      "ci_scope": "external_qualification_unchanged",
+      "asserted_limits": [
+        "len(inside) >= 50",
+        "all((s['worker_thread'] != loop_thread and s['end'] <= s['joined_on_loop_at'] for s in spans))"
+      ]
+    },
+    {
+      "path": "tests/unit/test_alerts1021_b_review_fixes.py",
+      "function": "test_actual_held_local_lock_fails_open_before_watchdog_without_journal_write",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "elapsed < 1.0"
+      ]
+    },
+    {
+      "path": "tests/unit/test_alerts1_flat_incidents_and_allowances.py",
+      "function": "test_sync_pass_does_not_await_the_writer",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "time.monotonic() - started < 2.0"
+      ]
+    },
+    {
+      "path": "tests/unit/test_atrsimlive1_runtime.py",
+      "function": "test_deadline_joins_owned_child_before_return",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "time.monotonic() - started < 5"
+      ]
+    },
+    {
+      "path": "tests/unit/test_coldstart1_subscriptions.py",
+      "function": "test_cold_boot_five_real_publishers_announce_recorded_empty_sets_within_60_seconds",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "time.monotonic() - start < 60"
+      ]
+    },
+    {
+      "path": "tests/unit/test_coldstart1_subscriptions.py",
+      "function": "test_healthy_startup_path_publishes_without_any_new_watchlist_event",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "time.monotonic() - started < 60"
+      ]
+    },
+    {
+      "path": "tests/unit/test_countryroute_atr_active_callback_rate.py",
+      "function": "test_selected_route_actual_bot_callbacks_240_per_second_60_seconds",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "elapsed >= 60 and count / elapsed >= 200",
+        "watch_counts['samples'] >= 1000",
+        "max_stall < 0.05",
+        "sql_counts['statements'] > 0",
+        "case['counts']['completed_callbacks'] >= count // 4"
+      ]
+    },
+    {
+      "path": "tests/unit/test_edgeprot1_cache_review.py",
+      "function": "test_post_reservation_target_read_is_offloop_and_fresh",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "max(stalls) < 50"
+      ]
+    },
+    {
+      "path": "tests/unit/test_edgeprot1_lane_b.py",
+      "function": "test_quote_hotpath_225_per_second_60_seconds",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "elapsed >= 60 and 13500 / elapsed >= 200 and (max_stall < 50)",
+        "len(svc._symbol_tick_work) <= 1"
+      ]
+    },
+    {
+      "path": "tests/unit/test_edgeprot1_lane_b.py",
+      "function": "test_serial_quote_wait_does_not_block_new_quote",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": []
+    },
+    {
+      "path": "tests/unit/test_falseflip1_runtime.py",
+      "function": "test_stalled_budget_write_is_offloop_and_actual_quote_and_bar_callbacks_stay_under_50ms",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "time.perf_counter() - start < 0.05"
+      ]
+    },
+    {
+      "path": "tests/unit/test_falseflip1_runtime.py",
+      "function": "test_stalled_classification_worker_never_delays_later_protective_intent_or_quote",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": []
+    },
+    {
+      "path": "tests/unit/test_hotfix1_symbol_tick_cache.py",
+      "function": "test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactions",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "elapsed >= 60 and count / elapsed >= 200",
+        "max(stalls) < 0.05",
+        "retained_admissions > 0 if enabled else retained_admissions == 0",
+        "not any((t >= start + 1 for t in transactions))"
+      ]
+    },
+    {
+      "path": "tests/unit/test_hotfix1_symbol_tick_cache.py",
+      "function": "test_slow_database_worker_does_not_delay_tick_or_exit_and_deduplicates",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": []
+    },
+    {
+      "path": "tests/unit/test_hotfix1_symbol_tick_cache.py",
+      "function": "test_tick_drift_slow_worker_returns_immediately_and_only_one_cancel",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": []
+    },
+    {
+      "path": "tests/unit/test_keepwatch_central_boot_retry_rate.py",
+      "function": "test_central_retry_240_per_second_60s_incomplete_first_10s",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "count == 14400 and elapsed_ns >= 60000000000",
+        "measured_rate >= 200",
+        "max_stall_ns < 50000000",
+        "max_handler_ns < 50000000"
+      ]
+    },
+    {
+      "path": "tests/unit/test_killsw1_claim_active_rate.py",
+      "function": "test_original_240_events_60_seconds_with_actual_c6_held_claim",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "callbacks['quote'] > 0 and callbacks['trade'] > 0",
+        "total >= 12000"
+      ]
+    },
+    {
+      "path": "tests/unit/test_l13_g2_qualification.py",
+      "function": "test_p1_real_worker_cpu_decode_and_trade_publication_60_seconds",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": []
+    },
+    {
+      "path": "tests/unit/test_l13_snapshot_worker_lifecycle.py",
+      "function": "test_p4_worker_sigkill_independent_restart_while_real_gateway_publishes_trades",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "trade_count(redis) > before + 10 and (not publishing.done())",
+        "second_snapshot[2] - killed < 15.0",
+        "trade_count(redis) > restarted_count and (not publishing.done())"
+      ]
+    },
+    {
+      "path": "tests/unit/test_line_candidate_tick_rate.py",
+      "function": "test_joined_seed_60s_quote_rate_has_no_50ms_loop_stall",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "duration >= 60",
+        "events / duration >= 200",
+        "max(stalls) < 50",
+        "max(handler_ms) < 50"
+      ]
+    },
+    {
+      "path": "tests/unit/test_momentum_gateway_throughput.py",
+      "function": "test_real_dead_consumer_cannot_block_the_paced_producer",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "payload_bytes > kernel_buffer_bytes * 20",
+        "int(result['would_block_drops']) > 0",
+        "float(result['offer_elapsed_ms']) < paced_duration_ms + 500.0",
+        "float(result['offer_schedule_delay_p99_ms']) < 25.0"
+      ]
+    },
+    {
+      "path": "tests/unit/test_momlatch1_gateway_integration.py",
+      "function": "test_gateway_A_240_per_second_60s_original_budget_and_TQ_progress",
+      "ci_scope": "quiet_host_preinstall_only",
+      "ci_exclusion_reason": "Retain the original exact CI deselection; mandatory quiet-host pre-install proof is not shared-runner timing proof.",
+      "asserted_limits": [
+        "elapsed >= 60 and count / elapsed >= 200",
+        "maximum < 0.05 and max_handler < 0.05"
+      ]
+    },
+    {
+      "path": "tests/unit/test_momlive1_empty_off_rate.py",
+      "function": "test_original_off_with_empty_off_cadence_active_60s",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "receipt['cadence_reads_during_rate'] >= 30",
+        "receipt['cadence_writes_during_rate'] >= 30",
+        "receipt['cadence_transactions_during_rate'] >= 30"
+      ]
+    },
+    {
+      "path": "tests/unit/test_momlive1_native_rate.py",
+      "function": "test_active_mom_native_240_per_second_60_seconds_slow_offloop",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "duration >= 60 and count / duration >= 200",
+        "max(stalls) < 0.05 and max_handler < 0.05",
+        "max_queue <= 2 and max_inbox <= 64 and (len(runtime.actor.tasks) == 4)",
+        "db_calls > 0 and broker_calls > 0 and (not wrong_thread)",
+        "exit_seeded and receipt['owned_exit_wires'] >= 1"
+      ]
+    },
+    {
+      "path": "tests/unit/test_momneg1_signal_native_rate.py",
+      "function": "test_real_signal_callback_240_per_second_60_seconds",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "count == EVENTS and duration >= SECONDS and (count / duration >= 200)",
+        "max(samples) < 50 and max(stalls) < 50",
+        "sum((sum(lane.routes.values()) for lane in lanes)) > 0",
+        "sum((len(lane.queue_receipts) for lane in lanes)) > 0",
+        "size <= 1 and len(lane.handoff.ledger.episodes) <= 1",
+        "sum(lane.routes.values()) <= lane.offers",
+        "set(lane.routes) <= {lane.row['broker']}"
+      ]
+    },
+    {
+      "path": "tests/unit/test_momneg1_signal_timing.py",
+      "function": "test_momneg1_actual_offer_timing",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "ordered[-1] < 50",
+        "target.queue.qsize() <= 1"
+      ]
+    },
+    {
+      "path": "tests/unit/test_momwarn1_derived_a_burst.py",
+      "function": "test_derived_three_times_max_observed_peak_actual_gateway_TQ_isolated",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "amount <= 8192"
+      ]
+    },
+    {
+      "path": "tests/unit/test_momwarn1_gateway.py",
+      "function": "test_huge_synthetic_SDK_batch_yields_and_does_not_wait_on_A_Redis",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "elapsed_ms < 50",
+        "len(turns) >= 12000 // 64",
+        "svc._warning_queue.qsize() <= 16",
+        "svc._warning_drop_count > 0"
+      ]
+    },
+    {
+      "path": "tests/unit/test_momwarn_snapshot_offloop.py",
+      "function": "test_encoder_failure_does_not_publish_partial_batch_or_hold_quote_path",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": []
+    },
+    {
+      "path": "tests/unit/test_momwarn_snapshot_offloop.py",
+      "function": "test_retained_whole_batch_content_and_A_TQ_progress",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "max(A_lags) < 1000"
+      ]
+    },
+    {
+      "path": "tests/unit/test_momwarn_snapshot_offloop.py",
+      "function": "test_slow_snapshot_build_does_not_hold_A_or_watched_trade",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": []
+    },
+    {
+      "path": "tests/unit/test_nfq2_hotfix1_combined_proof.py",
+      "function": "test_combined_240_events_per_second_60_seconds_active_hold",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "elapsed >= 60 and receipt['rate'] >= 200",
+        "receipt['max_loop_stall_ms'] < 50",
+        "len(times) <= 1 + int(elapsed / cadence)",
+        "all((right - left >= cadence * 0.95 for (left, right) in zip(times, times[1:])))"
+      ]
+    },
+    {
+      "path": "tests/unit/test_nfq2_hotfix1_combined_proof.py",
+      "function": "test_combined_slow_eligible_persistence_offloop_duplicate_quotes",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "duplicate_seconds < 0.05"
+      ]
+    },
+    {
+      "path": "tests/unit/test_nfq2_recovery_legacy.py",
+      "function": "test_recovery_busy_fence_sends_one_read_and_never_queues",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": []
+    },
+    {
+      "path": "tests/unit/test_nfq2_tick_path.py",
+      "function": "test_nfq2_slow_save_does_not_stall_loop_and_concurrent_quotes_queue_once",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "asyncio.get_running_loop().time() - start < 0.05"
+      ]
+    },
+    {
+      "path": "tests/unit/test_nfq2_tick_path.py",
+      "function": "test_nfq2_sustained_200_ticks_per_second_with_active_hold_for_60_seconds",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "ticks / elapsed >= 200",
+        "max(stalls) < 0.05",
+        "len(transactions) <= 1 + int(elapsed / cadence)",
+        "all((right[0] - left[0] >= cadence * 0.95 for (left, right) in zip(transactions, transactions[1:])))"
+      ]
+    },
+    {
+      "path": "tests/unit/test_nuweref1.py",
+      "function": "test_hung_sixty_second_readonly_fetch_shutdown_bounded_and_cancellable",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "time.perf_counter() - begin < 1.0",
+        "time.perf_counter() - begin < 20.0"
+      ]
+    },
+    {
+      "path": "tests/unit/test_nuweref1.py",
+      "function": "test_slow_five_second_fetch_does_not_delay_snapshot_handler",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "time.perf_counter() - begin < 0.5",
+        "time.perf_counter() - begin < 0.5"
+      ]
+    },
+    {
+      "path": "tests/unit/test_ownmix2_ownership.py",
+      "function": "test_quote_rate_60s_includes_actual_ownership_poll_query_cost",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "elapsed >= 60 and 13500 / elapsed >= 200",
+        "max_stall < 50 and max(handlers) < 50",
+        "len(polls) >= 50 and statements",
+        "len(svc._symbol_tick_work) <= 1"
+      ]
+    },
+    {
+      "path": "tests/unit/test_pomexitlog1_v4_rate.py",
+      "function": "test_existing_native_rate_60s_at_least200_stall_under50_with_timing_info_active",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "any((isinstance(handler, logging.StreamHandler) and handler.stream is sys.stdout and (handler.level <= logging.INFO) for handler in logging.getLogger().handlers))",
+        "duration >= 60 and active_seconds >= 60 and (count / duration >= 200)",
+        "active_events / active_seconds >= 200",
+        "max(stalls) < 0.05 and max_handler < 0.05",
+        "max_queue <= 2 and max_inbox <= 64 and (len(runtime.actor.tasks) == 4)",
+        "db_calls > 0 and broker_calls > 0 and (not wrong_thread)",
+        "exit_seeded and receipt['owned_exit_wires'] >= 1",
+        "not counter.overflow and gate_calls > 0 and (attempt_calls > 0) and (not counter.wrong_log_thread)",
+        "all((value['gate'] <= 20 for value in counter.episodes.values()))",
+        "all((value['lines'] <= 20 and value['sink_errors'] == 0 and (counter.episodes.get(key, {}).get('gate', 0) == value['lines']) for (key, value) in runtime._exit_gate_states.items()))",
+        "len(runtime._exit_gate_states) <= 2 and len(runtime._exit_gate_frames) <= 2"
+      ]
+    },
+    {
+      "path": "tests/unit/test_restartkeep1_d1d3.py",
+      "function": "test_actual_bar_callback_finishes_while_checkpoint_sql_is_held",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": []
+    },
+    {
+      "path": "tests/unit/test_schwab_1m_v2_eh_stream_cross.py",
+      "function": "test_blocked_emit_cannot_hold_the_next_stream_bar_or_duplicate",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": []
+    },
+    {
+      "path": "tests/unit/test_schwab_streamer_timesale.py",
+      "function": "test_stop_bounds_total_time_when_websocket_close_and_task_both_hang",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "elapsed < 8.0"
+      ]
+    },
+    {
+      "path": "tests/unit/test_schwab_streamer_timesale.py",
+      "function": "test_stop_completes_fast_when_streamer_is_idle",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "elapsed < 0.5"
+      ]
+    },
+    {
+      "path": "tests/unit/test_strategy_engine_service.py",
+      "function": "test_run_init_phase_cancels_in_flight_init_when_signal_arrives",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "elapsed < 5.0"
+      ]
+    },
+    {
+      "path": "tests/unit/test_strategy_engine_service.py",
+      "function": "test_run_init_phase_cancels_sync_init_step_running_in_thread",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "elapsed < 5.0"
+      ]
+    },
+    {
+      "path": "tests/unit/test_sunday_v2_bar_tick_rate.py",
+      "function": "test_sunday_60s_real_bar_and_quote_handlers_stay_under_50ms",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "duration >= 60",
+        "events / duration >= 200",
+        "max(stalls) < 50",
+        "max(quote_ms) < 50",
+        "max(bar_ms) < 50"
+      ]
+    },
+    {
+      "path": "tests/unit/test_v2_fresh_sell_owner_release.py",
+      "function": "test_pending_slow_commit_does_not_block_bar_or_release_at_buy",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "elapsed < 0.05 and (not task.done())"
+      ]
+    },
+    {
+      "path": "tests/unit/test_v2_removed_wait_clear_rules.py",
+      "function": "test_pending_clear_commit_is_offloop_and_fenced",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": []
+    },
+    {
+      "path": "tests/unit/test_v2_removed_wait_clear_rules.py",
+      "function": "test_slow_same_symbol_clear_and_publication_leave_bar_quote_loop_free",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "asyncio.get_running_loop().time() - started < 0.05",
+        "loop.time() - previous < 0.05"
+      ]
+    },
+    {
+      "path": "tests/unit/test_wbquiet_shadow.py",
+      "function": "test_240_events_per_second_have_no_observer_sql_or_tick_work",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "time.monotonic() - started < 0.05"
+      ]
+    },
+    {
+      "path": "tests/unit/test_wbquiet_shadow.py",
+      "function": "test_worker_timeout_is_bounded_and_has_no_backlog",
+      "ci_scope": "unit_fresh_process",
+      "asserted_limits": [
+        "time.monotonic() - started < 0.2"
+      ]
+    }
+  ]
+}

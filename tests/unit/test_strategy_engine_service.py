@@ -213,6 +213,7 @@ async def test_run_init_phase_returns_false_when_stop_event_set_before_call() ->
     assert init_calls == [], "init must not run when stop_event was already set"
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_run_init_phase_cancels_in_flight_init_when_signal_arrives() -> None:
     """SIGTERM during init: the in-flight init step must be cancelled within ~3s."""
@@ -252,6 +253,7 @@ async def test_run_init_phase_cancels_in_flight_init_when_signal_arrives() -> No
     assert elapsed < 5.0, f"_run_init_phase took {elapsed:.2f}s; expected < 5s"
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_run_init_phase_cancels_sync_init_step_running_in_thread() -> None:
     """Synchronous init steps (DB restore etc.) run via asyncio.to_thread so the event loop stays

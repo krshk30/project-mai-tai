@@ -112,6 +112,7 @@ async def test_nfq2_cancel_during_worker_save_never_resurrects_durable_hold_or_q
         assert row.payload["phase"] == "retired"
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_nfq2_slow_save_does_not_stall_loop_and_concurrent_quotes_queue_once(service, monkeypatch):
     hold(service, biya())
@@ -172,6 +173,7 @@ async def test_nfq2_worker_failure_keeps_hold_and_next_quote_can_queue_once(serv
     assert active.phase == "queued" and len(service.redis.entries) == 1
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_nfq2_sustained_200_ticks_per_second_with_active_hold_for_60_seconds(service, monkeypatch):
     # Isolate NFQ2; the unchanged legacy drift reader is HOTFIX1's separate concern.

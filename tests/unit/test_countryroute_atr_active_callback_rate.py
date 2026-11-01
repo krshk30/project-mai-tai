@@ -160,6 +160,7 @@ async def test_selected_route_actual_bot_callback_counter_contract(monkeypatch, 
         case["engine"].dispose()
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_selected_route_actual_bot_callbacks_240_per_second_60_seconds(monkeypatch):
     active = install_clock(monkeypatch)

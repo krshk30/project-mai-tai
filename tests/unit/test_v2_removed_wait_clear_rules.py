@@ -350,6 +350,7 @@ def test_old_unknown_cancel_outside_request_anchor_remains_open(db, purpose, out
     assert store.clear_rule_proofs((req,), NAMES, now=NOW)[0].reason == "cancel_unknown_or_refused"
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_pending_clear_commit_is_offloop_and_fenced(db, monkeypatch):
     store, _, _, _ = db
@@ -407,6 +408,7 @@ def test_stale_zero_and_exact_token_cas(db):
         store.record_rules(req, False)
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 @pytest.mark.parametrize("purpose", ["scanner_removal", "retry_exhausted"])
 async def test_slow_same_symbol_clear_and_publication_leave_bar_quote_loop_free(db, monkeypatch, purpose):

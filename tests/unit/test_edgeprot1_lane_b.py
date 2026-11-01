@@ -102,6 +102,7 @@ def test_webull_attach_target_floor_keeps_other_native_rounding(raw, floor, exis
     assert schwab._bracket_exit_leg(request, order_type="STOP", price=Decimal("2.2908"))["stopPrice"] == 2.29
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 @pytest.mark.parametrize("account", [ACCT, WEBULL_ACCT])
 async def test_serial_quote_wait_does_not_block_new_quote(monkeypatch, account):
@@ -293,6 +294,7 @@ async def test_unfilled_target_no_chase_safety_cancels_before_one_sell(monkeypat
         assert sum(o.status == "accepted" for o in orders) == 1
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_quote_hotpath_225_per_second_60_seconds(monkeypatch):
     initial, sf, broker = setup(monkeypatch)

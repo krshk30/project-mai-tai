@@ -16,6 +16,7 @@ from project_mai_tai.broker_adapters.webull_order_reads import QueryBudget, Quer
 BASE_SHA = "102d1022b7fad52e40aecb79cd8dc313b91de48f3c9b116cff2a07c727383903"
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize("waiters", [0, 64, 4096])
 def test_actual_background_claim_rate_under_controlled_waiter_load(waiters, record_property):
     path = Path(os.environ["L12_BASELINE_SOURCE"])

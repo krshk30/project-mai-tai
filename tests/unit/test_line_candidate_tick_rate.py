@@ -8,6 +8,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import Quote
 from tests.unit.test_line_candidate_live_set import CANDIDATE, ROWS
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_joined_seed_60s_quote_rate_has_no_50ms_loop_stall(monkeypatch):
     replay = __import__("line_repair_preopen_replay")

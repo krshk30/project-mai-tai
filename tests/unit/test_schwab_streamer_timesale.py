@@ -88,6 +88,7 @@ class _HangingWebSocket:
         await asyncio.Event().wait()
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_stop_bounds_total_time_when_websocket_close_and_task_both_hang() -> None:
     """stop() must not hang past ~6s when ws.close() and the connection task both stall."""
@@ -110,6 +111,7 @@ async def test_stop_bounds_total_time_when_websocket_close_and_task_both_hang() 
     assert client._stop_event.is_set()
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_stop_completes_fast_when_streamer_is_idle() -> None:
     """stop() returns quickly when there's no task and no websocket — no regression on the happy path."""

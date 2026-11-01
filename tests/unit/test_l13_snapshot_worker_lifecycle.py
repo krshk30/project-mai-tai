@@ -73,6 +73,7 @@ def trade_count(redis):
     return sum(payload.get("event_type") == "trade_tick" for _, payload, _ in redis.entries)
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_p4_worker_sigkill_independent_restart_while_real_gateway_publishes_trades():
     settings = Settings(redis_stream_prefix="l13-process", market_data_warmup_enabled=False)

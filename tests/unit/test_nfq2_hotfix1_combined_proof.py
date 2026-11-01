@@ -144,6 +144,7 @@ async def test_combined_memory_admission_zero_sql(service, monkeypatch, case):
         meter.close()
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_combined_slow_eligible_persistence_offloop_duplicate_quotes(service, monkeypatch):
     await configured(service)
@@ -264,6 +265,7 @@ async def test_combined_full_handler_serial_delivery_once(service, monkeypatch, 
           "quote_events": 101, "serial_deliveries": 2, "simulated_orders": len(orders)}))
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_combined_240_events_per_second_60_seconds_active_hold(service, monkeypatch):
     await configured(service)

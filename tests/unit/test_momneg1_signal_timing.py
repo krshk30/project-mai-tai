@@ -17,6 +17,7 @@ from project_mai_tai.momentum_live.handoff import LiveHandoff
 from project_mai_tai.momentum_paper.models import MomentumTapeRecord
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize("price,prior", [("5.25", "5"), ("0.79", "1.31"), ("5.25", None)])
 def test_momneg1_actual_offer_timing(price, prior, record_property, capsys):
     latencies = []

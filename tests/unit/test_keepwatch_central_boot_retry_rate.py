@@ -9,6 +9,7 @@ import pytest
 from tests.unit.test_keepwatch_central_boot_retry import controlled_bot, controlled_proof
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_central_retry_240_per_second_60s_incomplete_first_10s(monkeypatch, record_property):
     bot = controlled_bot()

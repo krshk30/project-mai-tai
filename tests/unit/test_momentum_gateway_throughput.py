@@ -350,6 +350,7 @@ async def test_abort_monitor_failure_cancels_the_replay_immediately() -> None:
     assert replay_cancelled.is_set()
 
 
+@pytest.mark.timing
 def test_real_dead_consumer_cannot_block_the_paced_producer(tmp_path: Path) -> None:
     consumer = CrossProcessPaperConsumer(
         mode="dead",
