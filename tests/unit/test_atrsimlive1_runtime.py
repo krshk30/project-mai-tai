@@ -119,6 +119,7 @@ def test_second_invocation_cannot_overlap_same_output(tmp_path):
                 pytest.fail("second owner entered")
 
 
+@pytest.mark.timing
 def test_deadline_joins_owned_child_before_return(monkeypatch):
     original, children = runtime.subprocess.Popen, []
 

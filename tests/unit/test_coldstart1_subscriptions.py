@@ -127,6 +127,7 @@ async def replay_recorded(gw, redis, *, nonempty=False):
     await drain(gw, redis)
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_cold_boot_five_real_publishers_announce_recorded_empty_sets_within_60_seconds(monkeypatch):
     redis = RedisReplay()
@@ -267,6 +268,7 @@ class BootComplete(Exception):
     """Stop a unit's loop after its first real startup subscription sync."""
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 @pytest.mark.parametrize("name", NAMES)
 async def test_healthy_startup_path_publishes_without_any_new_watchlist_event(name, monkeypatch):

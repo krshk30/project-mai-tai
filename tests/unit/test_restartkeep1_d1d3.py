@@ -86,6 +86,7 @@ def test_actual_bar_never_awaits_checkpoint_and_writer_owns_the_only_db_await():
     assert 'to_thread' not in producer and 'json.dumps' not in producer and 'store.record' not in producer
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_actual_bar_callback_finishes_while_checkpoint_sql_is_held():
     started, release = threading.Event(), threading.Event()

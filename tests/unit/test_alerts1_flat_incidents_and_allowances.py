@@ -552,6 +552,7 @@ def test_failed_sync_save_offers_no_receipt() -> None:
     assert oms._positions_read_receipt_writer.queue.empty()
 
 
+@pytest.mark.timing
 def test_sync_pass_does_not_await_the_writer() -> None:
     """No worker running and a writer that would block: the sync pass still returns at once,
     the receipt sits in the bounded queue, and nothing was written in the sync transaction."""

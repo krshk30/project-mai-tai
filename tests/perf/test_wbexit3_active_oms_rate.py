@@ -48,6 +48,7 @@ def callback_duration_evidence(monkeypatch, request):
         "scope": "ACTUAL_AWAITED_HANDLER_INNER_DURATION_OUTER_ORIGINAL_MAX_LIMIT_UNCHANGED"}, sort_keys=True))
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_WBEXIT3_real_quote_callback_pending_resume_60s_unchanged_limits(make_case, monkeypatch, fake_sdk):
     case = await owner_case(lambda: make_case(control=True))
@@ -177,6 +178,7 @@ async def test_WBEXIT3_real_quote_callback_pending_resume_60s_unchanged_limits(m
             native="ABSENT_UNKNOWN", full_fleet_L11="NOT_COVERED"), sort_keys=True))
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_WBEXIT3_ON_original_both_broker_pipeline_60s(tmp_path, monkeypatch):
     # Original O14 fixture exercises actual Webull attach/riskoff and Schwab

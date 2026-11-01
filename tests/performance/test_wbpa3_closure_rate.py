@@ -22,6 +22,7 @@ pytestmark = pytest.mark.skipif(not os.environ.get("WBPA3_SOURCE_DIRECTORY"),
     reason="Requires reviewed private WBPA3 inputs and the bounded Main rate profile")
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_actual_oms_quote_rate_with_wbpa3_closure_readers_for_60_seconds(
     tmp_path, monkeypatch, record_property,

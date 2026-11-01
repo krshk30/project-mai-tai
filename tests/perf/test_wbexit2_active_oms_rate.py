@@ -22,6 +22,7 @@ from tests.unit.test_wbattach1_riskoff import make_case as make_case, closes
 from tests.unit.test_wbexit2_route import owner_case, saved
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_WBEXIT2_real_quote_callback_pending_resume_60s_unchanged_limits(make_case):
     case = await owner_case(lambda: make_case(control=True))

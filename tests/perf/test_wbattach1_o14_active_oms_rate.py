@@ -286,6 +286,7 @@ class ControlledBroker:
         return None  # Controlled native tree has no execution, never a fake fill.
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_actual_oms_quote_attach_and_durable_exit_owner_aggregate_60s(tmp_path, monkeypatch):
     expected = os.environ.get("WB_O14_RATE_EXPECTED_HEAD", "")

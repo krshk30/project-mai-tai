@@ -174,6 +174,7 @@ def percentile(values, fraction):
     return ordered[math.ceil(len(ordered) * fraction) - 1]
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_real_signal_callback_240_per_second_60_seconds(record_property):
     """Explicit P2 synthetic mode needs no historical packet; actual mode is strict."""

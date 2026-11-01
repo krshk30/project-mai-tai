@@ -607,6 +607,7 @@ def test_classification_sql_is_batched_and_executed_only_on_its_worker_thread():
     engine.dispose()
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_stalled_classification_worker_never_delays_later_protective_intent_or_quote(monkeypatch):
     service = OmsRiskService.__new__(OmsRiskService)
@@ -725,6 +726,7 @@ async def test_worker_shutdown_keeps_ownership_of_its_inflight_database_thread()
         await asyncio.gather(work, return_exceptions=True)
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_stalled_budget_write_is_offloop_and_actual_quote_and_bar_callbacks_stay_under_50ms():
     engine, factory = database()

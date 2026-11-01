@@ -551,6 +551,7 @@ async def test_fair_live_loop_continuous_quote_and_bar_backlogs_cannot_starve_tr
     assert seen[:9] == ["T", "Q", "B"] * 3
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_huge_synthetic_SDK_batch_yields_and_does_not_wait_on_A_Redis(record_property):
     svc, provider, redis, warning_redis = service(market_data_momentum_warning_queue_maxsize=16)

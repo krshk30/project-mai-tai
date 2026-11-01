@@ -48,6 +48,7 @@ def test_sunday_composition_keeps_every_captured_live_v2_flag():
     assert not settings.strategy_schwab_1m_v2_atr_reprice_handoff_enabled
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_sunday_60s_real_bar_and_quote_handlers_stay_under_50ms(monkeypatch, caplog, tmp_path):
     from scripts import line_repair_preopen_replay as replay

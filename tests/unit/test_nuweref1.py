@@ -216,6 +216,7 @@ async def test_same_symbol_twice_one_attempt_and_restart_reuses_durable_result()
     await restarted._nuweref1.close()
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_slow_five_second_fetch_does_not_delay_snapshot_handler():
     started = Event()
@@ -313,6 +314,7 @@ async def test_no_reference_top_gainers_on_off_equal_before_fetch(monkeypatch):
         await on._nuweref1.close()
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_hung_sixty_second_readonly_fetch_shutdown_bounded_and_cancellable(caplog, monkeypatch):
     # A real daemon worker blocks for up to60s; fixture releases and joins it

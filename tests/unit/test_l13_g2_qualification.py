@@ -11,6 +11,7 @@ from tools.l13_g2_controls import (
 )
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 @pytest.mark.skipif(os.environ.get("L13_G2_CLAIM") != "P1", reason="main must claim exact P1")
 async def test_p1_real_worker_cpu_decode_and_trade_publication_60_seconds():

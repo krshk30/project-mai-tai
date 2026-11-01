@@ -465,6 +465,7 @@ async def test_stream_cross_does_not_drain_an_unrelated_queued_webull_leg(monkey
     assert len(written) == 1 and len(emitted) == 1
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_blocked_emit_cannot_hold_the_next_stream_bar_or_duplicate(monkeypatch) -> None:
     bot, written, emitted = _bot(monkeypatch, strategy_schwab_1m_v2_tick_capture_enabled=True)

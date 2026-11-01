@@ -28,6 +28,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2IntentEmitter
 from tests.unit.test_confirmation_exit import _seed_confirmation_fill
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_prior_held_unknown_actual_live_callbacks_60s_200_each_under_50ms(monkeypatch, tmp_path, caplog):
     loop = asyncio.get_running_loop()

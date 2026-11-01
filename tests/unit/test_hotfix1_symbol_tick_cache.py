@@ -125,6 +125,7 @@ async def test_unrelated_empty_outside_and_rpg_owned_ticks_make_no_db_call(lane,
     assert not queued(lane)
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_slow_database_worker_does_not_delay_tick_or_exit_and_deduplicates(lane, monkeypatch):
     service = lane[0]
@@ -247,6 +248,7 @@ async def test_stale_drift_cache_revalidates_terminal_order_before_broker_cancel
     assert not adapter.requests
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_tick_drift_slow_worker_returns_immediately_and_only_one_cancel(monkeypatch):
     adapter = _DirectCancelAdapter()
@@ -444,6 +446,7 @@ def test_flag_off_uncertain_wire_is_serial_fence_not_restored_opportunity(lane):
     assert fresh._mirrorhold_scope(event)
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enabled", [True, False], ids=["retained-on", "retained-off-existing-row"])
 async def test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactions(lane, monkeypatch, enabled):

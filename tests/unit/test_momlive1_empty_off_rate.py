@@ -142,6 +142,7 @@ async def test_short_invalid_prior_proof_cannot_claim_active_cadence(lane, monke
     assert runtime.publication_task is None
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_original_off_with_empty_off_cadence_active_60s(lane, monkeypatch):
     """Same original workload and thresholds, plus actual same-loop B cadence."""

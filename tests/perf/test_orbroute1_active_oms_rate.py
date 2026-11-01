@@ -60,6 +60,7 @@ async def prime_actual_positions_receipts(service, writer, writer_task, accounts
     await service._run_db(inspect, commit=False)
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_enabled_orb_actual_oms_quote_and_owned_protection_aggregate_60s(setup, monkeypatch, tmp_path):
     expected = os.environ.get("ORB_OWNER_RATE_EXPECTED_HEAD", "")

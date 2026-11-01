@@ -57,6 +57,7 @@ async def test_reference_payload_build_runs_offloop(monkeypatch):
     assert threads and threads[0] != main_thread
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_slow_snapshot_build_does_not_hold_A_or_watched_trade(monkeypatch):
     svc, provider, redis, warning_redis = service()
@@ -95,6 +96,7 @@ async def test_slow_snapshot_build_does_not_hold_A_or_watched_trade(monkeypatch)
         await writer
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_encoder_failure_does_not_publish_partial_batch_or_hold_quote_path(monkeypatch):
     svc, _, redis, _ = service()
@@ -111,6 +113,7 @@ async def test_encoder_failure_does_not_publish_partial_batch_or_hold_quote_path
     assert len(redis.entries) == 1 and redis.entries[0][1]['event_type'] == 'quote_tick'
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_retained_whole_batch_content_and_A_TQ_progress(record_property, monkeypatch):
     selected = os.environ.get('MOMWARN_RETAINED_SNAPSHOT')

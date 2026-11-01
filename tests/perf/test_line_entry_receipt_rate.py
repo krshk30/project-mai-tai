@@ -7,10 +7,13 @@ import logging
 import time
 from types import SimpleNamespace as NS
 
+import pytest
+
 from project_mai_tai.services import schwab_1m_v2_bot as service
 from tests.unit.test_line_entry_receipt import Controlled, publication_log_statements
 
 
+@pytest.mark.timing
 def test_publication_receipt_240eps_60seconds(record_property):
     formatted = []
     class Format(logging.Handler):

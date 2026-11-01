@@ -24,6 +24,7 @@ def create(svc, session, account, symbol):
     return value
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 @pytest.mark.parametrize("account", [ACCT, WEBULL_ACCT])
 async def test_post_reservation_target_read_is_offloop_and_fresh(monkeypatch, account):

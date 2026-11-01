@@ -204,6 +204,7 @@ async def _measure_phase(templates, amount, *, with_A):
         await asyncio.gather(flood, live, svc._warning_publish_task, pulse, return_exceptions=True)
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 async def test_derived_three_times_max_observed_peak_actual_gateway_TQ_isolated(
     derived_input, monkeypatch, record_property,

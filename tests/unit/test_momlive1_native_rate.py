@@ -15,6 +15,7 @@ from tests.unit.test_momlive1_runtime import event, offer_and_drain, setup
 from tests.unit.momlive1_owned_fixtures import complete_owned_observation
 
 
+@pytest.mark.timing
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enabled", [False, True], ids=["OFF", "ON"])
 async def test_active_mom_native_240_per_second_60_seconds_slow_offloop(enabled, monkeypatch):
