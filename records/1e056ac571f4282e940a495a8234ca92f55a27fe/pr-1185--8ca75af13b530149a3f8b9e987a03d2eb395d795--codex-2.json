@@ -1,0 +1,9 @@
+{
+  "pr_number": 1185,
+  "range_base": "8ca75af13b530149a3f8b9e987a03d2eb395d795",
+  "range_head": "1e056ac571f4282e940a495a8234ca92f55a27fe",
+  "reviewed_at": "2026-11-01T20:32:10Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Direct operator authorizes PR1185 simulation-only review and pin. Independent source causality review: first qualifying completed purple close sets per-stretch arming time; initial equality-boundary finding resolved by <= exclusion before trigger/fill. Original boundary controls18PASS and old-code selected negative1FAIL verified; first fixture failure retained. Four retained real capture-day fixed-engine outputs match exact53e581c9 source:70 signals29 strictly post-arm entries16 never-armed with no entry/order fields;280 original rows conserved apart from four new diagnostic clocks. All tables match earlier replay, original test AST preserved. Current test RuffPASS; broader tools lint has identical five baseline diagnostics, zero new. Simulation only, no live order change or efficacy claim; full CI and C1 merge separate."
+}
