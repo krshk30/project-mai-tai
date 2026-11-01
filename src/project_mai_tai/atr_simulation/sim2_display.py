@@ -107,42 +107,57 @@ def render_day(doc, *, render_row, day: str):
         panels.append(panel(heading, [_display(r) for r in shown], render_row=render_row, marker=title,
                             updated_text=updated, description=description))
     return ('<div id="atr-sim2" class="full" data-atrsim2="day" data-firstbar-mount="true" data-atrsim-firstbar="true">'
-            + STYLE + '<p class="sim-desc">' + escape(NOTE) + "</p>" + "".join(panels) + h2_panel(doc) + "</div>")
+            + STYLE + '<p class="sim-desc">' + escape(NOTE) + "</p>" + "".join(panels) + pullback_panel(doc) + "</div>")
 
 
-def _pct(value):
-    return "—" if value is None else f"{value * 100:+.2f}%"
+def _num(value, fmt):
+    return "—" if value is None else format(value, fmt)
 
 
-def h2_panel(doc):
-    """Operator 10-30: the H2 inputs recorded at every LIVE+2min buy, so H2 can be checked every day.
-    H2 (coach, frozen 10-30): skip when the other confirmed stocks' median 5-minute move is negative and this
-    stock is doing no better. Shown only — the live bot does not use it."""
+def pullback_verdict(stock):
+    """Operator 11-01 (replaces the H2 panel): a stock with NO 2% pullback inside the purple stretch before
+    the buy is a cold stock — SKIP. UNKNOWN when no purple bar was complete at the decision."""
+    purple = (stock or {}).get("purple") or {}
+    count = (purple.get("pullbacks") or {}).get("2pct")
+    if count is None:
+        return "UNKNOWN"
+    return "SKIP" if count == 0 else "KEEP"
+
+
+def pullback_panel(doc):
+    """Operator 11-01: the pullback check at every LIVE+2min buy, from the stock's own 1-minute closes while
+    the line was purple (only bars complete before the buy). Shown only — the live bot does not use it."""
     rows = [r for r in doc["tables"].get("LIVE+2min SIM", []) if r.get("status") in ("CLOSED", "OPEN")]
-    body, kept, vetoed, unknown = "", 0.0, 0.0, 0
+    body, avoided, lost, skipped, unknown = "", 0.0, 0.0, 0, 0
     for r in rows:
-        h2 = r.get("h2") or {"verdict": "UNKNOWN", "reason": "not recorded"}
-        verdict = h2.get("verdict", "UNKNOWN")
-        if verdict == "VETO":
-            vetoed += r.get("pnl", 0.0)
+        stock = r.get("stock") or {}
+        purple = stock.get("purple") or {}
+        pullbacks = purple.get("pullbacks") or {}
+        verdict, pnl = pullback_verdict(stock), r.get("pnl", 0.0)
+        if verdict == "SKIP":
+            skipped += 1
+            if pnl > 0:
+                lost += pnl
+            else:
+                avoided -= pnl
         elif verdict == "UNKNOWN":
             unknown += 1
-        if verdict != "VETO":
-            kept += r.get("pnl", 0.0)
+        counts = " / ".join(_num(pullbacks.get(k), "d") for k in ("2pct", "3pct", "5pct"))
+        drop = purple.get("max_swing_down_pct")
         body += ("<tr><td>" + escape(r.get("symbol", "")) + "</td><td>" + escape(str(r.get("entry_time", "")))
-                 + "</td><td>" + f"${r.get('pnl', 0.0):+.2f}" + "</td><td>" + _pct(h2.get("target_ret"))
-                 + "</td><td>" + _pct(h2.get("peer_median")) + "</td><td>" + escape(str(h2.get("peers", "—")))
-                 + "</td><td>" + escape(verdict) + "</td><td>" + escape(h2.get("reason", "")) + "</td></tr>")
+                 + "</td><td>" + f"${pnl:+.2f}" + "</td><td>" + _num(purple.get("minutes"), ".0f")
+                 + "</td><td>" + counts + "</td><td>" + ("—" if drop is None else f"{drop:.2f}%")
+                 + "</td><td>" + escape(verdict) + "</td></tr>")
     if not body:
-        body = '<tr><td colspan="8">No LIVE+2min trades yet today.</td></tr>'
-    summary = (f"{len(rows)} trades · H2 would skip trades worth ${vetoed:+.2f} · trades H2 keeps ${kept:+.2f}"
-               f" · {unknown} could not be checked")
-    return ('<section class="panel full" data-sim-mode="H2 check"><div class="panel-header"><div><h3>'
-            "5 · H2 check on the LIVE bot buy + 2-minute cut trades</h3>"
-            '<div class="sim-desc">Simulation, not real trades. At each buy: this stock\'s last 5 minutes vs the median of'
-            " the other scanner-confirmed stocks (confirmed 60 s or more). H2 would SKIP the buy when the others are"
-            " falling and this stock is doing no better. Recorded every day; not used by the live bot.</div>"
+        body = '<tr><td colspan="7">No LIVE+2min trades yet today.</td></tr>'
+    summary = (f"{len(rows)} trades · {skipped} skipped · losers avoided ${avoided:.2f} · winners lost ${lost:.2f}"
+               f" · net ${avoided - lost:+.2f} · {unknown} could not be checked")
+    return ('<section class="panel full" data-sim-mode="Pullback check"><div class="panel-header"><div><h3>'
+            "5 · Pullback check on the LIVE bot buy + 2-minute cut trades</h3>"
+            '<div class="sim-desc">Simulation only — the live bot does not use it. While the line was purple, did the'
+            " stock pull back? A pullback is a 1-minute close at least 2% / 3% / 5% below the highest close so far in"
+            " the purple stretch (only bars complete before the buy). SKIP when there was no 2% pullback.</div>"
             '<div class="sim-updated">' + escape(summary) + "</div></div></div>"
             '<div class="table-wrap"><table><thead><tr><th>Stock</th><th>Buy time</th><th>P&amp;L</th>'
-            "<th>Stock 5-min</th><th>Others 5-min (median)</th><th>Others</th><th>H2</th><th>Note</th></tr></thead>"
+            "<th>Purple minutes</th><th>Pullbacks 2% / 3% / 5%</th><th>Biggest drop</th><th>Rule</th></tr></thead>"
             "<tbody>" + body + "</tbody></table></div></section>")
