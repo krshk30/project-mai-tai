@@ -282,6 +282,46 @@ def test_passive_status_record_has_expected_base_and_zero_cancelled_report():
     assert "release_count=2 confirm_count=2" in line and "cancelled/broker/0/confirmed" in line
 
 
+class Strip(ast.NodeTransformer):
+    """Remove only the named diagnostics; all other service AST remains visible."""
+
+    def __init__(self):
+        self.lag_import = self.lag_run = self.lag_decorator = None
+
+    def visit_Module(self, node):
+        lag_import = next((item for item in node.body if isinstance(item, ast.ImportFrom)
+            and item.module == "project_mai_tai.oms.loop_lag" and item.level == 0
+            and len(item.names) == 1 and item.names[0].name == "with_oms_loop_lag_logging"
+            and item.names[0].asname is None), None)
+        owner = next((item for item in node.body if isinstance(item, ast.ClassDef)
+                      and item.name == "OmsRiskService"), None)
+        run = next((item for item in owner.body if isinstance(item, ast.AsyncFunctionDef)
+                    and item.name == "run"), None) if owner is not None else None
+        decorator = next((item for item in run.decorator_list if isinstance(item, ast.Name)
+                          and item.id == "with_oms_loop_lag_logging"), None) if run is not None else None
+        # Bind the exact pair. Never hide an orphan, duplicate, nested or aliased import.
+        self.lag_import = lag_import if decorator is not None else None
+        self.lag_run = run if lag_import is not None else None
+        self.lag_decorator = decorator if lag_import is not None else None
+        return self.generic_visit(node)
+
+    def visit_ImportFrom(self, node):
+        if node is self.lag_import or node.module == "project_mai_tai.oms.eod_oco_step_log":
+            return None
+        return node
+
+    def visit_AsyncFunctionDef(self, node):
+        if node is self.lag_run:
+            node.decorator_list = [item for item in node.decorator_list
+                                   if item is not self.lag_decorator]
+        return self.generic_visit(node)
+
+    def visit_Expr(self, node):
+        if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == "_eod_oco_step":
+            return None
+        return self.generic_visit(node)
+
+
 def test_whole_service_AST_is_exact_8159_after_stripping_only_diagnostic_import_and_calls():
     source = os.environ.get("WBEXIT_EOD_8159_SERVICE_SOURCE")
     # Frozen historical source is data only. A squash-only clone must not need
@@ -293,11 +333,72 @@ def test_whole_service_AST_is_exact_8159_after_stripping_only_diagnostic_import_
     assert hashlib.sha256(raw).hexdigest() == "92754652fe63b4582181ff049b8e60052e7a4aae7571b18a5d9dec0d1d768388"
     original = ast.parse(raw)
     candidate = ast.parse(Path(inspect.getsourcefile(OmsRiskService)).read_text())
-    class Strip(ast.NodeTransformer):
-        def visit_ImportFrom(self, node):
-            return None if node.module == "project_mai_tai.oms.eod_oco_step_log" else node
-        def visit_Expr(self, node):
-            if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == "_eod_oco_step":
-                return None
-            return self.generic_visit(node)
     assert ast.dump(original, include_attributes=False) == ast.dump(Strip().visit(candidate), include_attributes=False)
+
+
+_LAG_IMPORT = "from project_mai_tai.oms.loop_lag import with_oms_loop_lag_logging\n"
+_LAG_DECORATOR = "    @with_oms_loop_lag_logging\n"
+_AST_LOCK_SAMPLE = """class OmsRiskService:
+    async def run(self):
+        return await self.work()
+    async def other(self):
+        return None
+class Another:
+    async def run(self):
+        return None
+class NestedContainer:
+    class OmsRiskService:
+        async def run(self):
+            return None
+async def run():
+    return None
+"""
+
+
+def _diagnostic_sample():
+    return _LAG_IMPORT + _AST_LOCK_SAMPLE.replace(
+        "    async def run(self):\n        return await self.work()",
+        _LAG_DECORATOR + "    async def run(self):\n        return await self.work()")
+
+
+def _stripped_AST(source):
+    return ast.dump(Strip().visit(ast.parse(source)), include_attributes=False)
+
+
+def test_exact_loop_lag_pair_is_the_only_additional_AST_allowance():
+    assert _stripped_AST(_diagnostic_sample()) == ast.dump(
+        ast.parse(_AST_LOCK_SAMPLE), include_attributes=False)
+
+
+@pytest.mark.parametrize("before,after", [
+    (_LAG_IMPORT, "from foreign.oms.loop_lag import with_oms_loop_lag_logging\n"),
+    (_LAG_IMPORT, _LAG_IMPORT.rstrip() + ", extra_symbol\n"),
+    (_LAG_IMPORT, _LAG_IMPORT.rstrip() + " as another_name\n"),
+    (_LAG_IMPORT, "from .project_mai_tai.oms.loop_lag import with_oms_loop_lag_logging\n"),
+    (_LAG_IMPORT, "if True:\n    " + _LAG_IMPORT),
+    (_LAG_IMPORT, "def nested_import():\n    " + _LAG_IMPORT),
+    (_LAG_IMPORT, _LAG_IMPORT + "import foreign_dependency\n"),
+    (_LAG_IMPORT, _LAG_IMPORT * 2),
+    (_LAG_IMPORT, ""),
+    (_LAG_DECORATOR, ""),
+    (_LAG_DECORATOR, _LAG_DECORATOR * 2),
+    (_LAG_DECORATOR, "    @with_oms_loop_lag_logging()\n"),
+    (_LAG_DECORATOR, "    @other.with_oms_loop_lag_logging\n"),
+    (_LAG_DECORATOR, "    @unrelated\n" + _LAG_DECORATOR),
+    ("    async def other(self):", _LAG_DECORATOR + "    async def other(self):"),
+    ("class Another:\n    async def run(self):",
+     "class Another:\n" + _LAG_DECORATOR + "    async def run(self):"),
+    ("        async def run(self):", "        @with_oms_loop_lag_logging\n        async def run(self):"),
+    ("\nasync def run():", "\n@with_oms_loop_lag_logging\nasync def run():"),
+    ("return await self.work()", "return await self.changed()"),
+    ("    async def other(self):\n        return None", "    async def other(self):\n        return 1"),
+], ids=["foreign-module", "extra-import-name", "aliased-import", "relative-import",
+        "conditional-import", "nested-import", "unrelated-import", "duplicate-import",
+        "orphan-decorator", "orphan-import", "duplicate-decorator", "decorator-call",
+        "qualified-decorator", "unrelated-decorator", "other-method", "other-class",
+        "nested-same-class-name", "module-function", "run-body", "other-body"])
+def test_loop_lag_AST_allowance_rejects_unrelated_import_decorator_or_body_change(before, after):
+    candidate = _diagnostic_sample()
+    changed = candidate.replace(before, after)
+    assert changed != candidate
+    assert _stripped_AST(changed) != ast.dump(ast.parse(_AST_LOCK_SAMPLE), include_attributes=False)

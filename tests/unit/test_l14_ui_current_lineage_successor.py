@@ -1,7 +1,7 @@
 """Preserve historical UI evidence and the explicit installed source successor.
 
 Literal9c historical fixture/history and original55-file set remain intact.
-Current source is installed6ddb plus reviewed Ruff and owner-phone changes,
+Current source is installed6ddb plus reviewed Ruff, owner-phone and OMS loop-lag changes,
 bound by content so a squash-only checkout does not need branch Git objects.
 """
 
@@ -23,7 +23,7 @@ MODIFIED = {"src/project_mai_tai/atr_simulation/aggregate_entry_display.py",
     "src/project_mai_tai/services/atr_simulation_legacy_routes.py",
     "src/project_mai_tai/services/control_plane.py"}
 CONTENT_PATH = ROOT / "tests/fixtures/atr_simulation/l14_installed_successor_content_20261031.json"
-CONTENT_SHA = "820c9259fcbc125a84e8493511d35d70571bfc78d6011bc9aa91d7ea57b70ee8"
+CONTENT_SHA = "933103ca4c039a815d01dd2273e981913fc386cd96078a9080579f28b13dd076"
 RUFF_SOURCE_PATHS = {
     "src/project_mai_tai/atr_simulation/firstbar_binding.py",
     "src/project_mai_tai/atr_simulation/firstbar_live_baseline.py",
@@ -38,6 +38,8 @@ RUFF_SOURCE_PATHS = {
     "src/project_mai_tai/services/control_plane.py",
 }
 PHONE_SOURCE_PATH = "src/project_mai_tai/brokerdecides1_owner_phone.py"
+LOOP_LAG_SOURCE_PATH = "src/project_mai_tai/oms/loop_lag.py"
+OMS_SERVICE_PATH = "src/project_mai_tai/oms/service.py"
 BUILD_METADATA_PATHS = {
     "src/project_mai_tai.egg-info/PKG-INFO",
     "src/project_mai_tai.egg-info/SOURCES.txt",
@@ -56,8 +58,9 @@ def current_runtime_paths():
 
 def validate_current_content(value):
     assert value["scope"] == "installed6ddb_plus_reviewed_G2_Ruff_and_C1_owner_phone"
-    assert value["runtime_path_count"] == 642
-    assert set(value["changed_source_sha256"]) == RUFF_SOURCE_PATHS | {PHONE_SOURCE_PATH}
+    assert value["runtime_path_count"] == 643
+    assert set(value["changed_source_sha256"]) == RUFF_SOURCE_PATHS | {
+        PHONE_SOURCE_PATH, LOOP_LAG_SOURCE_PATH, OMS_SERVICE_PATH}
     assert len(value["runtime_paths_sha256"]) == 64
     assert len(value["cp_sim_display_sha256"]) == 64
     assert all(len(digest) == 64 for digest in value["changed_source_sha256"].values())
@@ -133,7 +136,7 @@ def assert_current_protected_l14_successor():
         path = ROOT / name
         assert not path.is_symlink() and path.resolve() == path
         assert_current_bytes(name, path.read_bytes())
-    # Cover all twelve explicitly reviewed source changes, including modules
+    # Cover all fourteen explicitly reviewed source postimages, including modules
     # outside the original55; no branch-only Git objects or fallback skips.
     for name in current_content()["changed_source_sha256"]:
         path = ROOT / name
@@ -170,7 +173,8 @@ def test_only_installed_successor_paths_enter_current_runtime_membership():
 
 
 @pytest.mark.parametrize("fault", ["extra_path", "missing_path", "substituted_path", "untracked_source",
-    "protected_bytes", "ruff_path", "phone_path"])
+    "protected_bytes", "ruff_path", "phone_path", "loop_lag_bytes", "loop_lag_path",
+    "loop_lag_missing", "service_bytes"])
 def test_installed_successor_rejects_unreviewed_source_changes(fault, tmp_path, monkeypatch):
     paths = current_runtime_paths()
     assert_current_membership(paths)
@@ -181,6 +185,8 @@ def test_installed_successor_rejects_unreviewed_source_changes(fault, tmp_path, 
             assert_current_membership(paths - {ADDED})
         elif fault == "substituted_path":
             assert_current_membership((paths - {ADDED}) | {"src/project_mai_tai/unreviewed.py"})
+        elif fault == "loop_lag_missing":
+            assert_current_membership(paths - {LOOP_LAG_SOURCE_PATH})
         elif fault == "untracked_source":
             source = tmp_path / "src/project_mai_tai/unreviewed.py"
             source.parent.mkdir(parents=True)
@@ -190,9 +196,13 @@ def test_installed_successor_rejects_unreviewed_source_changes(fault, tmp_path, 
         elif fault == "protected_bytes":
             protected = "src/project_mai_tai/atr_simulation/firstbar_binding.py"
             assert_current_bytes(protected, (ROOT / protected).read_bytes() + b"\n")
+        elif fault in {"loop_lag_bytes", "service_bytes"}:
+            name = LOOP_LAG_SOURCE_PATH if fault == "loop_lag_bytes" else OMS_SERVICE_PATH
+            assert_current_bytes(name, (ROOT / name).read_bytes() + b"\n")
         else:
             value = deepcopy(current_content())
-            name = ADDED if fault == "ruff_path" else PHONE_SOURCE_PATH
+            name = (ADDED if fault == "ruff_path" else LOOP_LAG_SOURCE_PATH
+                    if fault == "loop_lag_path" else PHONE_SOURCE_PATH)
             value["changed_source_sha256"][name + ".unreviewed"] = "0" * 64
             validate_current_content(value)
 
