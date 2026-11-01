@@ -4,6 +4,7 @@ import yaml
 
 
 WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/review-pin.yml"
+VALIDATE = WORKFLOW.with_name("validate.yml")
 
 
 def test_label_event_keeps_the_trusted_exact_head_gate() -> None:
@@ -42,3 +43,14 @@ def test_label_event_keeps_the_trusted_exact_head_gate() -> None:
         "--pr", '"$PR_NUMBER"', "\\", "--base", '"$BASE_SHA"', "\\",
         "--head", '"$HEAD_SHA"',
     ]
+
+
+def test_validate_docs_only_skips_every_step_after_scope() -> None:
+    # Every step after the docs-only scope check needs Python, dependencies or PG, so
+    # each one must carry the same condition (codex review 11-01: the timing step did not).
+    steps = yaml.load(VALIDATE.read_text(), Loader=yaml.BaseLoader)["jobs"]["validate"]["steps"]
+    scope = next(i for i, step in enumerate(steps) if step.get("id") == "scope")
+    assert all("if" not in step for step in steps[:scope + 1])
+    later = steps[scope + 1:]
+    assert later
+    assert [step["name"] for step in later if step.get("if") != "steps.scope.outputs.docs_only != 'true'"] == []
