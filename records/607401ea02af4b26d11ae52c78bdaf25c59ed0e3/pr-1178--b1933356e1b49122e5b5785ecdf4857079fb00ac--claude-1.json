@@ -1,0 +1,9 @@
+{
+  "pr_number": 1178,
+  "range_base": "b1933356e1b49122e5b5785ecdf4857079fb00ac",
+  "range_head": "607401ea02af4b26d11ae52c78bdaf25c59ed0e3",
+  "reviewed_at": "2026-11-01T05:45:54Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: tests only; reserve1 flake: 1 s sleep-poll wait_for replaced by event on the actual held parent GET, evaluator exceptions surfaced; no assertion removed."
+}
