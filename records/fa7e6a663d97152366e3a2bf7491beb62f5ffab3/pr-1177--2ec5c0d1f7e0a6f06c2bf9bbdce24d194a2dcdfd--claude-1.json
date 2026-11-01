@@ -1,0 +1,9 @@
+{
+  "pr_number": 1177,
+  "range_base": "2ec5c0d1f7e0a6f06c2bf9bbdce24d194a2dcdfd",
+  "range_head": "fa7e6a663d97152366e3a2bf7491beb62f5ffab3",
+  "reviewed_at": "2026-11-01T02:20:53Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: tests only, additive (stall<->step/GC correlation receipt in the POM native rate test + its own unit test); no assertion, budget or app change."
+}
