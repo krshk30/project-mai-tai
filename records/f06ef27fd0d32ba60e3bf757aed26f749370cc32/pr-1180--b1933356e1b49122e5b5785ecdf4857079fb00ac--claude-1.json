@@ -1,0 +1,9 @@
+{
+  "pr_number": 1180,
+  "range_base": "b1933356e1b49122e5b5785ecdf4857079fb00ac",
+  "range_head": "f06ef27fd0d32ba60e3bf757aed26f749370cc32",
+  "reviewed_at": "2026-11-01T07:57:39Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: timing-gate class: @timing marks + conftest gc.collect/freeze isolation + 'not timing' unit step + fresh-process timing step (momlatch 240/s node still deselected as quiet-host gate); budgets unchanged."
+}
