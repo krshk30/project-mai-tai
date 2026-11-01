@@ -266,3 +266,25 @@ def test_round4_previous_trade_none_open_unknown_and_closed(monkeypatch):
     assert prev((t(10), t(20), "CLOSED", -3.0)) == "loss"
     assert prev((t(10), t(20), "CLOSED", 0.0)) == "flat"
     assert prev((t(10), t(20), "CLOSED", 5.1)) == "win"
+
+
+def test_pullback_panel_replaces_h2_and_scores_skip_keep_unknown():
+    # Operator 11-01: H2 dropped from the page; panel 5 = pullback check (no 2% pullback in purple -> SKIP).
+    def traded(symbol, pnl, pullbacks):
+        stock = {"purple": {"minutes": 12.0, "pullbacks": pullbacks, "max_swing_down_pct": 1.5}} if pullbacks else {}
+        return row(symbol=symbol, pnl=pnl, stock=stock)
+    day = doc()
+    day["tables"]["LIVE+2min SIM"] = [
+        traded("LOSE", -40.0, {"2pct": 0, "3pct": 0, "5pct": 0}),
+        traded("WIN", 30.0, {"2pct": 0, "3pct": 0, "5pct": 0}),
+        traded("KEEP", -10.0, {"2pct": 2, "3pct": 1, "5pct": 0}),
+        traded("NODATA", 5.0, None),
+        row(symbol="NOTRADE", status="SKIPPED", reason="buy price never reached"),
+    ]
+    html = render_day(day, render_row=render, day="2026-10-29")
+    assert "H2" not in html and "Others 5-min" not in html
+    assert html.count('data-sim-mode="Pullback check"') == 1
+    assert ("4 trades · 2 skipped · losers avoided $40.00 · winners lost $30.00 · net $+10.00"
+            " · 1 could not be checked") in html
+    assert "<td>0 / 0 / 0</td>" in html and "<td>2 / 1 / 0</td>" in html and "<td>— / — / —</td>" in html
+    assert "NOTRADE" not in html.split('data-sim-mode="Pullback check"')[1]
