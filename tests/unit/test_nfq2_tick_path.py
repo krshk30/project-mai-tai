@@ -1,19 +1,31 @@
 """NFQ2 tick-loop controls using the recorded BIYA hold (no broker traffic)."""
 import asyncio
 from datetime import timedelta
+import gc
 from threading import Event, get_ident
 from time import sleep
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import select
 
 from project_mai_tai.db.models import DashboardSnapshot
 from project_mai_tai.events import QuoteTickEvent, QuoteTickPayload
 from project_mai_tai.oms.eh_fresh_price import SNAPSHOT_TYPE
+from project_mai_tai.oms.loop_lag import oms_loop_lag_logging
 from tests.unit.test_nfq2_eh_fresh_price import NOW, biya, hold, quote, retry
 from tests.unit.test_nfq2_eh_fresh_price import service as _recorded_service
 
 service = _recorded_service
+
+
+@pytest_asyncio.fixture
+async def loop_lag_watchdog(service):
+    # Same owned context used by OmsRiskService.run; no alternate timer or clock.
+    async with oms_loop_lag_logging(service.logger) as monitor:
+        callback = monitor._callback
+        yield monitor
+    assert monitor._task is None and callback not in gc.callbacks
 
 
 @pytest.mark.asyncio
@@ -175,7 +187,8 @@ async def test_nfq2_worker_failure_keeps_hold_and_next_quote_can_queue_once(serv
 
 @pytest.mark.timing
 @pytest.mark.asyncio
-async def test_nfq2_sustained_200_ticks_per_second_with_active_hold_for_60_seconds(service, monkeypatch):
+async def test_nfq2_sustained_200_ticks_per_second_with_active_hold_for_60_seconds(
+        service, monkeypatch, loop_lag_watchdog):
     # Isolate NFQ2; the unchanged legacy drift reader is HOTFIX1's separate concern.
     service.settings.oms_quote_drift_cancel_tolerance_cents = 0
     active = hold(service, biya())
@@ -241,3 +254,11 @@ async def test_nfq2_sustained_200_ticks_per_second_with_active_hold_for_60_secon
     print(f"NFQ2-TICK-RECEIPT seconds={elapsed:.3f} events={ticks} rate={ticks / elapsed:.2f}/s "
           f"max_loop_stall_ms={max(stalls) * 1000:.3f} db_transactions={len(transactions)} "
           f"db_tx_rate={len(transactions) / elapsed:.4f}/s held=1 wires=0 drift_isolated=1")
+    assert loop_lag_watchdog.sample_count >= 50
+    assert loop_lag_watchdog._task is not None and not loop_lag_watchdog._task.done()
+    assert loop_lag_watchdog._callback in gc.callbacks
+    print(f"OMS-LOOP-LAG-RATE samples={loop_lag_watchdog.sample_count} "
+          f"first_sample_monotonic={loop_lag_watchdog.first_sample_at} "
+          f"last_sample_monotonic={loop_lag_watchdog.last_sample_at} "
+          f"max_diagnostic_sample_ms={loop_lag_watchdog.max_sample_ns / 1e6:.6f} "
+          "scope=active-watchdog-budget-qualification-not-baseline-causal-comparison")
