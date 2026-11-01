@@ -1,6 +1,8 @@
 """Complete-review F1/F2/U1-U4 and additive-schema rollback proofs."""
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+
 import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal

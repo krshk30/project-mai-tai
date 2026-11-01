@@ -21,6 +21,8 @@ reconstruction — the fifth missing-negative of the week, avoided in advance ra
 """
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+
 from datetime import UTC, datetime
 
 import pytest

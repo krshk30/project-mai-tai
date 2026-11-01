@@ -11,6 +11,8 @@ ON flag. Missing production seams fail collection rather than silently skip.
 """
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+
 from datetime import datetime, timedelta
 from decimal import Decimal
 import json

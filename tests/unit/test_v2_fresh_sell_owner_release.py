@@ -1,6 +1,10 @@
 """B2 original FLYE bars/cancels; broker freshness and acceptance are replay controls."""
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 import asyncio
 import json
 import inspect
@@ -14,9 +18,8 @@ from time import perf_counter
 from uuid import UUID
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.db.base import Base
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
@@ -117,7 +120,7 @@ def setup(monkeypatch, *, pm=False, purpose="retry_exhausted", all_on=False, req
     state.bars.append(OHLCVBar(FLYE["fresh_sell_bar_ms"] + shift, 2.325, 2.3499, 2.27, 2.285, 149257))
     state.atr_short_flip_bar_ts = FLYE["fresh_sell_bar_ms"] + shift
     strategy.apply_flip_position_book(FlipPositionBook(clock[0], True, {}))
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    engine = private_sqlite_engine(connect_args={"check_same_thread": False})
     (Base.metadata if schema_metadata is None else schema_metadata).create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
     with factory() as session:
@@ -539,8 +542,8 @@ async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, 
     assert waiting_at < clock[0] < FLYE["next_buy_flip_poll_ms"]
     assert received_at.astimezone(strategy_module.EASTERN_TZ).strftime("%H:%M") == "15:17"
     settings = bot.settings.model_copy(update={"oms_adapter": "simulated"})
-    oms = OmsRiskService(settings=settings, redis_client=redis,
-                         session_factory=bot.session_factory, broker_adapter=Broker())
+    oms = own_service(OmsRiskService(settings=settings, redis_client=redis,
+                         session_factory=bot.session_factory, broker_adapter=Broker()))
     oms._market_is_fillable = lambda now=None: True
     results = await oms.process_trade_intent(event)
     assert [r.payload.status for r in results] == ["accepted", "filled"]

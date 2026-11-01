@@ -1,3 +1,6 @@
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import own_service
 import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal as D
@@ -61,8 +64,8 @@ def boot_service(case):
         strategy_schwab_1m_v2_broker_provider="schwab",
         strategy_schwab_1m_v2_webull_account_name="live:orb",
         strategy_schwab_1m_v2_dual_broker_fanout_enabled=True)
-    service = OmsRiskService(settings, BootRedis(case), session_factory=build_test_session_factory(),
-        broker_adapter=SimulatedBrokerAdapter())
+    service = own_service(OmsRiskService(settings, BootRedis(case), session_factory=build_test_session_factory(),
+        broker_adapter=SimulatedBrokerAdapter()))
     if case == "on_reservation_unknown":
         service.seed_runtime_metadata()
         seed_unknown_reservation(service)

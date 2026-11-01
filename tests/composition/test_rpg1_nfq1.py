@@ -22,6 +22,7 @@ from project_mai_tai.oms import service as oms
 from tests.unit.test_rpg1_pending_first_quote import setup_wait, fresh
 from tests.unit.test_nfq1_mirror_fresh_price import queued_events, seed_segment, set_quote
 from tests.unit.test_oms_webull_mirror_deferred_resubmit import _integrated_service, _session_factory
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 
 
 def as_event(draft, account, now):

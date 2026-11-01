@@ -1,5 +1,9 @@
 """Controlled venue responses, not a reproduction of the historical XLAB order."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_session_factory as build_test_session_factory
+from tests.unit.oms_sqlite_fixtures import own_service
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -26,7 +30,7 @@ from project_mai_tai.momentum_live.runtime import OmsLiveRuntime
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.positions_read_receipt import record_receipts
 from project_mai_tai.settings import Settings
-from tests.unit.test_control_plane import build_test_session_factory
+
 from tests.unit.test_webull_adapter import _adapter as webull_adapter, _FakeClient, _ServerException, fake_sdk as fake_sdk
 
 
@@ -102,8 +106,8 @@ def harness(monkeypatch, hour=14):
     monkeypatch.setattr(leaf, "_authorized_request_json", wire.request)
     monkeypatch.setattr(leaf, "_wait_for_terminal_order", AsyncMock(
         side_effect=AssertionError("MOM place ACK must not await terminal polling")))
-    service = OmsRiskService(settings, SimpleNamespace(xadd=AsyncMock()),
-        session_factory=build_test_session_factory(), broker_adapter=leaf)
+    service = own_service(OmsRiskService(settings, SimpleNamespace(xadd=AsyncMock()),
+        session_factory=build_test_session_factory(), broker_adapter=leaf))
     service.seed_runtime_metadata()
     runtime = OmsLiveRuntime(service, clock=lambda: now[0])
     runtime.book = EpisodeLedger.restore([])

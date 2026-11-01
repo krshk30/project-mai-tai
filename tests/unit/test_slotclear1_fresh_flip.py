@@ -1,4 +1,6 @@
 """LPCN recorded bar/timing; quote inputs are price proxies, not decision-cache evidence."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from dataclasses import replace
 from decimal import Decimal
 

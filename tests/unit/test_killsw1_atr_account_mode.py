@@ -1,4 +1,6 @@
 """ATR-layer owner mode guards; actual production deployment rows stay unmodified."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from decimal import Decimal
 
 import pytest

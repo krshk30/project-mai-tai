@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -9,9 +13,8 @@ from decimal import Decimal
 
 import pytest
 from tests.unit.managed_entry_fixtures import bind_managed_entry, set_protect_base
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.protocols import (
     BrokerPositionSnapshot,
@@ -215,12 +218,7 @@ class _DelayedFillAdapter(_FanoutAdapter):
 
 
 def _make_sf() -> sessionmaker:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     tables = [
         table
         for table in Base.metadata.sorted_tables
@@ -240,12 +238,12 @@ def _service(*, fanout: bool, adapter: _FanoutAdapter) -> tuple[OmsRiskService, 
         oms_v2_exit_close_on_fill_enabled=True,
         oms_v2_exit_release_reservation_enabled=True,
     )
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings,
         redis_client=_FakeRedis(),
         session_factory=sf,
         broker_adapter=adapter,
-    )
+    ))
     with sf() as session:
         strategy = service.store.ensure_strategy(session, "schwab_1m_v2", name="v2")
         for account_name, provider in ((SCHWAB, "schwab"), (WEBULL, "webull")):
@@ -2041,12 +2039,12 @@ async def test_uncovered_page_catches_a_dropped_exit_even_when_the_exit_routine_
 
 def _restarted(service: OmsRiskService, sf: sessionmaker) -> OmsRiskService:
     """A NEW OMS process over the SAME database: every in-memory latch, mark and timer is gone."""
-    fresh = OmsRiskService(
+    fresh = own_service(OmsRiskService(
         service.settings,
         redis_client=_FakeRedis(),
         session_factory=sf,
         broker_adapter=_FanoutAdapter(),
-    )
+    ))
     fresh.logger = _CapturedLogger()
     assert (WEBULL, SYMBOL) not in fresh._exit_reservation_released
     assert not fresh.__dict__.get("_webull_protect_failed")

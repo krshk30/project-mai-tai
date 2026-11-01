@@ -4,6 +4,7 @@ import asyncio
 from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 from project_mai_tai.ai_trade_coach import TradeCoachClient
 from project_mai_tai.ai_trade_coach import TradeCoachConfig
@@ -93,7 +94,11 @@ class TradeCoachApp:
 
     def _review_window_bounds(self) -> tuple[datetime, datetime]:
         session_start = current_scanner_session_start_utc()
-        session_end = session_start + timedelta(days=1)
+        eastern = ZoneInfo("America/New_York")
+        local_start = session_start.astimezone(eastern)
+        session_end = datetime.combine(
+            local_start.date() + timedelta(days=1), local_start.timetz(), tzinfo=eastern,
+        ).astimezone(UTC)
         lookback_days = max(0, int(self.settings.trade_coach_completed_trade_lookback_days))
         if lookback_days <= 0:
             review_start = datetime(2000, 1, 1, tzinfo=UTC)

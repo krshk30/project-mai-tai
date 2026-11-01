@@ -1,3 +1,6 @@
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import own_service
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -21,12 +24,12 @@ from tests.unit.test_v2_exit_paper_isolation import _FakeRedis, _make_sf
 def setup(*, broker_id=None, provider="webull", sessions=None):
     sessions = _make_sf() if sessions is None else sessions
     adapter = AsyncMock()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         Settings(_env_file=None, oms_adapter="simulated", oms_cancel_verify_interval_seconds=0,
                  strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
                  strategy_schwab_1m_v2_webull_account_name="live:orb"),
         redis_client=_FakeRedis(), session_factory=sessions, broker_adapter=adapter,
-    )
+    ))
     with sessions.begin() as session:
         strategy = service.store.ensure_strategy(session, "schwab_1m_v2")
         account = service.store.ensure_broker_account(session, "live:orb", provider=provider, environment="test")

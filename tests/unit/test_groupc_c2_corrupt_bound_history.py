@@ -1,4 +1,5 @@
 """Exact bound history conflicts must not fall back to stale positive ownership."""
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from decimal import Decimal as D
 from unittest.mock import Mock
 from uuid import UUID

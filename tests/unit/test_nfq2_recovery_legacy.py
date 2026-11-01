@@ -1,4 +1,6 @@
 """Recorded broker bodies; NFQ dispatch/ledger bindings are controlled, not live recovery."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 import asyncio
 import json
 import threading

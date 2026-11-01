@@ -9,6 +9,9 @@ shared-account inventory varies here; no provider, native-flat or cancel proof
 is replaced with an always-clear stub.
 """
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import own_service
 from dataclasses import replace
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -485,8 +488,8 @@ async def test_quote_rate_60s_includes_actual_ownership_poll_query_cost(monkeypa
 
     case = inventory_case(monkeypatch, PRIMARY, "manual1000_own_flat")
     initial, sf, broker = oms_setup(monkeypatch)
-    svc = OmsRiskService(current_settings(), redis_client=initial.redis,
-                         session_factory=sf, broker_adapter=broker)
+    svc = own_service(OmsRiskService(current_settings(), redis_client=initial.redis,
+                         session_factory=sf, broker_adapter=broker))
     svc._rehydrate_managed_v2_symbols()
     monkeypatch.setattr(svc, "_market_is_fillable", lambda: True)
     original_db = svc._run_db

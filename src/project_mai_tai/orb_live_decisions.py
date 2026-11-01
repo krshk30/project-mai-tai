@@ -56,6 +56,9 @@ class LiveDecisionTape:
             newest = max(datetime.fromisoformat(row["evaluated_at"]) for row in batch)
             start = newest.astimezone(_ET).replace(hour=0, minute=0, second=0, microsecond=0)
             start = start.astimezone(UTC)
+            end = datetime.combine(
+                newest.astimezone(_ET).date() + timedelta(days=1), datetime.min.time(), tzinfo=_ET,
+            ).astimezone(UTC)
             for row in batch:
                 session.add(DashboardSnapshot(
                     snapshot_type=SNAPSHOT_TYPE, payload=row,
@@ -65,7 +68,7 @@ class LiveDecisionTape:
             excess = list(session.scalars(select(DashboardSnapshot.id).where(
                 DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
                 DashboardSnapshot.created_at >= start,
-                DashboardSnapshot.created_at < start + timedelta(days=1),
+                DashboardSnapshot.created_at < end,
             ).order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc())
                 .offset(VISIBLE_LIMIT)).all())
             if excess:

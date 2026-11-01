@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.models import (
@@ -122,16 +125,11 @@ class _AcceptBroker:
 
 @pytest.mark.asyncio
 async def test_polled_pmax_policy_reject_is_logged_cached_paged_and_blocks_retry(capsys) -> None:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     broker = _Broker()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             strategy_schwab_1m_v2_entry_notional_usd=0,
             strategy_schwab_1m_v2_webull_entry_notional_usd=0,
@@ -145,7 +143,7 @@ async def test_polled_pmax_policy_reject_is_logged_cached_paged_and_blocks_retry
         redis_client=_Redis(),
         session_factory=sessions,
         broker_adapter=broker,
-    )
+    ))
     service._market_is_fillable = lambda now=None: True
     service._current_session_day = lambda value=None: "2026-09-24"
 
@@ -315,10 +313,7 @@ async def test_polled_pmax_policy_reject_is_logged_cached_paged_and_blocks_retry
 
 @pytest.mark.asyncio
 async def test_policy_cache_failure_preserves_the_poll_pass_and_other_fill(monkeypatch, capsys) -> None:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:", future=True,
-        connect_args={"check_same_thread": False}, poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
 
@@ -345,12 +340,12 @@ async def test_policy_cache_failure_preserves_the_poll_pass_and_other_fill(monke
             )
 
     broker = _PollBroker()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated",
                           strategy_schwab_1m_v2_entry_notional_usd=0,
                           strategy_schwab_1m_v2_webull_entry_notional_usd=0),
         redis_client=_Redis(), session_factory=sessions, broker_adapter=broker,
-    )
+    ))
     service._current_session_day = lambda value=None: "2026-09-24"
     with sessions() as session:
         strategy = service.store.ensure_strategy(
@@ -409,16 +404,11 @@ async def test_policy_cache_failure_preserves_the_poll_pass_and_other_fill(monke
 
 @pytest.mark.asyncio
 async def test_nonpolicy_quote_refusals_do_not_cache_page_or_block_other_entries() -> None:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     broker = _AcceptBroker()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -428,7 +418,7 @@ async def test_nonpolicy_quote_refusals_do_not_cache_page_or_block_other_entries
         redis_client=_Redis(),
         session_factory=sessions,
         broker_adapter=broker,
-    )
+    ))
     service._market_is_fillable = lambda now=None: True
 
     with sessions() as session:

@@ -3644,7 +3644,9 @@ class SchwabV2BotService:
         # logic would have been untestable while LOOKING covered.
         et_now = datetime.now(EASTERN_TZ)
         day_start = et_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
-        day_end = day_start + timedelta(days=1)
+        day_end = datetime.combine(
+            et_now.date() + timedelta(days=1), time_cls.min, tzinfo=EASTERN_TZ,
+        ).astimezone(UTC)
         rows = session.execute(
             select(BrokerAccount.name, Fill.symbol, Fill.side, Fill.quantity, Fill.price,
                    Fill.filled_at)

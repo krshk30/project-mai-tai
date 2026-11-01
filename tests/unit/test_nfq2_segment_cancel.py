@@ -1,4 +1,6 @@
 """Actual producer/barrier methods, controlled canonical RECLAIM route; no historical BIYA claim."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from copy import deepcopy
 from uuid import uuid4
 

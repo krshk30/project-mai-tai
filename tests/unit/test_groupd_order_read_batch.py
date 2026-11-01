@@ -1,5 +1,9 @@
 """D2 rework component controls; source-authored, no broker RPCs."""
 
+
+from tests.unit.oms_sqlite_fixtures import new_unit_service
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_session_factory as build_test_session_factory
 import asyncio
 from datetime import UTC, datetime, timedelta
 from copy import deepcopy
@@ -16,9 +20,8 @@ from sqlalchemy import event, select
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Strategy, TradeIntent
 from project_mai_tai.oms.order_read_batch import MAX_CAPTURED_ORDERS, OrderReadBatch, persist_order_reads
-from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.reconciliation.order_read_evidence import SNAPSHOT_TYPE
-from tests.unit.test_reconciliation_service import build_test_session_factory
+
 
 NOW = datetime(2026, 10, 16, 19, 47, tzinfo=UTC)
 
@@ -62,7 +65,7 @@ async def test_batch_actual_run_db_after_session_close_three_reads_one_account_w
     factory = build_test_session_factory()
     account, orders = seed(factory, provider)
     loop_thread = get_ident()
-    service = object.__new__(OmsRiskService)
+    service = new_unit_service()
     service.session_factory = factory
     service.settings = SimpleNamespace(oms_broker_sync_interval_seconds=5)
     service.logger = Mock(spec=logging.Logger)
@@ -156,7 +159,7 @@ def test_overflow_clears_old_scalar_receipts_and_failed_batch_cannot_publish_pos
 def test_bad_diagnostic_dto_is_account_scoped_uncertainty_not_a_trading_exception():
     factory = build_test_session_factory()
     account, orders = seed(factory, "schwab")
-    service = object.__new__(OmsRiskService)
+    service = new_unit_service()
     batch = OrderReadBatch()
 
     class BadDiagnosticOrder:
@@ -175,7 +178,7 @@ def test_bad_diagnostic_dto_is_account_scoped_uncertainty_not_a_trading_exceptio
 async def test_ordinary_capture_fault_preserves_original_fetch_and_success_result(monkeypatch):
     factory = build_test_session_factory()
     account, orders = seed(factory, "schwab")
-    service = object.__new__(OmsRiskService)
+    service = new_unit_service()
     service.session_factory = factory
     service.settings = SimpleNamespace(oms_broker_sync_interval_seconds=5)
     service.logger = Mock(spec=logging.Logger)
@@ -203,7 +206,7 @@ async def test_ordinary_capture_fault_preserves_original_fetch_and_success_resul
 async def test_original_broker_error_is_not_replaced_by_capture_fault(monkeypatch):
     factory = build_test_session_factory()
     account, orders = seed(factory, "schwab")
-    service = object.__new__(OmsRiskService)
+    service = new_unit_service()
     service.session_factory = factory
     service.settings = SimpleNamespace(oms_broker_sync_interval_seconds=5)
     service.logger = Mock(spec=logging.Logger)
@@ -228,7 +231,7 @@ async def test_original_broker_error_is_not_replaced_by_capture_fault(monkeypatc
 def test_optional_capture_does_not_swallow_cancellation(monkeypatch):
     factory = build_test_session_factory()
     account, orders = seed(factory, "schwab")
-    service = object.__new__(OmsRiskService)
+    service = new_unit_service()
     batch = OrderReadBatch()
     cancellation = asyncio.CancelledError("original cancellation")
 

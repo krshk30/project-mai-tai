@@ -12,13 +12,15 @@ RED with the guard it pins removed -- a test that cannot come out false is not c
 """
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.base import Base
@@ -62,10 +64,7 @@ class _LegAdapter(SimulatedBrokerAdapter):
 
 
 def _make_sf() -> sessionmaker:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:", future=True,
-        connect_args={"check_same_thread": False}, poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     tables = [t for t in Base.metadata.sorted_tables
               if t.name not in ("market_trade_ticks", "market_quote_ticks")]
     Base.metadata.create_all(engine, tables=tables)
@@ -74,13 +73,13 @@ def _make_sf() -> sessionmaker:
 
 def _svc(adapter, *, enabled: bool = True) -> OmsRiskService:
     sf = _make_sf()
-    svc = OmsRiskService(
+    svc = own_service(OmsRiskService(
         Settings(
             oms_v2_exit_management_enabled=True,
             oms_v2_eod_cancel_reexit_enabled=enabled,
         ),
         redis_client=_FakeRedis(), session_factory=sf, broker_adapter=adapter,
-    )
+    ))
     with sf() as s:
         svc.store.ensure_strategy(s, "schwab_1m_v2", name="v2")
         svc.store.ensure_broker_account(s, ACCT, provider="simulated", environment="test")

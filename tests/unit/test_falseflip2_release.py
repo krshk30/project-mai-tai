@@ -430,15 +430,49 @@ async def test_actual_position_poll_transition_commits_on_worker_before_intrabar
     store = FalseFlipStore(factory)
     bot._falseflip_store = SimpleNamespace(commit=lambda before, after: store.commit(before, after, now=AT))
     writes = []
+    transitions = []
+    loop_thread = threading.get_ident()
     original = release_module.persist_owner_transition
+    release_ack = strategy.acknowledge_falseflip2_release
+    rearm_ack = strategy.acknowledge_falseflip2_rearm
 
     def writer(*args, **kwargs):
         writes.append(threading.get_ident())
-        return original(*args, **kwargs, now=AT+timedelta(milliseconds=len(writes)))
+        phase = "rearm" if kwargs.get("previous") is not None else "release"
+        assert not state.resting_active
+        result = original(*args, **kwargs, now=AT+timedelta(milliseconds=len(writes)))
+        # Observe the real committed postimage before the poll can acknowledge it.
+        with factory() as session:
+            owner = session.scalar(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == "v2_flip_entry_ownership")
+                .order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc()).limit(1))
+            assert owner.payload["active"] is (phase == "rearm")
+        assert not state.resting_active
+        transitions.append(("committed", phase))
+        return result
+
+    def acknowledge_release(record):
+        assert transitions == [("committed", "release")]
+        assert not state.resting_active
+        result = release_ack(record)
+        transitions.append(("acknowledged", "release"))
+        return result
+
+    def acknowledge_rearm(plan):
+        assert transitions == [("committed", "release"), ("acknowledged", "release"), ("committed", "rearm")]
+        assert not state.resting_active
+        result = rearm_ack(plan)
+        transitions.append(("acknowledged", "rearm"))
+        return result
 
     monkeypatch.setattr(release_module, "persist_owner_transition", writer)
+    monkeypatch.setattr(strategy, "acknowledge_falseflip2_release", acknowledge_release)
+    monkeypatch.setattr(strategy, "acknowledge_falseflip2_rearm", acknowledge_rearm)
     await bot._falseflip2_poll(strategy._falseflip_book)
-    assert writes == [writes[0], writes[0]] and writes[0] != threading.get_ident()
+    # Separate to_thread submissions may use different pool workers.
+    assert len(writes) == 2 and all(worker != loop_thread for worker in writes)
+    assert transitions == [("committed", "release"), ("acknowledged", "release"),
+                           ("committed", "rearm"), ("acknowledged", "rearm")]
     assert state.resting_active and state.resting_trigger == pytest.approx(1.93)
     assert not strategy._falseflip_budget(state).awaiting_rearm
     assert not strategy._removed_wait_requests

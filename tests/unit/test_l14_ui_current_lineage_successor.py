@@ -1,7 +1,7 @@
 """Preserve historical UI evidence and the explicit installed source successor.
 
 Literal9c historical fixture/history and original55-file set remain intact.
-Current source is installed6ddb plus reviewed Ruff, owner-phone and OMS loop-lag changes,
+Current source is installed6ddb plus reviewed Ruff, owner-phone, OMS loop-lag and DST changes,
 bound by content so a squash-only checkout does not need branch Git objects.
 """
 
@@ -23,7 +23,7 @@ MODIFIED = {"src/project_mai_tai/atr_simulation/aggregate_entry_display.py",
     "src/project_mai_tai/services/atr_simulation_legacy_routes.py",
     "src/project_mai_tai/services/control_plane.py"}
 CONTENT_PATH = ROOT / "tests/fixtures/atr_simulation/l14_installed_successor_content_20261031.json"
-CONTENT_SHA = "933103ca4c039a815d01dd2273e981913fc386cd96078a9080579f28b13dd076"
+CONTENT_SHA = "754e85ba62a0fbcc0fa3d8d2cd79a1cafec182e7e59e4c31a91a9936ffb2f583"
 RUFF_SOURCE_PATHS = {
     "src/project_mai_tai/atr_simulation/firstbar_binding.py",
     "src/project_mai_tai/atr_simulation/firstbar_live_baseline.py",
@@ -40,6 +40,12 @@ RUFF_SOURCE_PATHS = {
 PHONE_SOURCE_PATH = "src/project_mai_tai/brokerdecides1_owner_phone.py"
 LOOP_LAG_SOURCE_PATH = "src/project_mai_tai/oms/loop_lag.py"
 OMS_SERVICE_PATH = "src/project_mai_tai/oms/service.py"
+DST_SOURCE_PATHS = {
+    "src/project_mai_tai/orb_live_decisions.py",
+    "src/project_mai_tai/services/control_plane.py",
+    "src/project_mai_tai/services/schwab_1m_v2_bot.py",
+    "src/project_mai_tai/services/trade_coach_app.py",
+}
 BUILD_METADATA_PATHS = {
     "src/project_mai_tai.egg-info/PKG-INFO",
     "src/project_mai_tai.egg-info/SOURCES.txt",
@@ -60,7 +66,7 @@ def validate_current_content(value):
     assert value["scope"] == "installed6ddb_plus_reviewed_G2_Ruff_and_C1_owner_phone"
     assert value["runtime_path_count"] == 643
     assert set(value["changed_source_sha256"]) == RUFF_SOURCE_PATHS | {
-        PHONE_SOURCE_PATH, LOOP_LAG_SOURCE_PATH, OMS_SERVICE_PATH}
+        PHONE_SOURCE_PATH, LOOP_LAG_SOURCE_PATH, OMS_SERVICE_PATH} | DST_SOURCE_PATHS
     assert len(value["runtime_paths_sha256"]) == 64
     assert len(value["cp_sim_display_sha256"]) == 64
     assert all(len(digest) == 64 for digest in value["changed_source_sha256"].values())
@@ -136,7 +142,7 @@ def assert_current_protected_l14_successor():
         path = ROOT / name
         assert not path.is_symlink() and path.resolve() == path
         assert_current_bytes(name, path.read_bytes())
-    # Cover all fourteen explicitly reviewed source postimages, including modules
+    # Cover all seventeen explicitly reviewed source postimages, including modules
     # outside the original55; no branch-only Git objects or fallback skips.
     for name in current_content()["changed_source_sha256"]:
         path = ROOT / name
@@ -205,6 +211,21 @@ def test_installed_successor_rejects_unreviewed_source_changes(fault, tmp_path, 
                     if fault == "loop_lag_path" else PHONE_SOURCE_PATH)
             value["changed_source_sha256"][name + ".unreviewed"] = "0" * 64
             validate_current_content(value)
+
+
+@pytest.mark.parametrize("name", sorted(DST_SOURCE_PATHS))
+def test_reviewed_DST_postimages_reject_modified_bytes(name):
+    actual = (ROOT / name).read_bytes()
+    assert_current_bytes(name, actual)
+    with pytest.raises(AssertionError):
+        assert_current_bytes(name, actual + b"\n")
+
+
+def test_reviewed_DST_postimage_set_rejects_an_unreviewed_path():
+    value = deepcopy(current_content())
+    value["changed_source_sha256"]["src/project_mai_tai/services/trade_coach_app.py.unreviewed"] = "0" * 64
+    with pytest.raises(AssertionError):
+        validate_current_content(value)
 
 
 @pytest.mark.parametrize("unreviewed", [None, "unreviewed.py", "arbitrary_metadata.txt"])

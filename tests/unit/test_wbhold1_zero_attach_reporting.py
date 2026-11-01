@@ -1,4 +1,6 @@
 """Reviewer16:0x: zero-size refusal must not hide behind an old protect handle."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from datetime import timedelta
 from decimal import Decimal
 

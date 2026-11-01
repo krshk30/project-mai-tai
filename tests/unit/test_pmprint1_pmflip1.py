@@ -4,6 +4,9 @@ The 14-row census is a price-proxy replay, NOT a decision-cache/fill replay.
 Sources: Codex pmprint1-own-history/originals/veea JSON, pulled 2026-10-05.
 """
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import own_service
 import asyncio
 import logging
 from copy import deepcopy
@@ -525,10 +528,10 @@ async def test_mi_working_limit_still_quote_drift_cancelled():
 
     factory = build_test_session_factory()
     adapter = FakeWorkingOrderRefreshBrokerAdapter(ask_price=2.74, bid_price=2.73)
-    service = OmsRiskService(settings=Settings(_env_file=None, redis_stream_prefix="test", oms_adapter="simulated",
+    service = own_service(OmsRiskService(settings=Settings(_env_file=None, redis_stream_prefix="test", oms_adapter="simulated",
                                              oms_quote_drift_cancel_tolerance_cents=1.0,
                                              strategy_schwab_1m_v2_entry_notional_usd=0),
-                             redis_client=FakeRedis(), session_factory=factory, broker_adapter=adapter)
+                             redis_client=FakeRedis(), session_factory=factory, broker_adapter=adapter))
     service.sync_broker_state = _noop_sync_broker_state
     await service.process_trade_intent(TradeIntentEvent(source_service="schwab-1m-v2", payload=TradeIntentPayload(
         strategy_code="schwab_1m_v2", broker_account_name="paper:schwab_1m_v2", symbol="MI", side="buy",

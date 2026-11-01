@@ -1,4 +1,7 @@
 """O3 controlled ownership probes; recorded MI parents are labelled separately."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import own_service
 from datetime import UTC, datetime
 from decimal import Decimal
 from threading import get_ident
@@ -38,7 +41,7 @@ def setup(monkeypatch, account, *, managed=3, owned=1, fill=False, aggregate=3):
         )]
 
     adapter.submit_order.side_effect = submit
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         Settings(_env_file=None, oms_v2_exit_management_enabled=True,
                  oms_v2_exit_close_on_fill_enabled=True,
                  oms_v2_exit_release_reservation_enabled=True,
@@ -47,7 +50,7 @@ def setup(monkeypatch, account, *, managed=3, owned=1, fill=False, aggregate=3):
                  strategy_schwab_1m_v2_broker_provider="schwab",
                  strategy_schwab_1m_v2_dual_broker_fanout_enabled=True),
         redis_client=_FakeRedis(), session_factory=sessions, broker_adapter=adapter,
-    )
+    ))
     with sessions.begin() as session:
         v2 = service.store.ensure_strategy(session, "schwab_1m_v2")
         orb = service.store.ensure_strategy(session, "orb_schwab")

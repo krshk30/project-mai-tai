@@ -1,4 +1,8 @@
 """Controlled STOP-only broker responses; no network or claimed live executions."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
 import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -7,9 +11,8 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, ExitPairReleaseResult
 from project_mai_tai.db.models import (
@@ -70,7 +73,7 @@ def book(request, monkeypatch):
     monkeypatch.setattr(executor_module, "datetime", Clock)
     monkeypatch.setattr(legacy_module, "datetime", Clock)
     monkeypatch.setattr(service_module, "utcnow", lambda: Clock.now(UTC))
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    engine = private_sqlite_engine(connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine, tables=[table for table in Base.metadata.sorted_tables
         if table.name not in {"market_trade_ticks", "market_quote_ticks"}])
     sessions = sessionmaker(engine, expire_on_commit=False)
@@ -117,10 +120,10 @@ def book(request, monkeypatch):
                 filled_quantity=Decimal(0), reported_at=Clock.now(UTC))
 
     state.broker = Broker()
-    service = OmsRiskService(Settings(bot_control_enabled=True,
+    service = own_service(OmsRiskService(Settings(bot_control_enabled=True,
         strategy_schwab_1m_v2_country_route_enabled=True, oms_v2_exit_management_enabled=True,
         oms_v2_exit_close_on_fill_enabled=True), redis_client=Redis(), session_factory=sessions,
-        broker_adapter=state.broker)
+        broker_adapter=state.broker))
     state.service = service
     with sessions.begin() as unit:
         strategy = Strategy(code=atr.STRATEGY, name="ATR", execution_mode="live")

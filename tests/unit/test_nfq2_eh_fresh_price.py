@@ -1,4 +1,6 @@
 """Recorded BIYA intent shape; cache ages/price changes are explicit counterfactuals."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4

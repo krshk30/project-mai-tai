@@ -1,6 +1,10 @@
 """E1: real edge/attach/ownership chain, isolated broker boundary and card-derived replay."""
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
@@ -9,9 +13,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.protocols import (
     BrokerPositionSnapshot, ExecutionReport, ExitPairReleaseResult,
@@ -86,11 +89,10 @@ def owned_clock(monkeypatch):
 
 @pytest.fixture
 def replay(monkeypatch):
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+    engine = private_sqlite_engine(connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(_env_file=None, oms_adapter="simulated",
                           oms_v2_exit_management_enabled=True,
                           oms_v2_rth_edge_bracket_enabled=True,
@@ -98,7 +100,7 @@ def replay(monkeypatch):
                           oms_v2_cw_hard_stop_pct=CASE["stop_pct"],
                           strategy_schwab_1m_v2_webull_account_name=ACCT),
         redis_client=_Redis(), session_factory=factory,
-    )
+    ))
     object.__setattr__(service.settings, "oms_webull_protect_attempts", 1)
     object.__setattr__(service.settings, "oms_webull_protect_interval_seconds", 0)
     with factory() as session:
