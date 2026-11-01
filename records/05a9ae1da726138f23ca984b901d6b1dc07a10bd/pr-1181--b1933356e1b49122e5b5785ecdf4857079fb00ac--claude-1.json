@@ -1,0 +1,9 @@
+{
+  "pr_number": 1181,
+  "range_base": "b1933356e1b49122e5b5785ecdf4857079fb00ac",
+  "range_head": "05a9ae1da726138f23ca984b901d6b1dc07a10bd",
+  "reviewed_at": "2026-11-01T11:54:04Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: L14 successor census/content updated for exactly loop_lag.py + reviewed service.py postimage (643 paths)."
+}

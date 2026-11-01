@@ -1,0 +1,9 @@
+{
+  "pr_number": 1180,
+  "range_base": "b1933356e1b49122e5b5785ecdf4857079fb00ac",
+  "range_head": "ed1b4c3d4b80d88888010a051d2df0ba842df17d",
+  "reviewed_at": "2026-11-01T11:54:04Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: timing step continue-on-error (report-only on shared runner; marker cited); budgets unchanged."
+}
