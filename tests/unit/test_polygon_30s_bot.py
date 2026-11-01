@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 from datetime import UTC, datetime
 from unittest.mock import Mock
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
@@ -40,12 +42,7 @@ def fixed_now() -> datetime:
 
 
 def build_test_session_factory() -> sessionmaker:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
 
@@ -280,7 +277,7 @@ def test_polygon_30s_does_not_use_live_aggregate_bars_when_disabled() -> None:
 
 
 def test_oms_service_builds_webull_provider_inside_mixed_router() -> None:
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="schwab",
@@ -289,7 +286,7 @@ def test_oms_service_builds_webull_provider_inside_mixed_router() -> None:
         ),
         redis_client=FakeRedis(),
         session_factory=build_test_session_factory(),
-    )
+    ))
 
     assert isinstance(service.broker_adapter, RoutingBrokerAdapter)
     assert isinstance(service._build_provider_adapter("webull"), WebullBrokerAdapter)

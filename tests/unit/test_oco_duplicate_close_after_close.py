@@ -1,4 +1,8 @@
 """Controlled exact-entry GLND replay; no real broker/DB connections."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_session_factory as build_test_session_factory
+from tests.unit.oms_sqlite_fixtures import own_service
 from datetime import UTC, datetime, timedelta
 import ast
 from decimal import Decimal as D
@@ -14,15 +18,15 @@ from project_mai_tai.db.models import (
 from project_mai_tai.oms.service import OmsRiskService, oco_exit_client_order_id
 from project_mai_tai.oms import service as module
 from project_mai_tai.settings import Settings
-from tests.unit.test_control_plane import build_test_session_factory
+
 from tests.c7_history import historical_source
 
 
 def seed_episode(account="live:schwab_1m_v2", *, closed=False, exited=150, hour=13):
     now = datetime(2026, 10, 14, hour, 53, 29, tzinfo=UTC)
     factory = build_test_session_factory()
-    service = OmsRiskService(Settings(_env_file=None, oms_adapter="simulated",
-        oms_v2_exit_release_reservation_enabled=True), session_factory=factory)
+    service = own_service(OmsRiskService(Settings(_env_file=None, oms_adapter="simulated",
+        oms_v2_exit_release_reservation_enabled=True), session_factory=factory))
     with factory() as session:
         strategy = service.store.ensure_strategy(session, "schwab_1m_v2", name="ATR", execution_mode="live", metadata_json={})
         broker = service.store.ensure_broker_account(session, account,

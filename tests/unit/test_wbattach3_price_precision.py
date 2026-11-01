@@ -1,5 +1,7 @@
 """Stored-precision controls; remapped rows/replies are not live SAIQ receipts."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation

@@ -4,6 +4,8 @@ The real close coordinator, DB ownership reread, prepare, accounting and inciden
 writer run unchanged. No tests in this module have been executed by the author.
 """
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 import asyncio
 from dataclasses import replace
 from decimal import Decimal

@@ -1,6 +1,8 @@
 """Offline combined quote-handler proof; no broker or Redis network calls."""
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+
 import asyncio
 from collections import Counter
 from contextvars import ContextVar

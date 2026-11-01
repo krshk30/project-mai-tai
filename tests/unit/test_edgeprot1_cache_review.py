@@ -1,4 +1,6 @@
 """Mendel's three exact-head findings, controlled locally without broker traffic."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 import asyncio
 from decimal import Decimal
 from threading import Event, Thread, get_ident
@@ -6,6 +8,7 @@ from time import monotonic, sleep
 
 import pytest
 from sqlalchemy import event, inspect, select
+from sqlalchemy.engine.cursor import FullyBufferedCursorFetchStrategy
 
 from project_mai_tai.broker_adapters.protocols import ExitPairReleaseResult
 from project_mai_tai.db.models import OmsManagedPosition
@@ -158,12 +161,22 @@ def test_lazy_result_uses_its_own_dispatch_fence_not_later_session_read(monkeypa
     svc, sf, _ = setup(monkeypatch)
     cache = svc._target_row_cache
     with sf() as reader:
+        loaded = []
+        event.listen(reader, "loaded_as_persistent", lambda session, instance: loaded.append(instance))
         old_result = reader.execute(select(OmsManagedPosition))
+        # Model the buffered PG driver without hydrating ORM objects early:
+        # retain the real DBAPI tuples and this exact result/dispatch context,
+        # releasing only SQLite's open-cursor snapshot before the later write.
+        dispatch = old_result.raw.context
+        old_result.raw.cursor_strategy = FullyBufferedCursorFetchStrategy(old_result.raw.cursor)
+        assert old_result.raw.context is dispatch and loaded == []
         with sf.begin() as writer:
             row(writer).current_quantity = 119
         # This newer dispatch must not replace the earlier result's fence.
         assert reader.scalar(select(OmsManagedPosition.current_quantity)) == 119
+        assert loaded == []
         assert old_result.scalar_one().current_quantity == 120
+        assert len(loaded) == 1
         assert cache.get((ACCT, SYM)) is None
     svc._rehydrate_managed_v2_symbols()
     assert cache.get((ACCT, SYM)).quantity == 119

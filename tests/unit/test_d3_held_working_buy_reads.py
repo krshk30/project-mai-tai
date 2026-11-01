@@ -1,5 +1,7 @@
 """Source-authored D3 query controls; execution belongs to the serial executor."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4

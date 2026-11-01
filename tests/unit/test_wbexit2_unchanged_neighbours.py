@@ -4,6 +4,8 @@ Only the fixture Settings gain WBEXIT2/KEEPWATCH/BROKERDECIDES true. No APP
 owner/quantity/permission function is replaced by this successor. The original
 tests retain their pre-existing controlled broker/clock seams and limitations.
 """
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 import pytest
 from sqlalchemy import select
 

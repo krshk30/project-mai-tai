@@ -1,6 +1,10 @@
 """OWNMIX1: recorded MI parents, durable ownership, both accounts and every session."""
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 import copy
 import importlib.util
 import json
@@ -13,7 +17,6 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters import schwab as schwab_module
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
@@ -39,11 +42,10 @@ class _Redis:
 
 @pytest.fixture
 def replay(monkeypatch):
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+    engine = private_sqlite_engine(connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(_env_file=None, oms_adapter="simulated", oms_v2_exit_management_enabled=True,
                           strategy_schwab_1m_v2_account_name=ACCT,
                           strategy_schwab_1m_v2_webull_account_name="live:orb",
@@ -52,7 +54,7 @@ def replay(monkeypatch):
                           oms_record_native_oco_exit_fills_enabled=True,
                           oms_native_oco_stand_down_enabled=True),
         redis_client=_Redis(), session_factory=sessions,
-    )
+    ))
     with sessions() as session:
         for data in ROWS["orders"]:
             strategy = service.store.ensure_strategy(session, data["strategy"])

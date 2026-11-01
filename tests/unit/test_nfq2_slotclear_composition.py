@@ -1,4 +1,6 @@
 """Joint cards; recorded bars with explicitly controlled quotes/book/broker state."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from decimal import Decimal
 from types import SimpleNamespace
 

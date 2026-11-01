@@ -7,15 +7,18 @@ attempt is allowed.
 
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.base import Base
@@ -46,12 +49,7 @@ class _FakeRedis:
 
 
 def _session_factory() -> sessionmaker:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     tables = [
         table
         for table in Base.metadata.sorted_tables
@@ -62,7 +60,7 @@ def _session_factory() -> sessionmaker:
 
 
 def _service(sf: sessionmaker, *, bound_seconds: float = 245.0) -> OmsRiskService:
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         Settings(
             oms_v2_exit_management_enabled=True,
             oms_v2_exit_close_on_fill_enabled=True,
@@ -71,7 +69,7 @@ def _service(sf: sessionmaker, *, bound_seconds: float = 245.0) -> OmsRiskServic
         redis_client=_FakeRedis(),
         session_factory=sf,
         broker_adapter=SimulatedBrokerAdapter(),
-    )
+    ))
     with sf() as session:
         service.store.ensure_strategy(session, "schwab_1m_v2", name="v2")
         service.store.ensure_broker_account(

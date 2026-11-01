@@ -8,6 +8,8 @@ Only broker responses are controlled. The real durable fallback/EOD writers,
 ownership readers, native release coordinator and incident writer stay active.
 """
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 import asyncio
 from copy import deepcopy
 from dataclasses import replace

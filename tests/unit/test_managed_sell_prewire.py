@@ -1,5 +1,8 @@
 """Controlled durable-preparation boundaries, not real broker execution proof."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import own_service
 import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal as D
@@ -41,8 +44,8 @@ def lane(tmp_path, request):
             "CREATE UNIQUE INDEX uq_oms_managed_positions_open_symbol "
             "ON oms_managed_positions (broker_account_name, symbol) WHERE status = 'open'")
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
-    service = OmsRiskService(Settings(_env_file=None, oms_adapter="paper", bot_control_enabled=False),
-                             redis_client=None, session_factory=sessions, broker_adapter=SimpleNamespace())
+    service = own_service(OmsRiskService(Settings(_env_file=None, oms_adapter="paper", bot_control_enabled=False),
+                             redis_client=None, session_factory=sessions, broker_adapter=SimpleNamespace()))
     with sessions.begin() as unit:
         strategy = service.store.ensure_strategy(unit, "schwab_1m_v2", name="ATR", execution_mode="live")
         account = service.store.ensure_broker_account(unit, account_name, provider=provider, environment="production")
@@ -618,8 +621,8 @@ async def test_reconstructed_service_sees_pending_after_controlled_crash(lane):
     now = datetime.now(UTC)
     assert await prepare_managed_sell(service, event=event, request=request,
                                       managed_row_id=row_id, now=now) is not None
-    restarted = OmsRiskService(service.settings, redis_client=None, session_factory=sessions,
-                               broker_adapter=SimpleNamespace())
+    restarted = own_service(OmsRiskService(service.settings, redis_client=None, session_factory=sessions,
+                               broker_adapter=SimpleNamespace()))
     with sessions() as unit:
         snapshot = restarted._read_v2_managed_snapshot(unit, account, "ABC", True)
         assert snapshot.dedup_active and snapshot.managed_row_id == row_id
@@ -976,8 +979,8 @@ async def test_real_flatten_and_normal_owner_share_committed_pending_during_wire
             await asyncio.wait_for(service._v2_overnight_flatten(), 2)
         assert len(sent) == 1 and not first.done()
         # A fresh process has no in-memory claim but must see the durable seller.
-        restarted = OmsRiskService(service.settings, redis_client=None, session_factory=sessions,
-                                   broker_adapter=SimpleNamespace())
+        restarted = own_service(OmsRiskService(service.settings, redis_client=None, session_factory=sessions,
+                                   broker_adapter=SimpleNamespace()))
         with sessions() as unit:
             assert restarted._read_v2_managed_snapshot(unit, account, "ABC", True).dedup_active
     finally:

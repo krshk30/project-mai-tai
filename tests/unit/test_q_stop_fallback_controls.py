@@ -1,4 +1,6 @@
 """Q check fallback plus C6 original-identity regressions, now using paged LIST."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from types import SimpleNamespace
 
 import pytest

@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
 import pytest
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import select, text
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.db.models import (
     Base,
@@ -40,15 +43,10 @@ class _Redis:
 
 
 def _service_with_weto():
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test", oms_adapter="simulated",
             oms_native_oco_stand_down_enabled=True,
@@ -57,7 +55,7 @@ def _service_with_weto():
         ),
         redis_client=_Redis(),
         session_factory=sessions,
-    )
+    ))
     async def no_child(*_args, **_kwargs):
         return None
 

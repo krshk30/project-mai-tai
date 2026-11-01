@@ -9,6 +9,10 @@ Covers the four fixes from docs/oms-spof-blocking-db-fix-design.md:
 """
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import new_unit_service
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+
 import asyncio
 import threading
 from datetime import UTC, datetime
@@ -17,9 +21,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot
 from project_mai_tai.db import session as db_session
@@ -32,19 +34,14 @@ from project_mai_tai.settings import Settings
 
 
 def build_test_session_factory() -> sessionmaker:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        future=True,
-        connect_args={"check_same_thread": False},  # _run_db uses a worker thread
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
 def _bare_service() -> OmsRiskService:
     """A service instance with __init__ bypassed — set only what a test needs."""
-    svc = OmsRiskService.__new__(OmsRiskService)
+    svc = new_unit_service()
     svc.settings = SimpleNamespace()  # WBEXIT2/3 read service.settings since 10-28; absent switch = off
     svc.logger = SimpleNamespace(
         info=lambda *a, **k: None,

@@ -5,6 +5,8 @@ No fixture here invents a broker reply. The integration adapter is explicitly a 
 """
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import json

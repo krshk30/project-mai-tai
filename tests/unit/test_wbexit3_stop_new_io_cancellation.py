@@ -4,6 +4,8 @@ Real private C6 lease/journal/canonical writers and _run_db remain. Controlled
 latency is at DB/SDK ports; no native/owner/quantity/final-proof success stub.
 Main/C1 must review the separate EXTERNAL C6 proposal before execution.
 """
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 import asyncio
 from dataclasses import replace
 from datetime import UTC

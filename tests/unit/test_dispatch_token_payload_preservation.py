@@ -6,6 +6,10 @@ Reuse existing in-memory unit fixtures; no new runner/provider/database rig.
 """
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_session_factory as build_test_session_factory
+from tests.unit.oms_sqlite_fixtures import own_service
+
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -24,7 +28,7 @@ from project_mai_tai.fanout_identity import FANOUT_IDENTITY_KEYS, carry_fanout_i
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.settings import Settings
-from tests.unit.test_oms_store import build_test_session_factory
+
 from test_oms_risk_service import FakeRedis, FakeWorkingOrderRefreshBrokerAdapter
 from tests.unit.test_brokerdecides1_local_census import ACCOUNTS, attempt, census as census, order as census_order
 
@@ -227,8 +231,8 @@ async def test_real_cancel_consumer_preserves_target_token_event_and_parent(prov
         parent_id, target_id, strategy_id, account_id = parent.id, order.id, strategy.id, account.id
         account_name, client = account.name, order.client_order_id
     adapter = SparseCancelAdapter()
-    service = OmsRiskService(settings=Settings(_env_file=None, oms_adapter="simulated", oms_cancel_verify_enabled=False),
-        redis_client=FakeRedis(), session_factory=sessions, broker_adapter=adapter)
+    service = own_service(OmsRiskService(settings=Settings(_env_file=None, oms_adapter="simulated", oms_cancel_verify_enabled=False),
+        redis_client=FakeRedis(), session_factory=sessions, broker_adapter=adapter))
     event = event_for(account_name, intent_type="cancel", metadata={
         "target_client_order_id": client, "resting_entry_cancel": "true", "reason": "reprice",
         "clearwait_dispatch_token": "CONTROLLED-cancel-token", "fanout_segment_id": "999"})

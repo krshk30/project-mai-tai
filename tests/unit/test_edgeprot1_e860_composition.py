@@ -1,4 +1,7 @@
 """Controlled composition waits, not historical MNDR arrival or broker evidence."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import own_service
 import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -139,7 +142,7 @@ async def test_all_on_calls_unchanged_four_transient_bodies_with_coherent_elapse
         flags = Path(__file__).resolve().parents[2] / "docs/review-artifacts/edgeprot1-lane-b/all-on-e860-controlled.env"
         settings = Settings(_env_file=flags, strategy_schwab_1m_v2_account_name=ACCT,
                             strategy_schwab_1m_v2_webull_account_name=WEBULL_ACCT)
-        svc = module.OmsRiskService(settings, redis_client=initial_service.redis, session_factory=sf, broker_adapter=broker)
+        svc = own_service(module.OmsRiskService(settings, redis_client=initial_service.redis, session_factory=sf, broker_adapter=broker))
         svc._rehydrate_managed_v2_symbols()
         monkeypatch.setattr(svc, "_market_is_fillable", lambda: True)
         assert settings.oms_v2_eod_oco_transition_enabled and settings.oms_v2_exit_release_reservation_enabled

@@ -1,5 +1,7 @@
 """Reviewer DSY-shaped controls; local adapters, not historical broker replay."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from decimal import Decimal
 from unittest.mock import AsyncMock
 

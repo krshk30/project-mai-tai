@@ -1,4 +1,6 @@
 """Bound-row target capture is memory-only, not permission to sell."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 import asyncio
 from dataclasses import fields
 from datetime import UTC, datetime, timedelta

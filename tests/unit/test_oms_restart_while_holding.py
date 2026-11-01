@@ -15,13 +15,15 @@ Scoping invariant (code-enforced): OMS-ownership is defined by the per-strategy
 """
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import new_unit_service
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+
 import asyncio
 from decimal import Decimal
 from types import SimpleNamespace
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import AccountPosition, OmsManagedPosition, VirtualPosition
@@ -35,12 +37,7 @@ V2_CODE = "schwab_1m_v2"
 
 
 def _session_factory() -> sessionmaker[Session]:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        future=True,
-        connect_args={"check_same_thread": False},  # _run_db uses a worker thread
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
 
@@ -50,7 +47,7 @@ async def _anoop(*a, **k):  # stub for sync_broker_positions (account_positions 
 
 
 def _svc(sf: sessionmaker[Session]) -> OmsRiskService:
-    svc = OmsRiskService.__new__(OmsRiskService)
+    svc = new_unit_service()
     svc.logger = SimpleNamespace(
         info=lambda *a, **k: None, warning=lambda *a, **k: None,
         error=lambda *a, **k: None, exception=lambda *a, **k: None, debug=lambda *a, **k: None,

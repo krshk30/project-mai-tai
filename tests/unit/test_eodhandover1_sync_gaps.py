@@ -1,4 +1,6 @@
 """H baseline controls; controlled release/read errors, never live broker fills."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
