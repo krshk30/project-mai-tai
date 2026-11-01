@@ -13,6 +13,7 @@ from project_mai_tai.db.models import BrokerAccount, BrokerOrder, OmsManagedPosi
 from project_mai_tai.oms import managed_sell_retirement as retirement, service as oms
 from project_mai_tai.oms.managed_sell_prewire import prepare_managed_sell
 from tests.unit.test_managed_sell_prewire import attempt, lane as lane
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 
 NOW = datetime(2026, 10, 16, 14, 0, tzinfo=UTC)
 OLD = NOW - timedelta(days=2)
