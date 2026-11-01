@@ -20,14 +20,17 @@ in-memory SQLite session_factory with an injectable, request-capturing broker ad
 """
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
 from project_mai_tai.db.base import Base
@@ -166,18 +169,13 @@ class _SyncFillAdapter:
 
 
 def _session_factory() -> sessionmaker[Session]:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
 def _oms(*, adapter, mirror_on: bool = True, webull_account: str = WEBULL) -> OmsRiskService:
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             strategy_schwab_1m_v2_entry_notional_usd=0,
             strategy_schwab_1m_v2_webull_entry_notional_usd=0,
@@ -191,7 +189,7 @@ def _oms(*, adapter, mirror_on: bool = True, webull_account: str = WEBULL) -> Om
         redis_client=_FakeRedis(),
         session_factory=_session_factory(),
         broker_adapter=adapter,
-    )
+    ))
     service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
     return service
 

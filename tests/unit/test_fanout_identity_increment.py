@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import own_service
+
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -244,14 +247,14 @@ class _MetadataDroppingPollFillAdapter:
 async def test_attempt_identity_reaches_intent_order_event_and_fill_when_sdk_drops_metadata() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated",
                           strategy_schwab_1m_v2_entry_notional_usd=0,
                           strategy_schwab_1m_v2_webull_entry_notional_usd=0),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=_MetadataDroppingFillAdapter(),
-    )
+    ))
     event = _event()
 
     await service.process_trade_intent(event)
@@ -287,14 +290,14 @@ async def test_attempt_identity_reaches_intent_order_event_and_fill_when_sdk_dro
 async def test_polled_fill_cannot_erase_identity_when_sdk_drops_metadata() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated",
                           strategy_schwab_1m_v2_entry_notional_usd=0,
                           strategy_schwab_1m_v2_webull_entry_notional_usd=0),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=_MetadataDroppingPollFillAdapter(),
-    )
+    ))
     service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
 
     await service.process_trade_intent(_event("PMI"))
@@ -324,14 +327,14 @@ async def test_polled_fill_cannot_erase_identity_when_sdk_drops_metadata() -> No
 async def test_cancel_outcome_keeps_target_attempt_identity_instead_of_minting_one() -> None:
     redis = FakeRedis()
     session_factory = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(redis_stream_prefix="test", oms_adapter="simulated",
                           strategy_schwab_1m_v2_entry_notional_usd=0,
                           strategy_schwab_1m_v2_webull_entry_notional_usd=0),
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=FakeWorkingOrderRefreshBrokerAdapter(),
-    )
+    ))
     service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
 
     opened = _event("XPON")
@@ -377,7 +380,7 @@ async def test_watchdog_replacement_keeps_slot_and_names_exact_prior_attempt(
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeWorkingOrderRefreshBrokerAdapter()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -388,7 +391,7 @@ async def test_watchdog_replacement_keeps_slot_and_names_exact_prior_attempt(
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
     service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
     await service.process_trade_intent(_event("EXYN"))
 
@@ -422,7 +425,7 @@ async def test_watchdog_replacement_stays_blocked_after_fillable_session(
     redis = FakeRedis()
     session_factory = build_test_session_factory()
     adapter = FakeWorkingOrderRefreshBrokerAdapter()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test",
             oms_adapter="simulated",
@@ -433,7 +436,7 @@ async def test_watchdog_replacement_stays_blocked_after_fillable_session(
         redis_client=redis,
         session_factory=session_factory,
         broker_adapter=adapter,
-    )
+    ))
     service.sync_broker_state = _noop_sync_broker_state  # type: ignore[method-assign]
     await service.process_trade_intent(_event("EXYN"))
 

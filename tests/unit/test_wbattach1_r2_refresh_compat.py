@@ -1,5 +1,8 @@
 """R2 preserves actual non-managed replacement while refusing false managed tags."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import own_service
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
@@ -31,8 +34,8 @@ async def test_real_paper_refresh_only_untagged_nonmanaged_uses_legacy_wire(monk
     monkeypatch.setattr(module, "_extended_hours_session", lambda now=None: None)
     factory = build_test_session_factory()
     adapter = FakeWorkingOrderRefreshBrokerAdapter(bid_price=5.00, ask_price=5.02)
-    service = OmsRiskService(Settings(_env_file=None, oms_adapter="simulated", redis_stream_prefix="test"),
-        redis_client=FakeRedis(), session_factory=factory, broker_adapter=adapter)
+    service = own_service(OmsRiskService(Settings(_env_file=None, oms_adapter="simulated", redis_stream_prefix="test"),
+        redis_client=FakeRedis(), session_factory=factory, broker_adapter=adapter))
 
     async def forbidden(*_args, **_kwargs):
         pytest.fail("nonmanaged or unknown-bound replacement must not manufacture a managed preparation")

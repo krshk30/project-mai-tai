@@ -1,4 +1,6 @@
 """Full ATR STOP is an ATR-routing seam, never a C6 standalone behavior change."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from dataclasses import replace
 from decimal import Decimal
 

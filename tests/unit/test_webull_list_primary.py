@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_session_factory as build_test_session_factory
+from tests.unit.oms_sqlite_fixtures import own_service
+
 import json
 import threading
 from dataclasses import replace
@@ -27,7 +31,7 @@ from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.settings import Settings
-from tests.unit.test_oms_store import build_test_session_factory
+
 from tests.unit.test_webull_adapter import (
     _FakeClient,
     _HttpResp,
@@ -234,10 +238,10 @@ async def test_terminal_partial_real_oms_lifecycle(fake_sdk, status, previous_qu
     clock = Clock()
     adapter = primary(client, clock)
     sf = build_test_session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         Settings(_env_file=None, oms_adapter="simulated", oms_v2_exit_management_enabled=True),
         redis_client=LocalEventSink(), session_factory=sf, broker_adapter=adapter,
-    )
+    ))
     with sf() as session:
         strategy = service.store.ensure_strategy(session, "schwab_1m_v2", name="v2")
         account = service.store.ensure_broker_account(

@@ -5,15 +5,18 @@ on log narration.
 """
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 from datetime import datetime, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pytest
 from tests.unit.managed_entry_fixtures import bind_managed_entry
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
@@ -33,10 +36,7 @@ class _FakeRedis:
 
 
 def _make_sf() -> sessionmaker:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:", future=True,
-        connect_args={"check_same_thread": False}, poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     tables = [t for t in Base.metadata.sorted_tables
               if t.name not in ("market_trade_ticks", "market_quote_ticks")]
     Base.metadata.create_all(engine, tables=tables)
@@ -50,10 +50,10 @@ def _svc(sf, *, flatten: bool = True) -> OmsRiskService:
         strategy_schwab_1m_v2_confirmed_window_enabled=True,
         oms_v2_overnight_flatten_enabled=flatten,
     )
-    svc = OmsRiskService(
+    svc = own_service(OmsRiskService(
         settings, redis_client=_FakeRedis(), session_factory=sf,
         broker_adapter=SimulatedBrokerAdapter(),
-    )
+    ))
     with sf() as s:
         svc.store.ensure_strategy(s, "schwab_1m_v2", name="v2")
         svc.store.ensure_broker_account(s, ACCT, provider="simulated", environment="test")

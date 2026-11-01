@@ -1,5 +1,9 @@
 """Actual retained provenance census and controlled offline OMS-path evidence."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_session_factory as build_test_session_factory
+from tests.unit.oms_sqlite_fixtures import own_service
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import hashlib
@@ -16,7 +20,7 @@ from project_mai_tai.reconciliation import service as reconciler
 from project_mai_tai.settings import Settings
 from test_oms_risk_service import FakeRedis
 from test_stuckalert1 import FIXTURE, HISTORY_FIXTURE, at, methods, seed
-from test_reconciliation_service import build_test_session_factory
+
 
 EVIDENCE = Path(__file__).parents[2] / "docs/review-artifacts/stuckalert1/OMS_SYNC_PROVENANCE_CAPTURE.json"
 
@@ -113,8 +117,8 @@ async def test_controlled_sync_path_only_preserves_available_origin(monkeypatch,
             raise AssertionError("No submission allowed in this controlled read test")
 
     adapter = OfflineRead()
-    service = oms.OmsRiskService(Settings(_env_file=None, redis_stream_prefix="offline-stuck"),
-        redis_client=FakeRedis(), session_factory=factory, broker_adapter=adapter)
+    service = own_service(oms.OmsRiskService(Settings(_env_file=None, redis_stream_prefix="offline-stuck"),
+        redis_client=FakeRedis(), session_factory=factory, broker_adapter=adapter))
     result = await service.sync_broker_orders(account_names=["live:"+provider])
     assert adapter.calls == 1
     assert result == {"orders": 0 if shape == "same_status" else 1, "terminal_orders": 0}

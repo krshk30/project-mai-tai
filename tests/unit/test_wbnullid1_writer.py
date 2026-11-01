@@ -1,4 +1,6 @@
 """Final checkpoint controls; local fakes and SQLite, never provider calls."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime

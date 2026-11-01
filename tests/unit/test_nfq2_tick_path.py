@@ -1,4 +1,6 @@
 """NFQ2 tick-loop controls using the recorded BIYA hold (no broker traffic)."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 import asyncio
 from datetime import timedelta
 from threading import Event, get_ident

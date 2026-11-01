@@ -1,4 +1,8 @@
 """Own momentum execution evidence must survive broker snapshot reconciliation."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_session_factory as build_test_session_factory
+from tests.unit.oms_sqlite_fixtures import own_service
 from datetime import UTC, datetime, timedelta
 from dataclasses import replace
 from decimal import Decimal as D
@@ -16,7 +20,7 @@ from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.settings import Settings
 from project_mai_tai.momentum_live.admission import Refusal
 from project_mai_tai.momentum_live.runtime import OmsLiveRuntime
-from tests.unit.test_control_plane import build_test_session_factory
+
 from tests.unit.test_momlive1_runtime import event, offer_and_drain, setup
 from tests.unit.momlive1_owned_fixtures import complete_owned_observation
 from tests.unit.test_oms_risk_service import FakeRedis, _capture_service_log
@@ -81,8 +85,8 @@ def test_momentum_backed_or_unread_account_not_reported(backing, selected):
 async def test_actual_sync_logs_critical_mismatch_without_erasing_or_order():
     factory = build_test_session_factory()
     seed(factory)
-    service = OmsRiskService(Settings(redis_stream_prefix="controlled", oms_adapter="simulated",
-        oms_virtual_position_clear_min_age_seconds=0), FakeRedis(), session_factory=factory)
+    service = own_service(OmsRiskService(Settings(redis_stream_prefix="controlled", oms_adapter="simulated",
+        oms_virtual_position_clear_min_age_seconds=0), FakeRedis(), session_factory=factory))
     reads = []
     async def no_positions(account):
         reads.append(account)

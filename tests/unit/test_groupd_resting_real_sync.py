@@ -4,6 +4,10 @@ No private sync-pass substitution or DTO-injected receipt. All source controls
 are UNRUN; PM covers a current resting LIMIT, not an invented aged PM incident.
 """
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_session_factory as build_test_session_factory
+from tests.unit.oms_sqlite_fixtures import own_service
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import json
@@ -21,7 +25,7 @@ from project_mai_tai.reconciliation import service as reconciler_module
 from project_mai_tai.reconciliation.service import ReconciliationService
 from project_mai_tai.reconciliation.working_lifetime import live_working_ids
 from project_mai_tai.settings import Settings
-from tests.unit.test_reconciliation_service import FakeRedis, build_test_session_factory
+from tests.unit.test_reconciliation_service import FakeRedis
 
 
 @pytest.mark.asyncio
@@ -40,7 +44,7 @@ async def test_original_sync_reaches_resting_consumer_without_pair_dto(monkeypat
         orb_country_routing_enabled=False, orb_webull_account_name="")
     broker = SimpleNamespace(accounts_by_name={name: SimpleNamespace(account_id="CONTROLLED")},
         submit_order=AsyncMock(side_effect=AssertionError("unexpected trading wire")))
-    service = OmsRiskService(settings, SimpleNamespace(xadd=AsyncMock()), session_factory=factory, broker_adapter=broker)
+    service = own_service(OmsRiskService(settings, SimpleNamespace(xadd=AsyncMock()), session_factory=factory, broker_adapter=broker))
     metadata = {"resting_entry": "true", "session": session_name, "limit_price": "2.01",
         "stop_price": "2", "order_type": "limit" if session_name == "AM" else "stop_limit"}
     if session_name == "AM":

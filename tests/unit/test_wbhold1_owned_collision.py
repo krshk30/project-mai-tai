@@ -1,4 +1,6 @@
 """H-only controls. Broker boundaries are local fakes, never original live fills."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace

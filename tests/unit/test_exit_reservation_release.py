@@ -18,6 +18,8 @@ are placed under DETERMINISTIC coids, so they can be ADDRESSED BY NAME.
 """
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+
 import asyncio
 import ast
 import logging

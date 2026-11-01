@@ -4,6 +4,8 @@ Only SDK pages, positions, quote clock and typed broker replies are controlled.
 The inherited fixture's permission callbacks are NOT used: release_count must
 remain zero. Main must compose/review/fence before execution.
 """
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from dataclasses import replace
 from datetime import UTC, timedelta
 from decimal import Decimal

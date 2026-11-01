@@ -1,4 +1,5 @@
 """An uncertain attribution writer cannot override positive own exit fills."""
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from types import SimpleNamespace
 from uuid import UUID
 

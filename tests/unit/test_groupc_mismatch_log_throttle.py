@@ -1,4 +1,9 @@
 """C5 changes diagnostic cadence only; real retention remains exercised."""
+
+from tests.unit.oms_sqlite_fixtures import new_unit_service
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_session_factory as build_test_session_factory
+from tests.unit.oms_sqlite_fixtures import own_service
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal as D
 from types import SimpleNamespace
@@ -12,7 +17,7 @@ from project_mai_tai.db.models import VirtualPosition
 from project_mai_tai.oms import service as module
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
-from tests.unit.test_control_plane import build_test_session_factory
+
 from tests.unit.test_momlive1_virtual_clear import seed
 from tests.unit.test_oms_risk_service import FakeRedis
 
@@ -22,7 +27,7 @@ NAMES = {ACCOUNT: "live:controlled"}
 
 
 def subject(monkeypatch):
-    result = OmsRiskService.__new__(OmsRiskService)
+    result = new_unit_service()
     result.logger = Mock()
     clock = [100.0]
     monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
@@ -101,8 +106,8 @@ def test_overlapping_sync_workers_emit_once(monkeypatch):
 async def test_repeated_actual_sync_keeps_owned_quantity_and_diagnostics(provider, monkeypatch):
     factory = build_test_session_factory()
     seed(factory, provider=provider)
-    result = OmsRiskService(Settings(_env_file=None, oms_adapter="simulated",
-        oms_virtual_position_clear_min_age_seconds=0), FakeRedis(), session_factory=factory)
+    result = own_service(OmsRiskService(Settings(_env_file=None, oms_adapter="simulated",
+        oms_virtual_position_clear_min_age_seconds=0), FakeRedis(), session_factory=factory))
     async def empty_positions(account):
         return []
     result.broker_adapter = SimpleNamespace(list_account_positions=empty_positions)

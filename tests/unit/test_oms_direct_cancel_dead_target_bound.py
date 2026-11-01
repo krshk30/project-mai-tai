@@ -12,15 +12,18 @@ cancel verifier. Webull's cancel_exit_pair remains outside this Schwab dead-targ
 
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.base import Base
@@ -108,19 +111,14 @@ class _DirectCancelAdapter:
 
 
 def _session_factory() -> sessionmaker[Session]:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
 def _service(adapter: _DirectCancelAdapter) -> tuple[OmsRiskService, sessionmaker[Session]]:
     sessions = _session_factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=Settings(
             redis_stream_prefix="test", oms_adapter="simulated",
             strategy_schwab_1m_v2_account_name="live:schwab_1m_v2",
@@ -130,7 +128,7 @@ def _service(adapter: _DirectCancelAdapter) -> tuple[OmsRiskService, sessionmake
         redis_client=_Redis(),
         session_factory=sessions,
         broker_adapter=adapter,
-    )
+    ))
     return service, sessions
 
 

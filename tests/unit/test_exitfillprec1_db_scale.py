@@ -1,5 +1,7 @@
 """Controlled JBDI quantities/prices; SQLite preimages emulate PG Numeric(18,8)."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID

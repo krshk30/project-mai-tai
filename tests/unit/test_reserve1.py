@@ -1,6 +1,10 @@
 """Recorded APUS/IPDN order trees; explicitly counterfactual cancellation/fill races."""
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 import asyncio
 import copy
 import json
@@ -12,9 +16,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 from tests.unit.managed_entry_fixtures import bind_managed_entry
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
@@ -148,20 +151,20 @@ def harness(monkeypatch, name="apus", **adapter_kwargs):
     monkeypatch.setattr(service_module, "utcnow", lambda: now)
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda *args: True)
     monkeypatch.setattr(service_module, "_extended_hours_session", lambda *args: None)
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    engine = private_sqlite_engine(connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine, tables=[
         table for table in Base.metadata.sorted_tables
         if table.name not in {"market_trade_ticks", "market_quote_ticks"}
     ])
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     adapter = RecordedSchwab(case, **adapter_kwargs)
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         Settings(oms_v2_exit_management_enabled=True, oms_v2_exit_close_on_fill_enabled=True,
                  strategy_schwab_1m_v2_account_name=ACCT,
                  strategy_schwab_1m_v2_confirmed_window_enabled=True,
                  oms_v2_cw_floor_exit_enabled=False),
         redis_client=Redis(), session_factory=sessions, broker_adapter=adapter,
-    )
+    ))
     service._cw_target_pct = 5.0
     service._cw_stop_pct = 8.0
     service.logger = logging.getLogger("reserve1-recorded")

@@ -1,4 +1,6 @@
 """Session-scoped OMS controls; retained C1 row replay, controlled missing operands."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 from datetime import datetime, timedelta
 from decimal import Decimal
 import json

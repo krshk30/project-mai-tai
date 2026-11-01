@@ -1,13 +1,16 @@
 """Actual OMS DB thread/session lifecycle; CONTROLLED reads, no native proof."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
 import asyncio
 from contextlib import contextmanager
 from threading import Event
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai import brokerdecides1_sync as sync
 from project_mai_tai.brokerdecides1 import AdmissionMemory, decode
@@ -16,8 +19,7 @@ from tests.unit.test_brokerdecides1_sync import native, service
 
 
 def controlled_world(monkeypatch):
-    engine = create_engine("sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    engine = private_sqlite_engine(connect_args={"check_same_thread": False})
     sessions = sessionmaker(engine)
     entered, release, exited = Event(), Event(), Event()
 
@@ -34,7 +36,7 @@ def controlled_world(monkeypatch):
 
     owner = service(monkeypatch, reader)
     owner.session_factory = factory
-    owner._run_db = lambda function, **kwargs: OmsRiskService._run_db(owner, function, **kwargs)
+    own_service(owner, run_db=OmsRiskService._run_db)
 
     def query(session, *args):
         assert session.scalar(text("SELECT 1")) == 1

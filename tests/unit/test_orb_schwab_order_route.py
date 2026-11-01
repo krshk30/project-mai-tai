@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 import asyncio
 import json
 import logging
@@ -7,9 +11,8 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot, ExecutionReport, OrderRequest
 from project_mai_tai.db.base import Base
@@ -150,11 +153,7 @@ class _Broker:
 
 
 def _factory():
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     return sessionmaker(engine, expire_on_commit=False)
 
@@ -167,12 +166,12 @@ def _service(monkeypatch, *, enabled=True, broker=None):
     )
     broker = broker or _Broker()
     factory = _factory()
-    service = OmsRiskService(
+    service = own_service(OmsRiskService(
         settings=_settings(enabled=enabled),
         redis_client=_Redis(),  # type: ignore[arg-type]
         session_factory=factory,
         broker_adapter=broker,  # type: ignore[arg-type]
-    )
+    ))
     service._get_session_symbol_block_reason = lambda **_kwargs: asyncio.sleep(0, result=None)
     # Existing route tests model a continuously fresh below-trigger quote stream.
     # Quote-failure tests replace this fixture with explicit timestamped dictionaries.
@@ -918,10 +917,10 @@ def test_eod_unknown_post_is_never_retried_after_restart(monkeypatch) -> None:
     service, factory, broker, _clock = _eod_service(monkeypatch)
     broker.close_outcome = "unknown"
     asyncio.run(service._orb_schwab_eod_close())
-    restarted = OmsRiskService(
+    restarted = own_service(OmsRiskService(
         settings=service.settings, redis_client=_Redis(), session_factory=factory,
         broker_adapter=broker,
-    )
+    ))
     asyncio.run(restarted._orb_schwab_eod_close())
     assert [r.intent_type for r in broker.submitted] == ["open", "close"]
     with factory() as session:
@@ -1227,8 +1226,8 @@ def test_strategy_exit_unknown_post_is_not_retried_by_new_oms_or_eod(monkeypatch
     service, factory, broker, clock, event = _strategy_exit_service(monkeypatch)
     broker.close_outcome = "unknown"
     asyncio.run(service.process_trade_intent(event))
-    restarted = OmsRiskService(settings=service.settings, redis_client=_Redis(),
-                               session_factory=factory, broker_adapter=broker)
+    restarted = own_service(OmsRiskService(settings=service.settings, redis_client=_Redis(),
+                               session_factory=factory, broker_adapter=broker))
     restarted._latest_quotes_by_symbol = service._latest_quotes_by_symbol
     asyncio.run(restarted.process_trade_intent(event))
     clock[0] = clock[0].replace(hour=19, minute=55)
@@ -1717,8 +1716,8 @@ def test_put_accepted_confirmation_unreadable_persists_new_id_and_reconciles_und
         assert session.scalar(select(BrokerOrder)).payload["orb_replace_hold"]["new_id"] == "NEW-PARENT"
         assert session.scalar(select(Fill)).broker_fill_id == "ACTUAL-NEW-FILL"
         assert session.scalar(select(VirtualPosition)).quantity == 1
-    restarted = OmsRiskService(settings=service.settings, redis_client=_Redis(),
-                               session_factory=factory, broker_adapter=broker)
+    restarted = own_service(OmsRiskService(settings=service.settings, redis_client=_Redis(),
+                               session_factory=factory, broker_adapter=broker))
     for event in (build_orb_schwab_cancel_intent(service.settings, "CLRO"),
                   build_orb_schwab_reprice_intent(service.settings, "CLRO", Decimal("5.7"))):
         result = asyncio.run(restarted.process_trade_intent(event))

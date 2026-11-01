@@ -8,6 +8,10 @@ the leg level. Precedence hard>floor>scale, one action/quote, sole-writer row.
 """
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
@@ -18,7 +22,7 @@ import pytest
 from tests.unit.managed_entry_fixtures import bind_managed_entry, set_protect_base
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool, StaticPool
+from sqlalchemy.pool import NullPool
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, ExitPairReleaseResult
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
@@ -60,10 +64,7 @@ class _FakeRedis:
 
 def _make_sf(db_path: Path | None = None) -> sessionmaker:
     if db_path is None:
-        engine = create_engine(
-            "sqlite+pysqlite:///:memory:", future=True,
-            connect_args={"check_same_thread": False}, poolclass=StaticPool,
-        )
+        engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     else:
         # Each worker session gets its own SQLite connection, as with Postgres.
         engine = create_engine(
@@ -84,10 +85,10 @@ def _svc(
         oms_v2_exit_close_on_fill_enabled=close_on_fill,
         oms_v2_exit_release_reservation_enabled=release,
     )
-    svc = OmsRiskService(
+    svc = own_service(OmsRiskService(
         settings, redis_client=_FakeRedis(), session_factory=sf,
         broker_adapter=adapter or SimulatedBrokerAdapter(),
-    )
+    ))
     with sf() as s:
         svc.store.ensure_strategy(s, "schwab_1m_v2", name="v2")
         svc.store.ensure_broker_account(s, ACCT, provider="simulated", environment="test")
@@ -1141,10 +1142,10 @@ def _svc_dual(sf) -> OmsRiskService:
         strategy_schwab_1m_v2_webull_mirror_enabled=True,
         strategy_schwab_1m_v2_webull_account_name=WEBULL_ACCT,
     )
-    svc = OmsRiskService(
+    svc = own_service(OmsRiskService(
         settings, redis_client=_FakeRedis(), session_factory=sf,
         broker_adapter=SimulatedBrokerAdapter(),
-    )
+    ))
     with sf() as s:
         svc.store.ensure_strategy(s, "schwab_1m_v2", name="v2")
         svc.store.ensure_broker_account(s, ACCT, provider="simulated", environment="test")

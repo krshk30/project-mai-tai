@@ -1,5 +1,7 @@
 """Bound native-protection controls, local broker boundary, reviewer14:5x."""
 
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
 import asyncio
 import logging
 from decimal import Decimal

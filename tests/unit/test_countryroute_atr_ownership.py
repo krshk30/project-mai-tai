@@ -1,4 +1,8 @@
 """Existing local OMS tables and real intent pipeline; never a live broker proof."""
+
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_session_factory as build_test_session_factory
+from tests.unit.oms_sqlite_fixtures import own_service
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
@@ -16,7 +20,7 @@ from project_mai_tai.oms import route_owner as owner_module
 from project_mai_tai.oms.route_owner import route_owner_conflict
 from project_mai_tai.oms.service import OmsRiskService
 from tests.unit.test_countryroute_atr import country_router, options
-from tests.unit.test_control_plane import build_test_session_factory
+
 from tests.unit.test_orb_schwab_order_route import _Broker, _Redis
 
 NOW = datetime(2026, 10, 15, 14, tzinfo=UTC)
@@ -54,8 +58,8 @@ def setup(account, is_us, now):
     settings = options()
     factory = build_test_session_factory()
     broker = _Broker()
-    service = OmsRiskService(settings=settings, redis_client=_Redis(),
-                             session_factory=factory, broker_adapter=broker)
+    service = own_service(OmsRiskService(settings=settings, redis_client=_Redis(),
+                             session_factory=factory, broker_adapter=broker))
     service._get_session_symbol_block_reason = lambda **kwargs: asyncio.sleep(0, result=None)
     service._reconcile_after_intent = lambda *_args: asyncio.sleep(0)
     selected = AtrCountryRouteBook(settings, country_router(is_us).route_for).select("TEST", 100, now)

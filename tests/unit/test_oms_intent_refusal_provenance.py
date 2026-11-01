@@ -9,14 +9,17 @@ broker-report path separately; no historical row is backfilled.
 
 from __future__ import annotations
 
+from tests.unit.oms_sqlite_fixtures import owned_sqlite as owned_sqlite
+from tests.unit.oms_sqlite_fixtures import private_sqlite_engine
+from tests.unit.oms_sqlite_fixtures import own_service
+
 import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 import project_mai_tai.oms.service as oms_service
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
@@ -128,12 +131,7 @@ class _WebullClosingOnlyAdapter:
 
 
 def _session_factory() -> sessionmaker[Session]:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = private_sqlite_engine(future=True, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
 
@@ -144,7 +142,7 @@ def _service(
     adapter: object | None = None,
     **settings: object,
 ) -> OmsRiskService:
-    return OmsRiskService(
+    return own_service(OmsRiskService(
         settings=Settings(
             strategy_schwab_1m_v2_entry_notional_usd=0,
             strategy_schwab_1m_v2_webull_entry_notional_usd=0,
@@ -155,7 +153,7 @@ def _service(
         redis_client=_FakeRedis(),
         session_factory=factory,
         broker_adapter=adapter or SimulatedBrokerAdapter(),  # type: ignore[arg-type]
-    )
+    ))
 
 
 def _v2_open(
