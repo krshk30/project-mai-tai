@@ -1,0 +1,9 @@
+{
+  "pr_number": 1179,
+  "range_base": "bbe85bbc29d094c7e3666d66946c338b5ca72bb4",
+  "range_head": "69d19ac7d2c5840bf349670723e785b3b5e283ca",
+  "reviewed_at": "2026-11-01T13:28:26Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: GitHub rebase onto main bbe85bbc (#1180 merged); content unchanged from the reviewed head."
+}
