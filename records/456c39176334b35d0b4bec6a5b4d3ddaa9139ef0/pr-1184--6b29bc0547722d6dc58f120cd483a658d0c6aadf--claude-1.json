@@ -1,0 +1,9 @@
+{
+  "pr_number": 1184,
+  "range_base": "6b29bc0547722d6dc58f120cd483a658d0c6aadf",
+  "range_head": "456c39176334b35d0b4bec6a5b4d3ddaa9139ef0",
+  "reviewed_at": "2026-11-01T15:20:40Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: squash of reviewed #1177 #1178 #1179 #1182 #1183 (all previously pinned by me); only new content = L14 census merge (loop_lag + DST, 17 postimages, 643 paths), verified 34/34 L14 tests + 4555 changed-file tests locally."
+}
