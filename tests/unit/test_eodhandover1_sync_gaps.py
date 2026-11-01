@@ -22,6 +22,15 @@ from tests.unit.test_v2_eod_oco_transition import (
 )
 
 
+FIXTURE_COMPLETION_TIMEOUT = 10
+
+
+async def wait_fixture_completion(work):
+    # Functional rendezvous/cleanup only, never a quote/rate latency limit.
+    # A timeout must not cancel an actual offloaded DB unit behind its waiter.
+    return await asyncio.wait_for(asyncio.shield(work), FIXTURE_COMPLETION_TIMEOUT)
+
+
 def prepared(monkeypatch):
     sf = _make_sf()
     svc = _svc(sf)
@@ -136,17 +145,27 @@ async def test_sync_handover_and_quote_share_one_actual_managed_sell(monkeypatch
     monkeypatch.setattr(adapter, "submit_order", paused_submit)
     initial = asyncio.create_task(svc._v2_eod_oco_transition() if first == "sync"
         else svc._handle_quote_tick_event(tick(clock, bid)))
+    ready = asyncio.create_task(entered.wait())
+    competing = None
     try:
-        await asyncio.wait_for(entered.wait(), 1)
-        await asyncio.wait_for(svc._handle_quote_tick_event(tick(clock, bid)) if first == "sync"
-            else svc._v2_eod_oco_transition(), 1)
+        await wait_fixture_completion(ready)
+        competing = asyncio.create_task(svc._handle_quote_tick_event(tick(clock, bid)) if first == "sync"
+            else svc._v2_eod_oco_transition())
+        await wait_fixture_completion(competing)
         if first == "sync":
             await drain_quote_workers(svc)
         assert len(admissions) == 1 and adapter.submitted == []
     finally:
         release.set()
-        await initial
+        ready.cancel()  # This exact Event waiter owns no physical DB work.
+        await asyncio.gather(ready, return_exceptions=True)
+        # Release the deliberately paused wire before joining either owned route.
+        results = await asyncio.gather(initial, *(() if competing is None else (competing,)),
+                                       return_exceptions=True)
         await drain_quote_workers(svc)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
     request, = adapter.submitted
     assert request.reason.endswith(kind) and request.quantity == 1
     assert request.order_type == "limit" and request.metadata["session"] == "PM"
@@ -235,7 +254,7 @@ async def test_real_terminal_read_partial_fill_blocks_until_next_sync_confirms_r
 async def drain_recovery(svc):
     tasks = tuple(svc.__dict__.get("_confirmation_exit_recovery_tasks", ()))
     if tasks:
-        await asyncio.wait_for(asyncio.gather(*tasks), 1)
+        await wait_fixture_completion(asyncio.gather(*tasks))
 
 
 async def drain_quote_workers(svc):
@@ -243,7 +262,7 @@ async def drain_quote_workers(svc):
     # This is a fixture cleanup bound, not a quote/exit latency acceptance limit.
     # CI's one-second wrapper previously cancelled the real preparation DB read.
     while svc.__dict__.get("_symbol_tick_work", {}):
-        await asyncio.wait_for(asyncio.gather(*tuple(svc._symbol_tick_work.values())), 10)
+        await wait_fixture_completion(asyncio.gather(*tuple(svc._symbol_tick_work.values())))
 
 
 @pytest.mark.asyncio
