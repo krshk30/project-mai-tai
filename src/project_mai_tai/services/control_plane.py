@@ -227,8 +227,15 @@ def _durable_paper_decision_symbols(
     }
 
 
+def _next_eastern_day_boundary_utc(start: datetime) -> datetime:
+    local_start = start.astimezone(EASTERN_TZ)
+    return datetime.combine(
+        local_start.date() + timedelta(days=1), local_start.timetz(), tzinfo=EASTERN_TZ,
+    ).astimezone(UTC)
+
+
 def current_eastern_day_end_utc(now: datetime | None = None) -> datetime:
-    return current_eastern_day_start_utc(now) + timedelta(days=1)
+    return _next_eastern_day_boundary_utc(current_eastern_day_start_utc(now))
 
 
 def _should_disable_cache_for_response(content_type: str | None) -> bool:
@@ -4103,7 +4110,7 @@ def build_app(
         default_start_text, default_end_text, default_start, default_end = _default_review_filter_dates()
         range_start = _parse_review_filter_date(start_date) or default_start
         range_end_start = _parse_review_filter_date(end_date) or default_end
-        range_end = range_end_start + timedelta(days=1) if (end_date or "").strip() else default_end
+        range_end = _next_eastern_day_boundary_utc(range_end_start) if (end_date or "").strip() else default_end
         review_history = app.state.repository.load_trade_coach_review_history()
         regime_profiles = app.state.repository.load_trade_coach_regime_profiles(review_history)
         all_reviews = _apply_trade_coach_regime_profiles(
@@ -10301,7 +10308,7 @@ def _render_trade_coach_review_center(
         symbol=symbol,
         start=_parse_review_filter_date(start_date),
         end=(
-            (_parse_review_filter_date(end_date) + timedelta(days=1))
+            _next_eastern_day_boundary_utc(_parse_review_filter_date(end_date))
             if str(end_date or "").strip()
             else None
         ),
